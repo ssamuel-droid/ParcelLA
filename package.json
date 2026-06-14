@@ -1,23 +1,23 @@
 {
   "name": "parcella",
   "version": "1.0.0",
-  "description": "Los Angeles Development Site Marketplace with Financial Analysis Engine",
+  "description": "Los Angeles Development Site Marketplace",
   "type": "module",
   "scripts": {
-    "dev": "node api/server.js",
-    "serve": "npx serve public",
-    "excel": "python scripts/generate_excel.py",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+    "dev":        "node api/server.js",
+    "serve":      "npx serve public",
+    "test-apis":  "pip install python-dotenv requests -q && python scripts/test_apis.py",
+    "db:migrate": "echo 'Run supabase/schema.sql in Supabase SQL editor'",
+    "excel":      "python scripts/generate_excel.py"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
+    "@supabase/supabase-js": "^2.39.0",
+    "cors":    "^2.8.5",
+    "dotenv":  "^16.3.1",
     "express": "^4.18.2"
   },
   "devDependencies": {
     "jest": "^29.7.0"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+  "engines": { "node": ">=18.0.0" }
 }
