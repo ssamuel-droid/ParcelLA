@@ -1,101 +1,133 @@
 /**
- * ParceLLA API Server
- * Node.js / Express backend
+ * ParceLLA API Server — v2
  *
- * npm install express cors dotenv
- * node api/server.js
+ * Routes:
+ *   GET  /api/health
+ *   GET  /api/sites               — list + pre-underwrite, all filters
+ *   GET  /api/sites/:id           — single site + full model
+ *   GET  /api/sites/:id/enrich    — LADBS + Census enrichment
+ *   GET  /api/sites/:id/demand    — demand score (7 factors)
+ *   POST /api/sites/:id/save      — save to watchlist (auth)
+ *   DEL  /api/sites/:id/save      — unsave (auth)
+ *   POST /api/model/:id           — run model with overrides
+ *   POST /api/model/:id/scenarios — bear/base/bull + stress tests
+ *   POST /api/model/:id/waterfall — equity waterfall
+ *   PUT  /api/model/:id/overrides — save overrides (auth)
+ *   GET  /api/model/:id/overrides — get overrides (auth)
+ *   GET  /api/model/waterfall/presets
+ *   POST /api/pdf/:id             — generate deal memo PDF
+ *   POST /api/auth/signup
+ *   POST /api/auth/signin
+ *   POST /api/auth/signout
+ *   GET  /api/auth/me
+ *   GET  /api/alerts              — list alerts (auth)
+ *   POST /api/alerts              — create alert (auth)
+ *   DEL  /api/alerts/:id          — delete alert (auth)
+ *   GET  /api/submarkets          — all submarket data
+ *   GET  /api/submarkets/:hood    — single submarket
  */
 
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
+import 'dotenv/config';
+import express        from 'express';
+import cors           from 'cors';
+import helmet         from 'helmet';
+import compression    from 'compression';
 
-dotenv.config();
+import {
+  requestLogger,
+  apiLimiter,
+  errorHandler,
+  checkEnv,
+} from './middleware/middleware.js';
+
+import sitesRouter      from './routes/sites.js';
+import modelRouter      from './routes/model.js';
+import {
+  pdfRouter,
+  authRouter,
+  alertsRouter,
+  submarketRouter,
+} from './routes/other.js';
+
+import { startSyncJobs } from './jobs/sync.js';
+
+// ── Env check ─────────────────────────────────────────────────────────────────
+// Skip hard exit in development if Supabase keys aren't set yet
+if (process.env.NODE_ENV === 'production') checkEnv();
 
 const app  = express();
 const PORT = process.env.PORT ?? 3001;
 
-app.use(cors());
-app.use(express.json());
+// ── Security & parsing ────────────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: false,   // handled by frontend
+  crossOriginEmbedderPolicy: false,
+}));
+app.use(compression());
+app.use(cors({
+  origin:      process.env.ALLOWED_ORIGINS?.split(',') ?? ['http://localhost:5173', 'http://localhost:3000'],
+  credentials: true,
+  methods:     ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+}));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// ── In-memory store (replace with PostgreSQL) ──────────────────────────────
-import { SITES } from '../src/data/sites.js';
+// ── Logging ───────────────────────────────────────────────────────────────────
+app.use(requestLogger);
 
-// ── Routes ─────────────────────────────────────────────────────────────────
+// ── Global rate limit ─────────────────────────────────────────────────────────
+app.use('/api/', apiLimiter);
 
-// GET /api/sites — list with optional filters
-app.get('/api/sites', (req, res) => {
-  const { type, hood, zone, rti, minIRR, maxPrice, minUnits } = req.query;
-  let results = [...SITES];
+// ── Routes ────────────────────────────────────────────────────────────────────
+app.use('/api/sites',       sitesRouter);
+app.use('/api/model',       modelRouter);
+app.use('/api/pdf',         pdfRouter);
+app.use('/api/auth',        authRouter);
+app.use('/api/alerts',      alertsRouter);
+app.use('/api/submarkets',  submarketRouter);
 
-  if (type)     results = results.filter(s => s.type === type);
-  if (hood)     results = results.filter(s => s.hood === hood);
-  if (zone)     results = results.filter(s => s.zone === zone);
-  if (rti)      results = results.filter(s => s.rti  === (rti === 'true'));
-  if (maxPrice) results = results.filter(s => s.price <= +maxPrice);
-  if (minUnits) results = results.filter(s => s.units >= +minUnits);
-
-  res.json({ count: results.length, results });
-});
-
-// GET /api/sites/:id — single site with full model
-app.get('/api/sites/:id', (req, res) => {
-  const site = SITES.find(s => s.id === +req.params.id);
-  if (!site) return res.status(404).json({ error: 'Site not found' });
-  res.json(site);
-});
-
-// POST /api/model — run financial model with custom overrides
-app.post('/api/model', (req, res) => {
-  const { siteId, overrides = {} } = req.body;
-  const site = SITES.find(s => s.id === siteId);
-  if (!site) return res.status(404).json({ error: 'Site not found' });
-
-  // Dynamic import to keep server startup fast
-  import('../src/model/financialModel.js').then(({ runModel }) => {
-    const result = runModel(site, overrides);
-    res.json(result);
-  });
-});
-
-// POST /api/model/scenarios — bear/base/bull
-app.post('/api/model/scenarios', (req, res) => {
-  const { siteId, overrides = {} } = req.body;
-  const site = SITES.find(s => s.id === siteId);
-  if (!site) return res.status(404).json({ error: 'Site not found' });
-
-  import('../src/model/financialModel.js').then(({ runScenarios }) => {
-    res.json(runScenarios(site, overrides));
-  });
-});
-
-// GET /api/submarkets — cap rates + rent comps
-app.get('/api/submarkets', (req, res) => {
-  import('../src/data/submarkets.js').then(({ RENTS, CAP_RATES }) => {
-    res.json({ rents: RENTS, capRates: CAP_RATES });
-  });
-});
-
-// POST /api/alerts — save a deal alert (stub — wire to DB + email)
-const alerts = [];
-app.post('/api/alerts', (req, res) => {
-  const { userId, name, filters, frequency } = req.body;
-  const alert = { id: Date.now(), userId, name, filters, frequency, createdAt: new Date() };
-  alerts.push(alert);
-  res.status(201).json(alert);
-});
-
-app.get('/api/alerts/:userId', (req, res) => {
-  res.json(alerts.filter(a => a.userId === req.params.userId));
-});
-
-// Health check
+// ── Health check ──────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '1.0.0', sites: SITES.length });
+  res.json({
+    status:    'ok',
+    version:   '2.0.0',
+    timestamp: new Date().toISOString(),
+    env:       process.env.NODE_ENV ?? 'development',
+    services: {
+      supabase:  !!process.env.SUPABASE_URL,
+      mapbox:    !!process.env.MAPBOX_TOKEN,
+      socrata:   !!process.env.SOCRATA_APP_TOKEN,
+      census:    !!process.env.CENSUS_API_KEY,
+      rentcast:  !!process.env.RENTCAST_API_KEY,
+    },
+  });
 });
 
+// ── 404 ───────────────────────────────────────────────────────────────────────
+app.use((req, res) => {
+  res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
+});
+
+// ── Error handler (must be last) ──────────────────────────────────────────────
+app.use(errorHandler);
+
+// ── Start ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`ParceLLA API running on http://localhost:${PORT}`);
+  console.log(`\n🏗  ParceLLA API running → http://localhost:${PORT}`);
+  console.log(`   Environment: ${process.env.NODE_ENV ?? 'development'}`);
+  console.log(`   Supabase:    ${process.env.SUPABASE_URL ? '✅' : '⚠️  not configured'}`);
+  console.log(`   Mapbox:      ${process.env.MAPBOX_TOKEN ? '✅' : '⚠️  not configured'}`);
+  console.log(`   Socrata:     ${process.env.SOCRATA_APP_TOKEN ? '✅' : '⚠️  not configured'}`);
+  console.log(`   Census:      ${process.env.CENSUS_API_KEY ? '✅' : '⚠️  not configured'}`);
+
+  // Start background sync jobs in production
+  if (process.env.NODE_ENV === 'production') {
+    startSyncJobs();
+  } else {
+    console.log('   Sync jobs:   skipped (dev mode — run manually with --run-now)');
+  }
+  console.log('');
 });
 
 export default app;
