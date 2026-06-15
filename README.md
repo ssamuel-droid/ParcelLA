@@ -1,121 +1,96 @@
 # ParceLLA — Los Angeles Development Site Marketplace
 
-A public-facing marketplace for LA development sites (for sale + RTI/entitled), with a built-in financial analysis engine anchored to RSMeans construction costs and LA submarket data.
+Pre-underwriting search engine for LA development sites. Every listing is automatically underwritten — IRR, net profit, cap rate on cost, and development spread calculated before you filter.
 
-## Features
+## What's built
 
-- **Search & filter** — 22 live listings across 10 LA neighborhoods, filterable by type, price, units, lot size, zoning, IRR, net profit, price/unit
-- **Map view** — Pin map with IRR color-coding and RTI callouts
-- **Financial model** — Per-site IRR, cap rate on cost, cash-on-cash, equity multiple, dev spread, 5-year hold waterfall
-- **RSMeans cost engine** — $275–340/SF by project type with scale discounts, full soft cost breakdown
-- **Scenario analysis** — Bear/Base/Bull + 4 stress tests + break-even
-- **Sensitivity heatmaps** — IRR across rent × cap rate grid; net profit across cost × rent grid
-- **Excel export** — 6-tab professional workbook (Dashboard, Assumptions, Deal Model, Comp Table, Sensitivity, Data Architecture)
-- **User accounts** — Sign in, save sites, deal alerts
-- **Data source layer** — LA Assessor, LADBS, Zillow, CoStar, Census integration map
+### Search & Underwriting
+- Pre-underwriting on all 27 listings (22 for-sale + 5 off-market comps)
+- IRR, net profit, dev spread %, and cap rate on cost as filter inputs
+- Land imputation for off-market sites ($/unit and $/SF methods)
+- Exit cap with submarket defaults (+25bps spread) + global override
+- RSMeans 2024 hard cost model ($275–340/SF by type, scale discounts)
+- Prop 13 property tax (1.25% of land basis, 2%/yr escalation)
 
-## Tech Stack (prototype)
+### Financial Model
+- S-curve construction draw schedule (beta distribution, 18-month)
+- Carry cost on actual drawn balance vs flat estimate
+- Loan sizing: LTC / DSCR / LTV binding constraint + sensitivity table
+- 20-year cash flow with rent growth (2.5%/yr) and opex escalation
+- IRR hurdle waterfall (4 presets: standard, institutional, IRR hurdles, dev-friendly)
+- 8% pref return + tiered promote (80/20 → 70/30 → 60/40)
+- Bear / base / bull scenarios + 4 stress tests + break-even analysis
+- IRR + net profit sensitivity heatmaps
 
-- **Frontend:** Vanilla HTML/CSS/JS (single-file prototype)
-- **Financial model:** Pure JS, Newton-Raphson IRR solver
-- **Excel export:** Python + openpyxl (server-side)
+### Data & Intelligence
+- 7-factor demand scoring (renter concentration, income/rent, pop density, rent growth, transit, jobs, supply)
+- AI deal narrative — Claude analyzes each site: why it pencils, main risk, what others miss
+- Sold comps database (10 seeded LA transactions, cap rate validation)
+- Submarket cap rate view (aggregated from sold comps)
+- LA Open Data integration: LADBS permits, RTI status, zoning, RSO
+- Census ACS: median income, renter %, population density by tract
+- Mapbox: geocoding + real street map tiles
 
-## Production Stack (recommended)
+### Exports & Sharing
+- PDF deal memo (4-page: summary, costs, cash flow, sensitivity)
+- Excel workbook (6 sheets, 821 formulas, zero errors)
+- Deal sharing: URL with encoded assumptions, or persistent tokens
+- Email: deal summary + PDF attachment via Resend
 
-- **Frontend:** React + Vite + MapboxGL
-- **Backend:** Node.js / Express
-- **Database:** PostgreSQL + PostGIS
-- **Auth:** Supabase / Auth0
-- **Data:** LA City Open Data (Socrata API) + Zillow Bridge API
+### User Features
+- Auth: signup, signin, signout, forgot/reset password (Supabase)
+- Saved sites + deal notes
+- Model overrides saved per user per site
+- Deal alerts (daily/weekly/instant) with email delivery
+- Activity log
+- Stripe subscriptions (Free / Pro $49 / Enterprise $199)
 
-## Data Sources
+### Infrastructure
+- Express API (20+ routes, auth middleware, rate limiting, error handling)
+- Nightly LADBS permit sync (node-cron, 2AM PT)
+- Monthly rent comp sync (RentCast, 1st of month)
+- PostgreSQL + PostGIS (Supabase) — full schema with RLS
+- Railway + Render deployment configs
 
-| Source | Dataset | Endpoint | Status |
-|--------|---------|----------|--------|
-| LA City Open Data | LADBS Permits | `data.lacity.org/resource/nbyu-2ha9.json` | Requires App Token |
-| LA City Open Data | Zoning | `data.lacity.org/resource/qv65-mhbd.json` | Requires App Token |
-| LA County Assessor | Parcel Data | `assessor.lacounty.gov` | Requires API key |
-| RSMeans 2024 | Construction Costs | Hardcoded LA Metro rates | Active |
-| Zillow / Bridge | Rent Comps | `api.bridgedataoutput.com` | Requires paid key |
-| CoStar / LoopNet | Listings | `api.costar.com` | Enterprise license |
-| Census ACS | Demographics | `api.census.gov` | Free / open |
-
-## Financial Model
-
-### Cost Model (RSMeans anchored)
-- **Multifamily (Type V):** $285/SF base
-- **Mixed-Use (Type III/V podium):** $320/SF
-- **Condo/Townhome (Type III):** $340/SF
-- **SFR + ADU:** $275/SF
-- Scale discounts: >50K SF −5%, >100K SF −7%
-
-### Soft Costs (18% of hard costs)
-- Architecture & Engineering: 6%
-- Permits & Processing: $2,500/unit
-- Title, Escrow & Legal: 1.5% of land + $35K
-- Developer Fee: 3%
-- Contingency: 5%
-
-### Financing Defaults
-- LTC: 65% | Rate: 6.5% | Term: 18 months
-
-### Returns
-- Levered IRR (Newton-Raphson, 5-yr hold)
-- Cap rate on cost vs market cap rate
-- Cash-on-cash return
-- Equity multiple
-- 8% preferred return + 80/20 GP promote waterfall
-
-## LA Submarket Cap Rates (2024)
-
-| Neighborhood | Cap Rate |
-|---|---|
-| Los Feliz | 4.0% |
-| Silver Lake | 4.2% |
-| Culver City | 4.2% |
-| Mar Vista | 4.3% |
-| Echo Park | 4.4% |
-| Mid-Wilshire | 4.5% |
-| Highland Park | 4.6% |
-| West Adams | 4.7% |
-| Koreatown | 4.8% |
-| Boyle Heights | 5.0% |
-
-## Getting Started
+## Quick start
 
 ```bash
-# Clone
 git clone https://github.com/YOUR_USERNAME/parcella.git
 cd parcella
-
-# Open prototype (no build needed)
-open public/index.html
-
-# Or serve locally
-npx serve public
+cp .env.example .env   # fill in your keys
+npm install
+npm run dev            # API on :3001
 ```
 
-## Excel Export
+## Minimum keys to run (free)
+```
+SUPABASE_URL + SUPABASE_ANON_KEY + SUPABASE_SERVICE_KEY
+```
+Everything else degrades gracefully with mock data.
 
-```bash
-pip install openpyxl
-python scripts/generate_excel.py
-# Output: ParceLLA_Analysis.xlsx
+## Deploy to Railway (recommended)
+1. Push to GitHub
+2. railway.app → New Project → Deploy from GitHub → select `parcella`
+3. Add env vars in Railway dashboard
+4. Done — live URL in ~3 minutes
+
+## API routes
+```
+GET  /api/health
+GET  /api/sites?minIRR=15&hood=Koreatown&sort=profit
+GET  /api/sites/:id
+GET  /api/sites/:id/demand
+GET  /api/sites/:id/enrich
+POST /api/model/:id/waterfall
+POST /api/pdf/:id
+POST /api/narrative/:id
+GET  /api/comps/submarket/:hood
+GET  /api/stripe/plans
+POST /api/stripe/checkout
 ```
 
-## Roadmap
+## Database setup
+Run `supabase/schema.sql` in Supabase SQL editor. Seeds 27 sites, 40 rent comps, 10 sold comps.
 
-- [ ] Connect LA City Open Data (Socrata App Token)
-- [ ] Zillow Bridge API rent comp integration
-- [ ] Real MapboxGL map (replace SVG grid)
-- [ ] PDF deal memo export (Puppeteer)
-- [ ] User accounts (Supabase)
-- [ ] Saved searches + email alerts
-- [ ] CoStar / LoopNet listing sync
-- [ ] LA County Assessor parcel enrichment
-- [ ] Mobile responsive layout
-- [ ] Comp sales database
-
-## License
-
-MIT
+## Stack
+Node.js 18 · Express · Supabase (PostgreSQL + PostGIS) · Puppeteer · Stripe · Resend · Mapbox · Claude API

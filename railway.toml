@@ -1,0 +1,19 @@
+# ParceLLA — Railway deployment config
+# railway.toml — place in repo root
+
+[build]
+builder = "nixpacks"
+buildCommand = "npm install"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[[services]]
+name = "api"
+source = "."
+
+[services.variables]
+NODE_ENV = "production"
+PORT = "3001"
