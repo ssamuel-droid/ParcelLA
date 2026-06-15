@@ -29,7 +29,7 @@ Pre-underwriting search engine for LA development sites. Every listing is automa
 - Submarket cap rate view (aggregated from sold comps)
 - LA Open Data integration: LADBS permits, RTI status, zoning, RSO
 - Census ACS: median income, renter %, population density by tract
-- Mapbox: geocoding + real street map tiles
+- Google Maps: street map, satellite, Street View, geocoding
 
 ### Exports & Sharing
 - PDF deal memo (4-page: summary, costs, cash flow, sensitivity)

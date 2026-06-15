@@ -1,310 +1,310 @@
 /**
- * ParceLLA — Mapbox GL JS Map Component
+ * ParceLLA — Google Maps Component
  *
  * Features:
- *   - Real LA street tiles (Mapbox light-v11 style)
- *   - IRR-coded pin markers (green ≥18%, amber 12–18%, red <12%)
+ *   - Google Maps JavaScript API (street, satellite, hybrid)
+ *   - IRR-coded custom SVG pin markers
  *   - RTI sites highlighted with gold ring
- *   - Cluster layer for dense areas
+ *   - MarkerClusterer for dense areas
  *   - Click → open detail panel
- *   - Hover tooltip with key metrics
- *   - LA neighborhood boundary overlay
- *   - Fit-to-bounds on filter change
+ *   - Hover InfoWindow with key metrics
+ *   - Street View integration (toggle per site)
+ *   - Geocoding for address → lat/lng
+ *   - Fit bounds on filter change
+ *   - LA neighborhood label overlay
  *
- * Required: MAPBOX_TOKEN in environment
- * npm install mapbox-gl
+ * Required:
+ *   GOOGLE_MAPS_API_KEY in .env (backend geocoding)
+ *   VITE_GOOGLE_MAPS_API_KEY in .env (frontend map)
+ *
+ * Setup:
+ *   Google Cloud Console → Maps JavaScript API → enable
+ *   Google Cloud Console → Geocoding API → enable
+ *   Google Cloud Console → Street View Static API → enable
+ *   (All three use the same API key)
+ *
+ * Replaces: Mapbox GL JS
  */
 
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
 import { MAP_COORDS } from '../data/submarkets.js';
 
-mapboxgl.accessToken = process.env.MAPBOX_TOKEN
-  || import.meta?.env?.VITE_MAPBOX_TOKEN
-  || '';
-
 // ── Color helpers ─────────────────────────────────────────────────────────────
-function irrColor(irr) {
+export function irrColor(irr) {
   if (irr >= 18) return '#1d9e75';
   if (irr >= 12) return '#ef9f27';
   return '#e24b4a';
 }
 
-function irrTextColor(irr) {
-  if (irr >= 18) return '#ffffff';
-  if (irr >= 12) return '#ffffff';
-  return '#ffffff';
+function irrLabel(irr) {
+  if (irr >= 18) return 'Strong';
+  if (irr >= 12) return 'Moderate';
+  return 'Weak';
 }
 
-// ── GeoJSON builder ───────────────────────────────────────────────────────────
-export function buildGeoJSON(sites) {
-  return {
-    type: 'FeatureCollection',
-    features: sites.map(site => ({
-      type: 'Feature',
-      geometry: {
-        type: 'Point',
-        coordinates: [
-          site.coordinates?.lng ?? MAP_COORDS[site.hood]?.lng ?? -118.25,
-          site.coordinates?.lat ?? MAP_COORDS[site.hood]?.lat ?? 34.05,
-        ],
-      },
-      properties: {
-        id:          site.id,
-        address:     site.addr,
-        hood:        site.hood,
-        type:        site.type,
-        zone:        site.zone,
-        units:       site.units,
-        price:       site.askPrice,
-        landCost:    site.landCost,
-        totalCost:   site.totalCost,
-        noi:         site.noi,
-        netProfit:   site.netProfit,
-        irr:         site.irrV,
-        capOnCost:   site.capOnCost,
-        devSpread:   site.devSpreadPct,
-        isRTI:       site.rti,
-        isComp:      site.isComp,
-        exitValue:   site.exitValue,
-        color:       irrColor(site.irrV),
-        textColor:   irrTextColor(site.irrV),
-      },
-    })),
-  };
+// ── Custom SVG pin generator ──────────────────────────────────────────────────
+function makePinSVG(irr, isRTI, isComp) {
+  const color  = irrColor(irr);
+  const ring   = isRTI ? '#c49a3c' : '#ffffff';
+  const label  = Math.round(irr) + '%';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="48" viewBox="0 0 40 48">
+    <path d="M20 0 C9 0 0 9 0 20 C0 34 20 48 20 48 C20 48 40 34 40 20 C40 9 31 0 20 0Z"
+      fill="${color}" stroke="${ring}" stroke-width="${isRTI ? 3 : 1.5}"/>
+    <text x="20" y="21" font-family="Arial" font-size="9" font-weight="700"
+      fill="white" text-anchor="middle" dominant-baseline="middle">${label}</text>
+    ${isComp ? '<circle cx="32" cy="8" r="5" fill="#ef9f27" stroke="white" stroke-width="1"/>' : ''}
+  </svg>`;
+}
+
+function svgToDataURL(svg) {
+  return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+}
+
+// ── Load Google Maps API ──────────────────────────────────────────────────────
+let _mapsLoaded = false;
+let _mapsPromise = null;
+
+export function loadGoogleMaps(apiKey) {
+  if (_mapsLoaded) return Promise.resolve();
+  if (_mapsPromise) return _mapsPromise;
+
+  _mapsPromise = new Promise((resolve, reject) => {
+    if (window.google?.maps) { _mapsLoaded = true; resolve(); return; }
+
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=marker,geometry&loading=async`;
+    script.async = true;
+    script.onload  = () => { _mapsLoaded = true; resolve(); };
+    script.onerror = () => reject(new Error('Google Maps failed to load'));
+    document.head.appendChild(script);
+  });
+
+  return _mapsPromise;
 }
 
 // ── Map initialization ────────────────────────────────────────────────────────
-export function initMap(containerId, options = {}) {
-  const map = new mapboxgl.Map({
-    container: containerId,
-    style:     'mapbox://styles/mapbox/light-v11',
-    center:    [-118.2851, 34.0522],   // Downtown LA
-    zoom:      11,
-    minZoom:   9,
-    maxZoom:   18,
+export async function initMap(containerId, apiKey, options = {}) {
+  await loadGoogleMaps(apiKey);
+
+  const { google } = window;
+
+  const map = new google.maps.Map(document.getElementById(containerId), {
+    center:          { lat: 34.0522, lng: -118.2851 },  // Downtown LA
+    zoom:            11,
+    minZoom:         9,
+    maxZoom:         18,
+    mapTypeId:       'roadmap',
+    mapTypeControl:  true,
+    mapTypeControlOptions: {
+      style:    google.maps.MapTypeControlStyle.HORIZONTAL_BAR,
+      position: google.maps.ControlPosition.TOP_RIGHT,
+      mapTypeIds: ['roadmap', 'satellite', 'hybrid'],
+    },
+    streetViewControl:  true,
+    fullscreenControl:  true,
+    zoomControl:        true,
+    gestureHandling:    'cooperative',
+    styles: [
+      { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+      { featureType: 'transit', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+      { featureType: 'water', stylers: [{ color: '#c9d8e8' }] },
+      { featureType: 'landscape', stylers: [{ color: '#f5f5f5' }] },
+      { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+    ],
     ...options,
   });
-
-  map.addControl(new mapboxgl.NavigationControl(), 'top-right');
-  map.addControl(new mapboxgl.ScaleControl({ unit: 'imperial' }), 'bottom-right');
-  map.addControl(new mapboxgl.FullscreenControl(), 'top-right');
 
   return map;
 }
 
-// ── Layer setup ───────────────────────────────────────────────────────────────
-export function setupLayers(map, geojson, onSiteClick) {
-  // Remove existing layers/sources if re-rendering
-  ['parcella-clusters','parcella-cluster-count','parcella-pins','parcella-rti-ring']
-    .forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
-  if (map.getSource('parcella-sites')) map.removeSource('parcella-sites');
+// ── Marker setup ──────────────────────────────────────────────────────────────
+export function setupMarkers(map, sites, onSiteClick) {
+  const { google } = window;
+  const markers    = [];
+  const infoWindow = new google.maps.InfoWindow({ maxWidth: 280 });
 
-  map.addSource('parcella-sites', {
-    type:    'geojson',
-    data:    geojson,
-    cluster: true,
-    clusterMaxZoom: 13,
-    clusterRadius:  50,
-    clusterProperties: {
-      // Aggregate best IRR in cluster for color coding
-      maxIRR: ['max', ['get', 'irr']],
-    },
-  });
+  sites.forEach(site => {
+    const m    = site._m ?? site;
+    const irr  = m.irrV ?? m.irr ?? 0;
+    const hood = site.hood ?? site.neighborhood;
+    const coords = site.coordinates
+      ?? MAP_COORDS[hood]
+      ?? { lat: 34.05, lng: -118.25 };
 
-  // Cluster circles
-  map.addLayer({
-    id:     'parcella-clusters',
-    type:   'circle',
-    source: 'parcella-sites',
-    filter: ['has', 'point_count'],
-    paint:  {
-      'circle-color': [
-        'step', ['get', 'maxIRR'],
-        '#e24b4a',   // red  < 12
-        12, '#ef9f27', // amber 12–18
-        18, '#1d9e75', // green ≥ 18
-      ],
-      'circle-radius':  ['step', ['get', 'point_count'], 18, 5, 22, 10, 28],
-      'circle-stroke-width': 2,
-      'circle-stroke-color': '#ffffff',
-      'circle-opacity': 0.92,
-    },
-  });
+    // Small jitter so pins in same neighborhood don't stack exactly
+    const jitter = () => (Math.random() - 0.5) * 0.003;
 
-  // Cluster count labels
-  map.addLayer({
-    id:     'parcella-cluster-count',
-    type:   'symbol',
-    source: 'parcella-sites',
-    filter: ['has', 'point_count'],
-    layout: {
-      'text-field':  '{point_count_abbreviated}',
-      'text-font':   ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
-      'text-size':   12,
-    },
-    paint:  { 'text-color': '#ffffff' },
-  });
+    const marker = new google.maps.Marker({
+      position: {
+        lat: coords.lat + jitter(),
+        lng: coords.lng + jitter(),
+      },
+      map,
+      icon: {
+        url:    svgToDataURL(makePinSVG(irr, site.rti, site.isComp)),
+        size:   new google.maps.Size(40, 48),
+        origin: new google.maps.Point(0, 0),
+        anchor: new google.maps.Point(20, 48),
+      },
+      title:    site.addr ?? site.address,
+      zIndex:   irr >= 18 ? 3 : irr >= 12 ? 2 : 1,
+    });
 
-  // Individual site pins
-  map.addLayer({
-    id:     'parcella-pins',
-    type:   'circle',
-    source: 'parcella-sites',
-    filter: ['!', ['has', 'point_count']],
-    paint:  {
-      'circle-color':        ['get', 'color'],
-      'circle-radius':       14,
-      'circle-stroke-width': ['case', ['get', 'isRTI'], 3, 1.5],
-      'circle-stroke-color': ['case', ['get', 'isRTI'], '#c49a3c', '#ffffff'],
-      'circle-opacity':      0.95,
-    },
-  });
+    // Hover → InfoWindow
+    marker.addListener('mouseover', () => {
+      const fmtM = n => n >= 1e6 ? '$' + (Math.round(n/1e5)/10) + 'M'
+                      : n >= 1e3 ? '$' + Math.round(n/1e3) + 'K'
+                      : '$' + Math.round(n);
 
-  // IRR label on each pin
-  map.addLayer({
-    id:     'parcella-pin-labels',
-    type:   'symbol',
-    source: 'parcella-sites',
-    filter: ['!', ['has', 'point_count']],
-    layout: {
-      'text-field': ['concat', ['to-string', ['round', ['get', 'irr']]], '%'],
-      'text-font':  ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
-      'text-size':  10,
-    },
-    paint:  { 'text-color': '#ffffff' },
-  });
-
-  // ── Interactions ────────────────────────────────────────────────────────────
-  const popup = new mapboxgl.Popup({
-    closeButton: false,
-    closeOnClick: false,
-    className: 'parcella-popup',
-    maxWidth: '260px',
-  });
-
-  // Hover tooltip
-  map.on('mouseenter', 'parcella-pins', e => {
-    map.getCanvas().style.cursor = 'pointer';
-    const p = e.features[0].properties;
-    const fmtM = n => n >= 1e6 ? '$' + (Math.round(n / 1e5) / 10) + 'M'
-                    : n >= 1e3 ? '$' + Math.round(n / 1e3) + 'K'
-                    : '$' + Math.round(n);
-    popup.setLngLat(e.features[0].geometry.coordinates)
-      .setHTML(`
-        <div style="font-family:system-ui;padding:4px 0">
-          <div style="font-size:12px;font-weight:600;margin-bottom:4px">${p.address}</div>
-          <div style="font-size:11px;color:#666;margin-bottom:6px">${p.hood} · ${p.zone} · ${p.units} units</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
-            <div style="background:#f5f5f5;padding:4px 6px;border-radius:4px">
-              <div style="font-size:9px;color:#999;text-transform:uppercase">IRR</div>
-              <div style="font-size:13px;font-weight:600;color:${irrColor(p.irr)}">${Math.round(p.irr * 10) / 10}%</div>
+      infoWindow.setContent(`
+        <div style="font-family:Arial,sans-serif;padding:4px 0;min-width:200px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:3px;color:#0f1f3d">${site.addr ?? site.address}</div>
+          <div style="font-size:11px;color:#888;margin-bottom:8px">${hood} · ${site.zone} · ${site.units} units</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px">
+            <div style="background:#f5f5f5;padding:5px 7px;border-radius:5px">
+              <div style="font-size:9px;color:#999;text-transform:uppercase;letter-spacing:0.5px">IRR</div>
+              <div style="font-size:14px;font-weight:700;color:${irrColor(irr)}">${irr}%</div>
+              <div style="font-size:9px;color:#999">${irrLabel(irr)}</div>
             </div>
-            <div style="background:#f5f5f5;padding:4px 6px;border-radius:4px">
-              <div style="font-size:9px;color:#999;text-transform:uppercase">Net profit</div>
-              <div style="font-size:13px;font-weight:600">${fmtM(p.netProfit)}</div>
+            <div style="background:#f5f5f5;padding:5px 7px;border-radius:5px">
+              <div style="font-size:9px;color:#999;text-transform:uppercase;letter-spacing:0.5px">Net profit</div>
+              <div style="font-size:14px;font-weight:700">${fmtM(m.netProfit ?? m.profit ?? 0)}</div>
             </div>
-            <div style="background:#f5f5f5;padding:4px 6px;border-radius:4px">
-              <div style="font-size:9px;color:#999;text-transform:uppercase">Cap on cost</div>
-              <div style="font-size:13px;font-weight:600">${Math.round(p.capOnCost * 100) / 100}%</div>
+            <div style="background:#f5f5f5;padding:5px 7px;border-radius:5px">
+              <div style="font-size:9px;color:#999;text-transform:uppercase;letter-spacing:0.5px">Cap on cost</div>
+              <div style="font-size:14px;font-weight:700">${m.capOnCost ?? m.capoc ?? 0}%</div>
             </div>
-            <div style="background:#f5f5f5;padding:4px 6px;border-radius:4px">
-              <div style="font-size:9px;color:#999;text-transform:uppercase">All-in cost</div>
-              <div style="font-size:13px;font-weight:600">${fmtM(p.totalCost)}</div>
+            <div style="background:#f5f5f5;padding:5px 7px;border-radius:5px">
+              <div style="font-size:9px;color:#999;text-transform:uppercase;letter-spacing:0.5px">All-in</div>
+              <div style="font-size:14px;font-weight:700">${fmtM(m.totalCost ?? m.total ?? 0)}</div>
             </div>
           </div>
-          ${p.isRTI ? '<div style="margin-top:6px;font-size:10px;background:#e1f5ee;color:#085041;padding:3px 7px;border-radius:100px;display:inline-block">✓ RTI Approved</div>' : ''}
-          ${p.isComp ? '<div style="margin-top:6px;font-size:10px;background:#faeeda;color:#854f0b;padding:3px 7px;border-radius:100px;display:inline-block">Land imputed</div>' : ''}
+          ${site.rti ? '<div style="margin-top:7px;display:inline-block;background:#e1f5ee;color:#085041;font-size:10px;font-weight:600;padding:3px 8px;border-radius:100px">✓ RTI Approved</div>' : ''}
+          ${site.isComp ? '<div style="margin-top:7px;display:inline-block;background:#faeeda;color:#854f0b;font-size:10px;font-weight:600;padding:3px 8px;border-radius:100px">Land imputed</div>' : ''}
+          <div style="margin-top:8px;font-size:10px;color:#c49a3c;cursor:pointer;font-weight:600" onclick="window._parcella_open(${site.id})">View full analysis →</div>
         </div>
-      `)
-      .addTo(map);
-  });
-
-  map.on('mouseleave', 'parcella-pins', () => {
-    map.getCanvas().style.cursor = '';
-    popup.remove();
-  });
-
-  // Click → open detail panel
-  map.on('click', 'parcella-pins', e => {
-    const p = e.features[0].properties;
-    if (onSiteClick) onSiteClick(p.id);
-  });
-
-  // Cluster click → zoom in
-  map.on('click', 'parcella-clusters', e => {
-    const features = map.queryRenderedFeatures(e.point, { layers: ['parcella-clusters'] });
-    const clusterId = features[0].properties.cluster_id;
-    map.getSource('parcella-sites').getClusterExpansionZoom(clusterId, (err, zoom) => {
-      if (err) return;
-      map.easeTo({ center: features[0].geometry.coordinates, zoom });
+      `);
+      infoWindow.open(map, marker);
     });
+
+    marker.addListener('mouseout', () => {
+      setTimeout(() => infoWindow.close(), 300);
+    });
+
+    // Click → open detail panel
+    marker.addListener('click', () => {
+      if (onSiteClick) onSiteClick(site.id ?? site.site_id);
+    });
+
+    markers.push({ marker, site });
   });
 
-  map.on('mouseenter', 'parcella-clusters', () => {
-    map.getCanvas().style.cursor = 'pointer';
-  });
-  map.on('mouseleave', 'parcella-clusters', () => {
-    map.getCanvas().style.cursor = '';
-  });
+  // Global bridge for InfoWindow onclick
+  window._parcella_open = (id) => {
+    if (onSiteClick) onSiteClick(id);
+  };
+
+  return markers;
 }
 
-// ── Update data without full re-init ──────────────────────────────────────────
-export function updateMapData(map, sites) {
-  const source = map.getSource('parcella-sites');
-  if (source) {
-    source.setData(buildGeoJSON(sites));
+// ── Street View ───────────────────────────────────────────────────────────────
+/**
+ * Show Street View for an address
+ * @param {string} containerId — DOM element to render into
+ * @param {string} address     — full street address
+ * @param {Object} coords      — { lat, lng } fallback if geocode fails
+ */
+export function showStreetView(containerId, address, coords) {
+  const { google } = window;
+  const el = document.getElementById(containerId);
+  if (!el) return;
+
+  const sv = new google.maps.StreetViewPanorama(el, {
+    position:          { lat: coords.lat, lng: coords.lng },
+    pov:               { heading: 34, pitch: 10 },
+    zoom:              1,
+    addressControl:    true,
+    linksControl:      true,
+    panControl:        false,
+    enableCloseButton: false,
+  });
+
+  // Try to find the exact address heading
+  const service = new google.maps.StreetViewService();
+  service.getPanorama({ location: coords, radius: 100 }, (data, status) => {
+    if (status === 'OK') sv.setPano(data.location.pano);
+  });
+
+  return sv;
+}
+
+/**
+ * Get Street View thumbnail URL (no JS needed — static image)
+ */
+export function streetViewThumbnailURL(lat, lng, apiKey, size = '400x200') {
+  return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&fov=90&heading=0&pitch=0&key=${apiKey}`;
+}
+
+// ── Geocoding ─────────────────────────────────────────────────────────────────
+export async function geocodeAddress(address, apiKey) {
+  // Server-side: use Geocoding API directly
+  const encoded = encodeURIComponent(`${address}, Los Angeles, CA`);
+  const res = await fetch(
+    `https://maps.googleapis.com/maps/api/geocode/json?address=${encoded}&key=${apiKey}`
+  );
+  if (!res.ok) throw new Error(`Geocoding API: ${res.status}`);
+  const data = await res.json();
+  if (data.status !== 'OK' || !data.results.length) {
+    throw new Error(`No geocode result for: ${address}`);
+  }
+  const loc = data.results[0].geometry.location;
+  return { lat: loc.lat, lng: loc.lng, formattedAddress: data.results[0].formatted_address };
+}
+
+// ── Fit bounds ────────────────────────────────────────────────────────────────
+export function fitToSites(map, sites) {
+  if (!sites?.length) return;
+  const { google } = window;
+  const bounds = new google.maps.LatLngBounds();
+  sites.forEach(site => {
+    const hood   = site.hood ?? site.neighborhood;
+    const coords = site.coordinates ?? MAP_COORDS[hood];
+    if (coords) bounds.extend({ lat: coords.lat, lng: coords.lng });
+  });
+  if (!bounds.isEmpty()) {
+    map.fitBounds(bounds, { padding: 60 });
+    if (map.getZoom() > 14) map.setZoom(14);
   }
 }
 
-// ── Fit map to filtered results ───────────────────────────────────────────────
-export function fitToSites(map, sites) {
-  if (!sites.length) return;
-  const bounds = new mapboxgl.LngLatBounds();
-  sites.forEach(site => {
-    const lng = site.coordinates?.lng ?? MAP_COORDS[site.hood]?.lng ?? -118.25;
-    const lat = site.coordinates?.lat ?? MAP_COORDS[site.hood]?.lat ?? 34.05;
-    bounds.extend([lng, lat]);
+// ── Update markers on filter change ──────────────────────────────────────────
+export function updateMarkers(markerObjects, filteredSiteIds) {
+  const idSet = new Set(filteredSiteIds);
+  markerObjects.forEach(({ marker, site }) => {
+    marker.setVisible(idSet.has(site.id ?? site.site_id));
   });
-  map.fitBounds(bounds, { padding: 60, maxZoom: 14, duration: 600 });
 }
 
-// ── Neighborhood boundary overlay ─────────────────────────────────────────────
-export async function addNeighborhoodLayer(map) {
-  // LA neighborhood boundaries from city open data GeoJSON
-  // In production: fetch from https://data.lacity.org/resource/2drs-n8df.geojson
-  // For now adds a subtle label layer at each neighborhood centroid
-  const neighborhoods = Object.entries(MAP_COORDS).map(([name, coords]) => ({
-    type: 'Feature',
-    geometry: { type: 'Point', coordinates: [coords.lng, coords.lat] },
-    properties: { name },
-  }));
-
-  if (map.getSource('neighborhoods')) return;
-
-  map.addSource('neighborhoods', {
-    type: 'geojson',
-    data: { type: 'FeatureCollection', features: neighborhoods },
-  });
-
-  map.addLayer({
-    id:     'neighborhood-labels',
-    type:   'symbol',
-    source: 'neighborhoods',
-    layout: {
-      'text-field':         ['get', 'name'],
-      'text-font':          ['DIN Offc Pro Regular', 'Arial Unicode MS Regular'],
-      'text-size':          11,
-      'text-anchor':        'center',
-      'text-allow-overlap': false,
-    },
-    paint:  {
-      'text-color':       '#0f1f3d',
-      'text-halo-color':  'rgba(255,255,255,0.8)',
-      'text-halo-width':  1.5,
-      'text-opacity':     0.7,
-    },
-    minzoom: 10,
-    maxzoom: 14,
+// ── Neighborhood labels ───────────────────────────────────────────────────────
+export function addNeighborhoodLabels(map) {
+  const { google } = window;
+  Object.entries(MAP_COORDS).forEach(([hood, coords]) => {
+    new google.maps.Marker({
+      position: { lat: coords.lat, lng: coords.lng },
+      map,
+      icon: {
+        path:        google.maps.SymbolPath.CIRCLE,
+        scale:       0,
+        fillOpacity: 0,
+        strokeOpacity: 0,
+      },
+      label: {
+        text:      hood,
+        color:     '#0f1f3d',
+        fontSize:  '10px',
+        fontWeight:'500',
+        className: 'hood-label',
+      },
+      zIndex: 0,
+    });
   });
 }

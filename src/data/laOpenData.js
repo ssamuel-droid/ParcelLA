@@ -293,3 +293,78 @@ export async function enrichSite(site) {
     enrichedAt:   new Date().toISOString(),
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOOGLE MAPS GEOCODING (replaces Mapbox server-side geocoding)
+// Uses the same API key as the frontend map
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Geocode an LA address using Google Geocoding API
+ * More accurate than Mapbox for LA street addresses
+ */
+export async function googleGeocode(address) {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) throw new Error('GOOGLE_MAPS_API_KEY not set');
+
+  const encoded = encodeURIComponent(`${address}, Los Angeles, CA`);
+  const res = await fetch(
+    `https://maps.googleapis.com/maps/api/geocode/json?address=${encoded}&key=${key}&region=us`
+  );
+  if (!res.ok) throw new Error(`Google Geocoding: ${res.status}`);
+
+  const data = await res.json();
+  if (data.status !== 'OK' || !data.results.length) {
+    throw new Error(`No geocode result: ${data.status} — ${address}`);
+  }
+
+  const result = data.results[0];
+  const loc    = result.geometry.location;
+
+  // Extract address components
+  const components = {};
+  result.address_components.forEach(c => {
+    c.types.forEach(t => { components[t] = c.long_name; });
+  });
+
+  return {
+    lat:              loc.lat,
+    lng:              loc.lng,
+    formattedAddress: result.formatted_address,
+    zip:              components.postal_code,
+    neighborhood:     components.neighborhood,
+    city:             components.locality,
+    county:           components.administrative_area_level_2,
+    accuracy:         result.geometry.location_type,  // ROOFTOP, RANGE_INTERPOLATED, etc.
+  };
+}
+
+/**
+ * Batch geocode multiple addresses (respects 50 req/s limit)
+ */
+export async function batchGeocode(addresses, delayMs = 20) {
+  const results = [];
+  for (const address of addresses) {
+    try {
+      const r = await googleGeocode(address);
+      results.push({ address, ...r, error: null });
+    } catch (e) {
+      results.push({ address, error: e.message });
+    }
+    if (delayMs) await new Promise(r => setTimeout(r, delayMs));
+  }
+  return results;
+}
+
+/**
+ * Street View Static API — returns image URL for a location
+ * Used in PDF deal memos and email templates
+ */
+export function streetViewImageURL(lat, lng, options = {}) {
+  const key    = process.env.GOOGLE_MAPS_API_KEY;
+  const size   = options.size    ?? '600x300';
+  const fov    = options.fov     ?? 90;
+  const heading = options.heading ?? 0;
+  const pitch  = options.pitch   ?? 10;
+  return `https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${lat},${lng}&fov=${fov}&heading=${heading}&pitch=${pitch}&key=${key}`;
+}
