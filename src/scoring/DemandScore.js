@@ -204,7 +204,7 @@ export async function scoreSiteDemand(site) {
   }
 
   // Estimated avg rent for income ratio calc
-  const { RENTS } = await import('./submarkets.js');
+  const { RENTS } = await import('../data/submarkets.js');
   const R = RENTS[hood];
   const avgRent = R ? (R.studio * 0.2 + R.one * 0.45 + R.two * 0.25 + R.three * 0.10) : 2500;
 
