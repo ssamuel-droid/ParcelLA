@@ -11,8 +11,8 @@
 import { Router }      from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { requireAuth, optionalAuth }  from '../middleware/auth.js';
-import { SITES }       from '../src/data/sites.js';
-import { runModel }    from '../src/model/financialModel.js';
+import { SITES }       from '../../src/data/sites.js';
+import { runModel }    from '../../src/model/financialModel.js';
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);

@@ -3,9 +3,9 @@
  * POST /api/pdf/:id  — generate deal memo PDF
  */
 import { Router } from 'express';
-import { SITES }  from '../src/data/sites.js';
-import { runModel } from '../src/model/financialModel.js';
-import { pdfLimiter } from './middleware/middleware.js';
+import { SITES }  from '../../src/data/sites.js';
+import { runModel } from '../../src/model/financialModel.js';
+import { pdfLimiter } from '../middleware/middleware.js';
 
 const pdfRouter = Router();
 
@@ -149,7 +149,7 @@ export { authRouter };
  * POST   /api/alerts        — create alert
  * DELETE /api/alerts/:id    — delete alert
  */
-import { requireAuth } from './middleware/auth.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const alertsRouter = Router();
 

@@ -9,13 +9,13 @@
  */
 
 import { Router } from 'express';
-import { SITES }   from '../src/data/sites.js';
-import { runModel, runScenarios } from '../src/model/financialModel.js';
-import { enrichSite }    from '../src/data/laOpenData.js';
-import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../src/scoring/DemandScore.js';
-import { requireAuth, optionalAuth } from './middleware/auth.js';
-import { validateSiteFilters, validateModelOverrides } from './middleware/middleware.js';
-import { supabase } from '../src/data/supabase.js';
+import { SITES }   from '../../src/data/sites.js';
+import { runModel, runScenarios } from '../../src/model/financialModel.js';
+import { enrichSite }    from '../../src/data/laOpenData.js';
+import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/DemandScore.js';
+import { requireAuth, optionalAuth } from '../middleware/auth.js';
+import { validateSiteFilters, validateModelOverrides } from '../middleware/middleware.js';
+import { supabase } from '../../src/data/supabase.js';
 
 const router = Router();
 

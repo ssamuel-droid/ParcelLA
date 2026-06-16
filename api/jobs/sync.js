@@ -14,8 +14,8 @@
 
 import cron       from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
-import { fetchPermits, fetchRTIStatus } from '../src/data/laOpenData.js';
-import { SITES } from '../src/data/sites.js';
+import { fetchPermits, fetchRTIStatus } from '../../src/data/laOpenData.js';
+import { SITES } from '../../src/data/sites.js';
 
 const sb = createClient(
   process.env.SUPABASE_URL,

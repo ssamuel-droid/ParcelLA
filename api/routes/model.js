@@ -8,12 +8,12 @@
  */
 
 import { Router } from 'express';
-import { SITES }  from '../src/data/sites.js';
-import { runModel, runScenarios } from '../src/model/financialModel.js';
-import { runWaterfall, compareWaterfalls, WATERFALL_PRESETS } from '../src/waterfall/Waterfall.js';
-import { requireAuth } from './middleware/auth.js';
-import { validateModelOverrides, modelLimiter } from './middleware/middleware.js';
-import { supabase } from '../src/data/supabase.js';
+import { SITES }  from '../../src/data/sites.js';
+import { runModel, runScenarios } from '../../src/model/financialModel.js';
+import { runWaterfall, compareWaterfalls, WATERFALL_PRESETS } from '../../src/waterfall/Waterfall.js';
+import { requireAuth } from '../middleware/auth.js';
+import { validateModelOverrides, modelLimiter } from '../middleware/middleware.js';
+import { supabase } from '../../src/data/supabase.js';
 
 const router = Router();
 
