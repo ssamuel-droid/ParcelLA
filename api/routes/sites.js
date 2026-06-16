@@ -152,7 +152,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
     const overrides = buildOverrides(req.query);
-    const model     = runModel(site, overrides);
+    const model     = runModel(normalizeSite(site), overrides);
     const scenarios = runScenarios(normalizeSite(site), overrides);
 
     // If user is logged in, check if they've saved this site
