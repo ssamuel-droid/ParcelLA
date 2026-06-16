@@ -225,7 +225,7 @@ emailRouter.post('/deal-memo', requireAuth, async (req, res, next) => {
     if (!site)  return res.status(404).json({ error: 'Site not found' });
     const model = runModel(site, overrides);
 
-    const { emailDealMemoRoute } = await import('../src/email/Alerts.js');
+    const { emailDealMemoRoute } = await import('../../src/email/Alerts.js');
     await emailDealMemoRoute(req, res, next);
 
     await logActivity(req.user.id, 'email_deal_memo', siteId, { to });

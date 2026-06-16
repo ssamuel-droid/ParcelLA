@@ -11,7 +11,7 @@
  * Output: base units, bonus units, total units, and IRR uplift
  */
 
-import { distanceMiles } from './DemandScore.js';
+import { distanceMiles } from '../scoring/DemandScore.js';
 
 // ── LA Metro stations (for TOC tier calculation) ───────────────────────────────
 // TOC tiers based on distance to high-frequency transit

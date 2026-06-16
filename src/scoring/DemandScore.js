@@ -15,8 +15,8 @@
  * Dependencies: Census API, Mapbox API, Socrata (LADBS)
  */
 
-import { censusGeocode, fetchCensusACS } from './laOpenData.js';
-import { MAP_COORDS } from './submarkets.js';
+import { censusGeocode, fetchCensusACS } from '../data/laOpenData.js';
+import { MAP_COORDS } from '../data/submarkets.js';
 
 // ── LA job centers (major employment nodes) ───────────────────────────────────
 const JOB_CENTERS = [

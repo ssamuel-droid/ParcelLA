@@ -34,7 +34,7 @@ pdfRouter.post('/:id', pdfLimiter, async (req, res, next) => {
       askPrice: site.price,
     };
 
-    const { generateDealMemo } = await import('../src/pdf/DealMemo.js');
+    const { generateDealMemo } = await import('../../src/pdf/DealMemo.js');
     const pdf = await generateDealMemo(memo);
 
     const filename = `ParceLLA_${site.addr.replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_]/g,'')}.pdf`;
@@ -210,8 +210,8 @@ const submarketRouter = Router();
 
 submarketRouter.get('/', async (req, res, next) => {
   try {
-    const { RENTS, CAP_RATES, MAP_COORDS } = await import('../src/data/submarkets.js');
-    const { RENT_GROWTH_3YR, SUBMARKET_CENSUS_ESTIMATES } = await import('../src/scoring/DemandScore.js');
+    const { RENTS, CAP_RATES, MAP_COORDS } = await import('../../src/data/submarkets.js');
+    const { RENT_GROWTH_3YR, SUBMARKET_CENSUS_ESTIMATES } = await import('../../src/scoring/DemandScore.js');
 
     const result = Object.keys(RENTS).map(hood => ({
       hood,
@@ -230,8 +230,8 @@ submarketRouter.get('/', async (req, res, next) => {
 submarketRouter.get('/:hood', async (req, res, next) => {
   try {
     const hood = decodeURIComponent(req.params.hood);
-    const { RENTS, CAP_RATES, MAP_COORDS } = await import('../src/data/submarkets.js');
-    const { SUBMARKET_CENSUS_ESTIMATES } = await import('../src/scoring/DemandScore.js');
+    const { RENTS, CAP_RATES, MAP_COORDS } = await import('../../src/data/submarkets.js');
+    const { SUBMARKET_CENSUS_ESTIMATES } = await import('../../src/scoring/DemandScore.js');
 
     if (!RENTS[hood]) return res.status(404).json({ error: `Submarket not found: ${hood}` });
 

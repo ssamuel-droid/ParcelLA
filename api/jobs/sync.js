@@ -148,7 +148,7 @@ async function syncRentComps() {
     return;
   }
 
-  const { RENTS, CAP_RATES } = await import('../src/data/submarkets.js');
+  const { RENTS, CAP_RATES } = await import('../../src/data/submarkets.js');
   const neighborhoods = Object.keys(RENTS);
 
   for (const hood of neighborhoods) {
