@@ -9,7 +9,7 @@
  */
 
 import { Router } from 'express';
-import { SITES }   from '../../src/data/sites.js';
+import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel, runScenarios } from '../../src/model/financialModel.js';
 import { enrichSite }    from '../../src/data/laOpenData.js';
 import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/DemandScore.js';
@@ -71,7 +71,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     // Run pre-underwriting on every site
     const modelled = sites.map(s => ({
       ...s,
-      _m: runModel(s, overrides),
+      _m: runModel(normalizeSite(s), overrides),
     }));
 
     // Filter
@@ -153,7 +153,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 
     const overrides = buildOverrides(req.query);
     const model     = runModel(site, overrides);
-    const scenarios = runScenarios(site, overrides);
+    const scenarios = runScenarios(normalizeSite(site), overrides);
 
     // If user is logged in, check if they've saved this site
     let isSaved = false;

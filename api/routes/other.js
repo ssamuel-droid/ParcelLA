@@ -3,7 +3,7 @@
  * POST /api/pdf/:id  — generate deal memo PDF
  */
 import { Router } from 'express';
-import { SITES }  from '../../src/data/sites.js';
+import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel } from '../../src/model/financialModel.js';
 import { pdfLimiter } from '../middleware/middleware.js';
 
@@ -15,7 +15,7 @@ pdfRouter.post('/:id', pdfLimiter, async (req, res, next) => {
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
     const overrides = req.body.overrides ?? {};
-    const model     = runModel(site, overrides);
+    const model     = runModel(normalizeSite(site), overrides);
 
     // Merge site + model into a flat object for the template
     const memo = {

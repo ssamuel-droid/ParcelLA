@@ -8,7 +8,7 @@
  */
 
 import { Router } from 'express';
-import { SITES }  from '../../src/data/sites.js';
+import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel, runScenarios } from '../../src/model/financialModel.js';
 import { runWaterfall, compareWaterfalls, WATERFALL_PRESETS } from '../../src/waterfall/Waterfall.js';
 import { requireAuth } from '../middleware/auth.js';
@@ -24,7 +24,7 @@ router.post('/:id', modelLimiter, validateModelOverrides, async (req, res, next)
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
     const overrides = req.body.overrides ?? {};
-    const model     = runModel(site, overrides);
+    const model     = runModel(normalizeSite(site), overrides);
 
     res.json({ siteId: site.id, addr: site.addr, model });
   } catch (err) { next(err); }
@@ -37,14 +37,14 @@ router.post('/:id/scenarios', modelLimiter, async (req, res, next) => {
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
     const overrides  = req.body.overrides ?? {};
-    const scenarios  = runScenarios(site, overrides);
+    const scenarios  = runScenarios(normalizeSite(site), overrides);
 
     // Additional stress tests
     const stressTests = {
-      rentShock:    runModel(site, { ...overrides, rentMultiplier: 0.80, exitCapDelta: 0.005 }),
-      costOverrun:  runModel(site, { ...overrides, hcpsf: (overrides.hcpsf ?? 285) * 1.15 }),
-      capExpansion: runModel(site, { ...overrides, exitCapDelta: 0.0075 }),
-      rateSpike:    runModel(site, { ...overrides, rate: 0.085, months: 24 }),
+      rentShock:    runModel(normalizeSite(site), { ...overrides, rentMultiplier: 0.80, exitCapDelta: 0.005 }),
+      costOverrun:  runModel(normalizeSite(site), { ...overrides, hcpsf: (overrides.hcpsf ?? 285) * 1.15 }),
+      capExpansion: runModel(normalizeSite(site), { ...overrides, exitCapDelta: 0.0075 }),
+      rateSpike:    runModel(normalizeSite(site), { ...overrides, rate: 0.085, months: 24 }),
     };
 
     res.json({ siteId: site.id, scenarios, stressTests });
@@ -58,7 +58,7 @@ router.post('/:id/waterfall', modelLimiter, async (req, res, next) => {
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
     const { overrides = {}, preset = 'institutional', compare = false } = req.body;
-    const model = runModel(site, overrides);
+    const model = runModel(normalizeSite(site), overrides);
 
     let result;
     if (compare) {
@@ -96,7 +96,7 @@ router.put('/:id/overrides', requireAuth, validateModelOverrides, async (req, re
 
     // Return recalculated model with saved overrides
     const site  = SITES.find(s => s.id === siteId);
-    const model = site ? runModel(site, overrides) : null;
+    const model = site ? runModel(normalizeSite(site), overrides) : null;
 
     res.json({ saved: true, siteId, overrides, model });
   } catch (err) { next(err); }

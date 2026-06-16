@@ -11,7 +11,7 @@
 import { Router }      from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { requireAuth, optionalAuth }  from '../middleware/auth.js';
-import { SITES }       from '../../src/data/sites.js';
+import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel }    from '../../src/model/financialModel.js';
 
 function sb() {
@@ -28,7 +28,7 @@ narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
     const { overrides = {} } = req.body;
-    const model = runModel(site, overrides);
+    const model = runModel(normalizeSite(site), overrides);
 
     // Hash model assumptions for cache key
     const hash = `${model.land}|${model.hcpsf}|${model.exitCap}|${overrides.sc ?? 18}`;
@@ -223,7 +223,7 @@ emailRouter.post('/deal-memo', requireAuth, async (req, res, next) => {
 
     const site  = SITES.find(s => s.id === siteId);
     if (!site)  return res.status(404).json({ error: 'Site not found' });
-    const model = runModel(site, overrides);
+    const model = runModel(normalizeSite(site), overrides);
 
     const { emailDealMemoRoute } = await import('../../src/email/Alerts.js');
     await emailDealMemoRoute(req, res, next);

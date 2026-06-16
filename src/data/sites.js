@@ -33,3 +33,19 @@ export const SITES = [
   { id:26, addr:'1320 S Hoover St',          hood:'Koreatown',     type:'Multifamily', zone:'R4',      price:null,    lot:8800,  units:22, usf:710,  demo:false, rti:false, isComp:true,  ms:0.30,mo:0.45,mt:0.20,mth:0.05 },
   { id:27, addr:'4100 Crenshaw Blvd',        hood:'West Adams',    type:'Multifamily', zone:'R3',      price:null,    lot:7500,  units:13, usf:760,  demo:true,  rti:false, isComp:true,  ms:0.25,mo:0.50,mt:0.20,mth:0.05 },
 ];
+
+// ── Site normalizer ───────────────────────────────────────────────────────────
+// Converts short-form site properties to what financialModel.js expects
+export function normalizeSite(s) {
+  return {
+    ...s,
+    avgUnitSF: s.avgUnitSF ?? s.usf ?? 800,
+    hasDemo:   s.hasDemo   ?? s.demo ?? false,
+    unitMix: s.unitMix ?? {
+      studio: s.ms  ?? 0,
+      one:    s.mo  ?? 0.5,
+      two:    s.mt  ?? 0.3,
+      three:  s.mth ?? 0.2,
+    },
+  };
+}
