@@ -49,14 +49,31 @@ narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
                     : n >= 1e3 ? '$' + Math.round(n/1e3) + 'K'
                     : '$' + Math.round(n);
 
+    // Map model fields correctly
+    const landCost    = model.price ?? 0;
+    const totalCost   = model.totalCost ?? 0;
+    const hardCosts   = model.hardCosts ?? 0;
+    const softCosts   = model.softCosts ?? 0;
+    const carryCost   = model.carryCost ?? 0;
+    const noi         = model.noi ?? 0;
+    const entryCap    = model.marketCapRate ?? model.cap ?? 0.045;
+    const exitCap     = entryCap + 0.0025;
+    const exitValue   = model.exitValue ?? 0;
+    const netProfit   = model.exitProceeds ?? 0;
+    const irrV        = model.leveragedIRR ?? 0;
+    const capOnCost   = model.capRateOnCost ?? 0;
+    const devSpreadPct = model.devSpreadPct ?? 0;
+    const eqMult      = model.equityMultiple ?? 0;
+    const hcpsf       = model.hardCosts && model.totalSF ? Math.round(model.hardCosts / model.totalSF) : 285;
+
     const prompt = `You are a senior real estate development analyst at a top-tier LA investment firm. Write a concise, plain-English deal assessment.
 
 SITE: ${site.addr}, ${site.hood} · ${site.type} · ${site.units} units · ${site.rti ? 'RTI Approved' : site.isComp ? 'Off-market comp' : 'For sale'}
-LAND: ${fmtM(model.land)}${site.isComp ? ' (imputed)' : ''} · ALL-IN: ${fmtM(model.total)} (${fmtM(Math.round(model.total/site.units))}/unit)
-HARD COSTS: ${fmtM(model.hard)} ($${model.hcpsf}/SF RSMeans 2024) · SOFT: ${fmtM(model.soft)} · CARRY: ${fmtM(model.carry)}
-NOI: ${fmtM(model.noi)} · ENTRY CAP: ${(model.entryCap*100).toFixed(2)}% · EXIT CAP: ${(model.exitCap*100).toFixed(2)}%
-EXIT VALUE: ${fmtM(model.exitValue)} · NET PROFIT: ${fmtM(model.netProfit)} · IRR: ${model.irrV}%
-CAP ON COST: ${model.capOnCost}% · DEV SPREAD: ${model.devSpreadPct}% · EQUITY MULTIPLE: ${model.eqMult}x
+LAND: ${fmtM(landCost)}${site.isComp ? ' (imputed)' : ''} · ALL-IN: ${fmtM(totalCost)} (${fmtM(Math.round(totalCost/site.units))}/unit)
+HARD COSTS: ${fmtM(hardCosts)} ($${hcpsf}/SF RSMeans 2024) · SOFT: ${fmtM(softCosts)} · CARRY: ${fmtM(carryCost)}
+NOI: ${fmtM(noi)} · ENTRY CAP: ${(entryCap*100).toFixed(2)}% · EXIT CAP: ${(exitCap*100).toFixed(2)}%
+EXIT VALUE: ${fmtM(exitValue)} · NET PROFIT: ${fmtM(netProfit)} · IRR: ${Math.round(irrV*10)/10}%
+CAP ON COST: ${Math.round(capOnCost*10000)/100}% · DEV SPREAD: ${Math.round(devSpreadPct*1000)/10}% · EQUITY MULTIPLE: ${Math.round(eqMult*100)/100}x
 
 Write exactly 3 paragraphs, max 200 words total:
 1. Why this deal does or doesn't pencil — what's specifically driving the return number
