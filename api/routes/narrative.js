@@ -31,7 +31,7 @@ narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
     const model = runModel(normalizeSite(site), overrides);
 
     // Hash model assumptions for cache key
-    const hash = `${model.land}|${model.hcpsf}|${model.exitCap}|${overrides.sc ?? 18}`;
+    const hash = `${model.price}|${model.hardCosts}|${model.marketCapRate}|${overrides.sc ?? 18}`;
     const hashKey = hash.split('').reduce((h,c) => ((h*31)+c.charCodeAt(0))&0xffffffff,0).toString(16);
 
     // Check cache
