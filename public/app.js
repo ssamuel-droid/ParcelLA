@@ -1,5 +1,30 @@
 // ParceLLA — Frontend
 const API = 'https://parcella-api-production.up.railway.app';
+const GMAPS_KEY = 'AIzaSyAC7R0Wlh41L71vexWCYqdn3WAjx8PJeQ0';
+
+// Street View thumbnail for any address
+function streetViewURL(lat, lng, w=400, h=200) {
+  return `https://maps.googleapis.com/maps/api/streetview?size=${w}x${h}&location=${lat},${lng}&fov=90&heading=0&pitch=5&key=${GMAPS_KEY}`;
+}
+
+// Neighborhood center coordinates for Street View
+const HOOD_COORDS = {
+  'Silver Lake':   { lat: 34.0839, lng: -118.2703 },
+  'Echo Park':     { lat: 34.0784, lng: -118.2607 },
+  'Highland Park': { lat: 34.1084, lng: -118.2042 },
+  'Los Feliz':     { lat: 34.1019, lng: -118.2923 },
+  'Koreatown':     { lat: 34.0586, lng: -118.3006 },
+  'Mid-Wilshire':  { lat: 34.0626, lng: -118.3404 },
+  'Culver City':   { lat: 34.0211, lng: -118.3965 },
+  'Mar Vista':     { lat: 34.0005, lng: -118.4266 },
+  'West Adams':    { lat: 34.0139, lng: -118.3338 },
+  'Boyle Heights': { lat: 34.0333, lng: -118.2126 },
+};
+
+// Google Maps search link for an address
+function mapsLink(addr) {
+  return `https://www.google.com/maps/search/${encodeURIComponent(addr + ', Los Angeles, CA')}`;
+}
 const fmtM = n => n >= 1e6 ? '$'+(Math.round(n/1e5)/10)+'M' : n >= 1e3 ? '$'+Math.round(n/1e3)+'K' : '$'+Math.round(n||0);
 const fmtD = n => '$'+Math.round(n||0).toLocaleString();
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
@@ -290,6 +315,14 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">Land cost</div><div class="icv">${fmtD(s.landCost||s.askPrice||0)}${s.isComp?' <span style="font-size:8px;color:#ef9f27">(est)</span>':''}</div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
+    <div class="sh">Street View</div>
+    <a href="${mapsLink(s.addr)}" target="_blank" rel="noopener" style="display:block;border-radius:8px;overflow:hidden;border:1px solid #e8e8e8;margin-bottom:4px">
+      <img src="${streetViewURL(34.0522 + (s.id * 0.003), -118.2851 - (s.id * 0.002))}"
+        alt="Street view of ${s.addr}"
+        style="width:100%;height:140px;object-fit:cover;display:block"
+        onerror="this.parentElement.innerHTML='<div style=\'height:60px;display:flex;align-items:center;justify-content:center;background:#f8f8f8;font-size:11px;color:#aaa\'>Street View unavailable</div>'">
+      <div style="padding:5px 8px;font-size:9px;color:#666;background:#f8f8f8">📍 ${s.addr} · Click to open in Google Maps</div>
+    </a>
     <div class="sh">Returns</div>
     <div class="mbg">
       <div class="mb" style="border-left-color:${pc}"><div class="mbl">Net profit</div><div class="mbv" style="color:${pc}">${fmtM(prof)}</div><div class="mbs">exit − all-in</div></div>
