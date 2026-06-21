@@ -266,7 +266,7 @@ function renderCards() {
       </div>
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${pc}">${fmtM(prof)}</div></div>
-        <div class="kp"><div class="kpl">IRR</div><div class="kpv" style="color:${irrC(irr)}">${irr}%</div></div>
+        <div class="kp"><div class="kpl">IRR</div><div class="kpv" style="color:${irrC(irr)}">${Math.round(irr*10)/10}%</div></div>
         <div class="kp"><div class="kpl">Dev spread</div><div class="kpv">${spd}%</div></div>
         <div class="kp"><div class="kpl">Cap on cost</div><div class="kpv">${s.capOnCost||0}%</div></div>
       </div>
@@ -326,7 +326,7 @@ function renderDetail(s) {
     <div class="sh">Returns</div>
     <div class="mbg">
       <div class="mb" style="border-left-color:${pc}"><div class="mbl">Net profit</div><div class="mbv" style="color:${pc}">${fmtM(prof)}</div><div class="mbs">exit − all-in</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">IRR (5-yr)</div><div class="mbv" style="color:${ic}">${irr}%</div><div class="mbs">${irrL(irr)}</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">IRR (5-yr)</div><div class="mbv" style="color:${ic}">${Math.round(irr*10)/10}%</div><div class="mbs">${irrL(irr)}</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">Cap on cost</div><div class="mbv">${s.capOnCost||0}%</div><div class="mbs">vs ${((s.entryCap||0.045)*100).toFixed(2)}% mkt</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">Dev spread</div><div class="mbv">${spd}%</div><div class="mbs">${fmtM(prof)} above cost</div></div>
     </div>

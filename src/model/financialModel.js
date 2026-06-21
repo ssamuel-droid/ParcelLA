@@ -18,6 +18,7 @@ const DEFAULTS = {
   lpSplit:       0.80,   // LP share of excess above pref
   gpSplit:       0.20,   // GP promote
   demolitionCost: 45000, // flat rate if demo required
+  exitCapSpread:  0.0025, // 25bps cap rate expansion at exit vs entry
 };
 
 /**
@@ -107,7 +108,10 @@ export function runModel(site, overrides = {}) {
   const cocReturn   = cfbt / equity;
 
   // ── HOLD PERIOD & EXIT ─────────────────────────────────────────────────────
-  const exitValue   = stabilizedValue * Math.pow(1 + cfg.appreciationRate, cfg.holdYears);
+  // Exit value = NOI / exit cap rate (entry cap + 25bps expansion)
+  // No additional appreciation multiplier — exit cap already reflects market movement
+  const exitCapRate  = cap + (cfg.exitCapSpread ?? 0.0025);
+  const exitValue    = noi / exitCapRate;
   const exitProceeds = exitValue - loanAmount * 1.01;
 
   // Annual cash flows (levered)
