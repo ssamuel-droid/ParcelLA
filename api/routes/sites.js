@@ -88,19 +88,19 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       if (maxLot  && s.lot   > +maxLot)              return false;
       if (minPrice && !s.isComp && (s.price ?? 0) < +minPrice) return false;
       if (maxPrice && !s.isComp && (s.price ?? Infinity) > +maxPrice) return false;
-      if (minIRR   && m.irrV    < +minIRR)           return false;
-      if (minProfit && m.netProfit < +minProfit)      return false;
+      if (minIRR   && m.leveragedIRR    < +minIRR)           return false;
+      if (minProfit && m.exitProceeds < +minProfit)      return false;
       if (minSpread && m.devSpreadPct < +minSpread)   return false;
-      if (minCapoc  && m.capOnCost < +minCapoc)       return false;
+      if (minCapoc  && m.capRateOnCost < +minCapoc)       return false;
       return true;
     });
 
     // Sort
     const SORTS = {
-      profit:   (a,b) => b._m.netProfit   - a._m.netProfit,
-      irr:      (a,b) => b._m.irrV        - a._m.irrV,
+      profit:   (a,b) => b._m.exitProceeds   - a._m.exitProceeds,
+      irr:      (a,b) => b._m.leveragedIRR        - a._m.leveragedIRR,
       spread:   (a,b) => b._m.devSpreadPct - a._m.devSpreadPct,
-      capoc:    (a,b) => b._m.capOnCost   - a._m.capOnCost,
+      capoc:    (a,b) => b._m.capRateOnCost   - a._m.capRateOnCost,
       'price-a':(a,b) => (a.price??a._m.landCost) - (b.price??b._m.landCost),
       'price-d':(a,b) => (b.price??b._m.landCost) - (a.price??a._m.landCost),
       units:    (a,b) => b.units - a.units,
@@ -127,14 +127,19 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         isComp:       s.isComp,
         askPrice:     s.price,
         // Pre-underwritten metrics
-        landCost:     s._m.landCost,
         totalCost:    s._m.totalCost,
         noi:          s._m.noi,
         exitValue:    s._m.exitValue,
-        netProfit:    s._m.netProfit,
-        irrV:         s._m.irrV,
-        capOnCost:    s._m.capOnCost,
+        netProfit:    s._m.exitProceeds,
+        irrV:         s._m.leveragedIRR,
+        capOnCost:    Math.round(s._m.capRateOnCost * 10000) / 100,
         devSpreadPct: s._m.devSpreadPct,
+        landCost:     s._m.price ?? s.price,
+        noi:          s._m.noi,
+        entryCap:     s._m.marketCapRate,
+        exitCap:      s._m.marketCapRate + 0.0025,
+        coc:          s._m.cocReturn,
+        eqMult:       s._m.equityMultiple,
         coc:          s._m.coc,
         eqMult:       s._m.eqMult,
         entryCap:     s._m.entryCap,

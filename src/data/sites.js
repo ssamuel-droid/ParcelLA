@@ -37,8 +37,10 @@ export const SITES = [
 // ── Site normalizer ───────────────────────────────────────────────────────────
 // Converts short-form site properties to what financialModel.js expects
 export function normalizeSite(s) {
+  const landPrice = s.price ?? imputeLandValue(s);
   return {
     ...s,
+    price:     landPrice,
     avgUnitSF: s.avgUnitSF ?? s.usf ?? 800,
     hasDemo:   s.hasDemo   ?? s.demo ?? false,
     unitMix: s.unitMix ?? {
@@ -48,4 +50,15 @@ export function normalizeSite(s) {
       three:  s.mth ?? 0.2,
     },
   };
+}
+
+// Land value benchmarks for imputation (comps with no asking price)
+const LAND_PPU = { 'Multifamily': 150000, 'Mixed-Use': 165000, 'Condo/TH': 200000, 'SFR+ADU': 220000 };
+const LAND_PSF = { 'Multifamily': 185, 'Mixed-Use': 200, 'Condo/TH': 175, 'SFR+ADU': 160 };
+
+export function imputeLandValue(site) {
+  if (site.price) return site.price;
+  const ppu = LAND_PPU[site.type] ?? 150000;
+  const psf = LAND_PSF[site.type] ?? 185;
+  return Math.round(((site.units * ppu) + (site.lot * psf)) / 2);
 }
