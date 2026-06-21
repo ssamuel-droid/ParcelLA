@@ -3,93 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ParceLLA — Los Angeles development site marketplace. Every listing pre-underwritten: IRR, net profit, cap rate on cost, and development spread calculated automatically.">
-  <meta name="keywords" content="LA development sites, multifamily development, Los Angeles real estate, IRR calculator, development proforma">
-  <meta property="og:title" content="ParceLLA — LA Development Site Marketplace">
-  <meta property="og:description" content="Pre-underwritten LA development sites. Filter by IRR, net profit, cap rate on cost. RSMeans cost model. AI deal analysis.">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="https://parcella.com">
+  <meta name="description" content="ParceLLA — Los Angeles development site marketplace. Every listing pre-underwritten.">
   <title>ParceLLA — Los Angeles Development Site Marketplace</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    /* ── Loading screen ── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; background: #0f1f3d; font-family: 'Inter', system-ui, sans-serif; }
-    #root { height: 100%; }
-
-    #loading {
-      position: fixed; inset: 0; background: #0f1f3d;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      z-index: 9999; transition: opacity 0.4s;
-    }
-    #loading.hidden { opacity: 0; pointer-events: none; }
-    .load-logo { font-size: 28px; font-weight: 700; color: #fff; letter-spacing: -1px; margin-bottom: 8px; }
-    .load-logo span { color: #c49a3c; }
-    .load-sub { font-size: 12px; color: rgba(255,255,255,0.5); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 32px; }
-    .load-bar { width: 160px; height: 2px; background: rgba(255,255,255,0.1); border-radius: 1px; overflow: hidden; }
-    .load-fill { height: 100%; background: #c49a3c; border-radius: 1px; animation: loadfill 1.8s ease-in-out forwards; }
-    @keyframes loadfill { 0% { width: 0% } 60% { width: 85% } 100% { width: 100% } }
-    .load-err { color: #e24b4a; font-size: 13px; margin-top: 16px; text-align: center; max-width: 280px; display: none; }
-  </style>
 </head>
 <body>
-
-<!-- Loading screen -->
-<div id="loading">
-  <div class="load-logo">PARCEL<span>LA</span></div>
-  <div class="load-sub">Los Angeles Development Sites</div>
-  <div class="load-bar"><div class="load-fill"></div></div>
-  <div class="load-err" id="load-err"></div>
-</div>
-
-<!-- App root -->
-<div id="root"></div>
-
-<!-- Google Maps (loaded by MapView.js when needed) -->
-<!-- Key is injected server-side or via window.__PARCELLA_CONFIG__ -->
-
-<script>
-  // Config injected by server (avoids exposing key in static HTML)
-  // In production: server renders this block with actual values
-  window.__PARCELLA_CONFIG__ = {
-    apiUrl:        'https://parcella-api.up.railway.app',  // update after deploy
-    googleMapsKey: '',   // set via server or build env
-    env:           'production',
-  };
-
-  // In development, override with localhost
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    window.__PARCELLA_CONFIG__.apiUrl        = 'http://localhost:3001';
-    window.__PARCELLA_CONFIG__.googleMapsKey = '';  // set in .env as VITE_GOOGLE_MAPS_API_KEY
-    window.__PARCELLA_CONFIG__.env           = 'development';
-  }
-</script>
-
-<!-- Main app bundle (built by Vite: npm run build) -->
-<script type="module" src="/src/main.js"></script>
-
-<script>
-  // Dismiss loading screen when app mounts
-  window.__parcella_ready = function() {
-    const l = document.getElementById('loading');
-    l.classList.add('hidden');
-    setTimeout(() => l.remove(), 400);
-  };
-
-  // Show error if app fails to load
-  window.addEventListener('error', function(e) {
-    const err = document.getElementById('load-err');
-    if (err) {
-      err.style.display = 'block';
-      err.textContent   = 'Failed to load app. Check your connection and try again.';
-    }
-    console.error('App load error:', e);
-  });
-</script>
-
+<div id="app"></div>
+<script src="/app.js"></script>
 </body>
 </html>
