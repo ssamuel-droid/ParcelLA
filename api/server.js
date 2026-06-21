@@ -58,10 +58,7 @@ const PORT = process.env.PORT ?? 3001;
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(compression());
 app.use(cors({
-  origin:      process.env.ALLOWED_ORIGINS?.split(',') ?? [
-    'http://localhost:5173', 'http://localhost:3000',
-    'https://parcella.com', 'https://www.parcella.com',
-  ],
+  origin:      true,   // allow all origins — restrict after launch
   credentials: true,
   methods:     ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization','stripe-signature'],
