@@ -63,9 +63,18 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
 
     // Pull from Supabase in production — fall back to in-memory for dev
     let sites = SITES;
-    if (process.env.SUPABASE_URL && process.env.NODE_ENV === 'production') {
-      const { data, error } = await supabase.from('sites').select('*').eq('status', 'active');
-      if (!error && data?.length) sites = data;
+    // Try Supabase first, fall back to mock data if empty
+    if (process.env.SUPABASE_URL) {
+      try {
+        const { data, error } = await supabase.from('sites').select('*').eq('status', 'active');
+        if (!error && data?.length > 0) {
+          sites = data;
+        } else {
+          console.log('[sites] Supabase empty or error — using mock data');
+        }
+      } catch (e) {
+        console.log('[sites] Supabase failed — using mock data:', e.message);
+      }
     }
 
     // Run pre-underwriting on every site
