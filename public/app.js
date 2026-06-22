@@ -306,6 +306,36 @@ function renderDetail(s) {
     [(tc-(s.landCost||0))*0.18,'#ef9f27','Financing carry'],
   ].filter(x=>x[0]>0);
 
+  // Load comps async
+  setTimeout(async () => {
+    const compsEl = g('comps-' + s.id);
+    if (!compsEl) return;
+    const comps = await loadComps(s.hood);
+    if (!comps || comps.comps === 0) {
+      compsEl.innerHTML = '<span style="color:#aaa;font-size:10px">No recent sold comps in this submarket</span>';
+      return;
+    }
+    compsEl.innerHTML = `
+      <table style="width:100%;font-size:10px;border-collapse:collapse">
+        <tr style="color:#aaa"><td>Metric</td><td style="text-align:right">Avg</td><td style="text-align:right">Median</td></tr>
+        <tr style="border-top:0.5px solid #f0f0f0"><td>Cap rate</td>
+          <td style="text-align:right;font-weight:600">${comps.capRate?.avg ? (comps.capRate.avg*100).toFixed(2)+'%' : '—'}</td>
+          <td style="text-align:right">${comps.capRate?.median ? (comps.capRate.median*100).toFixed(2)+'%' : '—'}</td></tr>
+        <tr style="border-top:0.5px solid #f0f0f0"><td>Price/unit</td>
+          <td style="text-align:right;font-weight:600">${comps.pricePerUnit?.avg ? fmtD(comps.pricePerUnit.avg) : '—'}</td>
+          <td style="text-align:right">${comps.pricePerUnit?.median ? fmtD(comps.pricePerUnit.median) : '—'}</td></tr>
+        <tr style="border-top:0.5px solid #f0f0f0"><td style="color:#aaa">${comps.comps} comps · last 24 months</td><td></td><td></td></tr>
+      </table>
+      ${comps.recentComps?.length ? `
+      <div style="margin-top:6px;font-size:9px;color:#aaa;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Recent transactions</div>
+      ${comps.recentComps.slice(0,3).map(c => `
+        <div style="padding:4px 0;border-bottom:0.5px solid #f5f5f5;font-size:10px">
+          <span style="color:#333">${c.saleDate}</span>
+          <span style="float:right;font-weight:600">${fmtM(c.salePrice)}</span>
+          <span style="color:#aaa;float:right;margin-right:8px">${c.capRate ? (c.capRate*100).toFixed(2)+'% cap' : ''}</span>
+        </div>`).join('')}` : ''}`;
+  }, 100);
+
   g('d-body').innerHTML = `
     <div class="ig">
       <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${s.hood}</div></div>
@@ -341,10 +371,21 @@ function renderDetail(s) {
       <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">−${fmtD(tc)}</td></tr>
       <tr class="tot"><td style="color:${pc}">Net profit</td><td style="color:${pc};font-size:14px">${fmtD(prof)}</td></tr>
     </table>
+    <div class="sh">Sold comps — ${s.hood}</div>
+    <div id="comps-${s.id}" style="font-size:10px;color:#aaa">Loading comps...</div>
+
     <div class="sh">AI deal analysis <span style="font-size:8px;color:#bbb;font-weight:400">powered by Claude</span></div>
     <div id="narr-${s.id}"><button class="gb" onclick="generateNarrative(${s.id})">Generate analysis →</button></div>
     <button class="ab as" onclick="shareDeal()">⤴ Copy share link</button>
     <button class="ab ap" onclick="exportPDF(${s.id})">↓ Download PDF deal memo</button>`;
+}
+
+async function loadComps(hood) {
+  try {
+    const r = await fetch(API + '/api/comps/submarket/' + encodeURIComponent(hood));
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
 }
 
 async function generateNarrative(id) {

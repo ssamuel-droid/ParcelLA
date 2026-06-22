@@ -14,17 +14,20 @@ export const RENTS = {
   'Boyle Heights': { studio: 1600, one: 2050, two: 2700, three: 3500 },
 };
 
+// Stabilized market cap rates — 2024 LA multifamily development exits
+// Source: CoStar Q3 2024, local broker surveys, sold comp validation
+// Exit cap = entry cap + 25bps (cap rate expansion at sale)
 export const CAP_RATES = {
-  'Silver Lake':   0.042,
-  'Echo Park':     0.044,
-  'Highland Park': 0.046,
-  'Los Feliz':     0.040,
-  'Koreatown':     0.048,
-  'Mid-Wilshire':  0.045,
-  'Culver City':   0.042,
-  'Mar Vista':     0.043,
-  'West Adams':    0.047,
-  'Boyle Heights': 0.050,
+  'Silver Lake':   0.0475,  // premium westside-adjacent, strong demand
+  'Echo Park':     0.0500,
+  'Highland Park': 0.0525,  // improving but still value-add market
+  'Los Feliz':     0.0475,  // premium neighborhood, low vacancy
+  'Koreatown':     0.0525,  // high density, strong renter demand
+  'Mid-Wilshire':  0.0500,
+  'Culver City':   0.0475,  // tech-driven demand, low supply
+  'Mar Vista':     0.0500,
+  'West Adams':    0.0525,  // emerging, strong growth but higher risk
+  'Boyle Heights': 0.0575,  // highest yield, lower price basis
 };
 
 // RSMeans 2024 — Los Angeles Metro

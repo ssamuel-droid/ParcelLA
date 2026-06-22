@@ -18,7 +18,7 @@ const DEFAULTS = {
   lpSplit:       0.80,   // LP share of excess above pref
   gpSplit:       0.20,   // GP promote
   demolitionCost: 45000, // flat rate if demo required
-  exitCapSpread:  0.0025, // 25bps cap rate expansion at exit vs entry
+  exitCapSpread:  0.0050, // 50bps cap rate expansion at exit (development premium)
 };
 
 /**
