@@ -62,8 +62,9 @@ export function runModel(site, overrides = {}) {
   const cfg = { ...DEFAULTS, ...overrides };
   const { hood, type, price, units, avgUnitSF, hasDemo, unitMix } = site;
 
-  const R   = RENTS[hood];
-  const cap = CAP_RATES[hood];
+  const R   = RENTS[hood] ?? RENTS['Koreatown'];  // fallback to Koreatown if hood not found
+  const cap = CAP_RATES[hood] ?? CAP_RATES['Koreatown'];
+  if (!RENTS[hood]) console.warn(`[model] Unknown hood: "${hood}" — using Koreatown fallback`);
   const totalSF = units * avgUnitSF;
 
   // ── COSTS ──────────────────────────────────────────────────────────────────
