@@ -74,6 +74,25 @@ app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
 app.use('/api/', apiLimiter);
 
+// ── Frontend static files ────────────────────────────────────────────────────
+import { readFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname2 = dirname(fileURLToPath(import.meta.url));
+const publicDir  = join(__dirname2, '..', 'public');
+
+app.get('/', (req, res) => {
+  res.sendFile(join(publicDir, 'index.html'));
+});
+app.get('/app.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.sendFile(join(publicDir, 'app.js'));
+});
+app.get('/favicon.svg', (req, res) => {
+  res.sendFile(join(publicDir, 'favicon.svg'));
+});
+
 // ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/sites',       sitesRouter);
 app.use('/api/model',       modelRouter);
