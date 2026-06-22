@@ -91,6 +91,23 @@ app.use('/api/email',       emailRouter);
 app.use('/api/stripe',      stripeRouter);
 
 // ── Health ─────────────────────────────────────────────────────────────────────
+app.get('/api/setup-status', async (req, res) => {
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const tables = ['sites','profiles','saved_sites','deal_notes','model_overrides',
+      'alerts','rent_comps','sold_comps','permits','share_links','narratives','activity_log'];
+    const status = {};
+    for (const t of tables) {
+      try {
+        const { error } = await sb.from(t).select('id').limit(1);
+        status[t] = error ? 'MISSING' : 'OK';
+      } catch (e) { status[t] = 'ERROR'; }
+    }
+    res.json({ status, supabase: !!process.env.SUPABASE_URL });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/health', (req, res) => {
   res.json({
     status:    'ok',
