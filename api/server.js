@@ -131,3 +131,21 @@ app.listen(PORT, () => {
 });
 
 export default app;
+
+// ── Schema check endpoint ──────────────────────────────────────────────────────
+app.get('/api/setup-status', async (req, res) => {
+  const { createClient } = await import('@supabase/supabase-js');
+  const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+  const tables = ['sites','profiles','saved_sites','deal_notes','model_overrides',
+    'alerts','rent_comps','sold_comps','permits','share_links','narratives','activity_log'];
+  const status = {};
+  for (const table of tables) {
+    try {
+      const { error } = await sb.from(table).select('id').limit(1);
+      status[table] = !error ? '✅' : '❌ ' + error.message;
+    } catch (e) {
+      status[table] = '❌ ' + e.message;
+    }
+  }
+  res.json({ status, supabaseUrl: process.env.SUPABASE_URL ? 'connected' : 'missing' });
+});

@@ -164,13 +164,16 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
     let isSaved = false;
     let userOverrides = {};
     if (req.user) {
-      const { data: saved } = await supabase
-        .from('saved_sites').select('site_id').match({ user_id: req.user.id, site_id: id }).maybeSingle();
-      isSaved = !!saved;
-
-      const { data: ov } = await supabase
-        .from('model_overrides').select('overrides').match({ user_id: req.user.id, site_id: id }).maybeSingle();
-      if (ov) userOverrides = ov.overrides;
+      try {
+        const { data: saved } = await supabase
+          .from('saved_sites').select('site_id').match({ user_id: req.user.id, site_id: id }).maybeSingle();
+        isSaved = !!saved;
+        const { data: ov } = await supabase
+          .from('model_overrides').select('overrides').match({ user_id: req.user.id, site_id: id }).maybeSingle();
+        if (ov) userOverrides = ov.overrides;
+      } catch (e) {
+        console.warn('[sites] Supabase query failed:', e.message);
+      }
     }
 
     res.json({ site, model, scenarios, isSaved, userOverrides });

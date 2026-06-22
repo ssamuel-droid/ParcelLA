@@ -34,10 +34,16 @@ narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
     const hash = `${model.price}|${model.hardCosts}|${model.marketCapRate}|${overrides.sc ?? 18}`;
     const hashKey = hash.split('').reduce((h,c) => ((h*31)+c.charCodeAt(0))&0xffffffff,0).toString(16);
 
-    // Check cache
-    const { data: cached } = await sb()
-      .from('narratives').select('narrative')
-      .match({ site_id: siteId, model_hash: hashKey }).maybeSingle();
+    // Check cache (graceful fallback if table doesn't exist)
+    let cached = null;
+    try {
+      const { data } = await sb()
+        .from('narratives').select('narrative')
+        .match({ site_id: siteId, model_hash: hashKey }).maybeSingle();
+      cached = data;
+    } catch (e) {
+      console.warn('[narrative] Cache read failed (table may not exist):', e.message);
+    }
 
     if (cached) {
       await logActivity(req.user?.id, 'view_narrative', siteId);
@@ -105,10 +111,14 @@ Be direct, specific with numbers, opinionated. No hedging language. No bullet po
     const narrative = data.content?.[0]?.text ?? '';
     const tokens    = data.usage?.input_tokens + data.usage?.output_tokens;
 
-    // Cache it
-    await sb().from('narratives').upsert({
-      site_id: siteId, model_hash: hashKey, narrative, tokens_used: tokens,
-    });
+    // Cache it (graceful fallback if table doesn't exist)
+    try {
+      await sb().from('narratives').upsert({
+        site_id: siteId, model_hash: hashKey, narrative, tokens_used: tokens,
+      });
+    } catch (e) {
+      console.warn('[narrative] Cache write failed (table may not exist):', e.message);
+    }
 
     await logActivity(req.user?.id, 'generate_narrative', siteId, { tokens });
     res.json({ narrative, cached: false, tokens });

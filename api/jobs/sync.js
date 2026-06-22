@@ -28,6 +28,10 @@ async function syncLADBSPermits() {
   let synced = 0, errors = 0;
 
   try {
+    if (!process.env.SOCRATA_APP_TOKEN) {
+      console.warn('[sync] SOCRATA_APP_TOKEN not set — skipping LADBS sync');
+      return;
+    }
     // Pull last 200 permits ordered by most recent
     const permits = await fetchPermits({ limit: 200 });
     console.log(`[sync] Fetched ${permits.length} permits from LADBS`);
