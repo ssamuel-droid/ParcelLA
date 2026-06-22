@@ -2,14 +2,22 @@
   "version": 2,
   "builds": [
     {
-      "src": "public/**",
+      "src": "public/**/*",
       "use": "@vercel/static"
     }
   ],
   "routes": [
     {
+      "src": "/app.js",
+      "dest": "/public/app.js"
+    },
+    {
+      "src": "/favicon.svg",
+      "dest": "/public/favicon.svg"
+    },
+    {
       "src": "/(.*)",
-      "dest": "/public/$1"
+      "dest": "/public/index.html"
     }
   ]
 }
