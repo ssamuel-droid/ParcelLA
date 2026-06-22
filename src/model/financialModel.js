@@ -8,7 +8,7 @@ import { RENTS, CAP_RATES, RSMEANS, SCALE_DISCOUNTS } from '../data/submarkets.j
 const DEFAULTS = {
   softPct:       0.18,   // % of hard costs
   vacancyRate:   0.05,   // 5% vacancy
-  opexRatio:     0.35,   // 35% operating expense ratio
+  opexRatio:     0.38,   // 38% operating expense ratio (LA multifamily benchmark)
   ltc:           0.65,   // loan-to-cost
   interestRate:  0.065,  // 6.5% construction loan
   constructionMo: 18,    // months
@@ -102,17 +102,25 @@ export function runModel(site, overrides = {}) {
   const capRateOnCost   = noi / totalCost;
 
   // ── CASH FLOW ──────────────────────────────────────────────────────────────
+  // Permanent loan: sized at 65% LTC, 30yr amortization at 6.5%
+  const permRate    = cfg.interestRate;   // 6.5%
+  const permMo      = permRate / 12;
+  const permN       = 30 * 12;            // 30-year amortization
+  // Monthly P&I payment
+  const monthlyPI   = loanAmount * (permMo * Math.pow(1 + permMo, permN)) /
+                      (Math.pow(1 + permMo, permN) - 1);
+  const debtService = monthlyPI * 12;     // annual debt service
   const equity      = totalCost - loanAmount;
-  const debtService = loanAmount * cfg.interestRate;
   const cfbt        = noi - debtService;
   const cocReturn   = cfbt / equity;
 
   // ── HOLD PERIOD & EXIT ─────────────────────────────────────────────────────
-  // Exit value = NOI / exit cap rate (entry cap + 25bps expansion)
-  // No additional appreciation multiplier — exit cap already reflects market movement
   const exitCapRate  = cap + (cfg.exitCapSpread ?? 0.0025);
   const exitValue    = noi / exitCapRate;
-  const exitProceeds = exitValue - loanAmount * 1.01;
+  // Remaining loan balance after 5 years of amortization
+  const loanBalance5 = loanAmount * Math.pow(1 + permMo, 60) -
+    monthlyPI * (Math.pow(1 + permMo, 60) - 1) / permMo;
+  const exitProceeds = exitValue - loanBalance5;
 
   // Annual cash flows (levered)
   const cashflows = [-equity];

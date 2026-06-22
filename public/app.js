@@ -336,7 +336,7 @@ function renderDetail(s) {
     <div class="sh">Valuation</div>
     <table class="ct">
       <tr><td>NOI (stabilized)</td><td>${fmtD(s.noi||0)}</td></tr>
-      <tr><td>Exit cap rate</td><td>${((s.exitCap||0.045)*100).toFixed(2)}%</td></tr>
+      <tr><td>Exit cap rate</td><td>${(((s.entryCap||0.045)+0.0025)*100).toFixed(2)}%</td></tr>
       <tr><td>Exit value</td><td>${fmtD(s.exitValue||0)}</td></tr>
       <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">−${fmtD(tc)}</td></tr>
       <tr class="tot"><td style="color:${pc}">Net profit</td><td style="color:${pc};font-size:14px">${fmtD(prof)}</td></tr>
