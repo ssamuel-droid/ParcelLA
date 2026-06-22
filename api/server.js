@@ -100,8 +100,8 @@ app.get('/api/setup-status', async (req, res) => {
     const status = {};
     for (const t of tables) {
       try {
-        const { error } = await sb.from(t).select('id').limit(1);
-        status[t] = error ? 'MISSING' : 'OK';
+        const { error } = await sb.from(t).select('*').limit(1);
+        status[t] = error ? 'ERR:' + error.message : 'OK';
       } catch (e) { status[t] = 'ERROR'; }
     }
     res.json({ status, supabase: !!process.env.SUPABASE_URL });
