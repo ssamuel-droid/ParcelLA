@@ -48,6 +48,9 @@ import {
   passwordRouter, emailRouter,
 } from './routes/narrative.js';
 import { startSyncJobs } from './jobs/sync.js';
+import { readFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 if (process.env.NODE_ENV === 'production') checkEnv();
 
@@ -75,10 +78,6 @@ app.use(requestLogger);
 app.use('/api/', apiLimiter);
 
 // ── Frontend static files ────────────────────────────────────────────────────
-import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
 const __dirname2 = dirname(fileURLToPath(import.meta.url));
 const publicDir  = join(__dirname2, '..', 'public');
 
