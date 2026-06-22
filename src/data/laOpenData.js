@@ -54,10 +54,13 @@ export async function fetchPermits({ address, zone, type, limit = 50 } = {}) {
     ...(where.length ? { $where: where.join(' AND ') } : {}),
   });
 
-  const res = await fetch(`${SOCRATA_BASE}/nbyu-2ha9.json?${params}`, {
-    headers: socrataHeaders(),
-  });
-  if (!res.ok) throw new Error(`LADBS permits: HTTP ${res.status}`);
+  const url = `${SOCRATA_BASE}/nbyu-2ha9.json?${params}`;
+  console.log('[socrata] Fetching:', url);
+  const res = await fetch(url, { headers: socrataHeaders() });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`LADBS permits: HTTP ${res.status} — ${body.slice(0,200)}`);
+  }
   const data = await res.json();
 
   return data.map(p => ({
