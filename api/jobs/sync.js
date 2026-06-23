@@ -41,15 +41,16 @@ async function syncLADBSPermits() {
     // Try each permit dataset in sequence until one works
     let permits = [];
     const datasets = [
-      { id: 'hbkd-qubn', name: 'LADBS Community' },
-      { id: 't57t-h8jb', name: 'DBS Permits' },
-      { id: 'peyn-q7x3', name: 'DBS Permits 2' },
-      { id: 'w53t-rwwp', name: 'Permit Valuations' },
+      { id: 'cpkv-aajs', name: 'New Housing Units', orderField: 'date' },
+      { id: 'hbkd-qubn', name: 'LADBS Community',   orderField: 'permitissuancedate' },
+      { id: 't57t-h8jb', name: 'DBS Permits',        orderField: 'issue_date' },
+      { id: 'w53t-rwwp', name: 'Permit Valuations',  orderField: 'issueddate' },
     ];
 
     for (const ds of datasets) {
       try {
-        const url = `https://data.lacity.org/resource/${ds.id}.json?$limit=200&$order=permitissuancedate+DESC`;
+        const orderField = ds.orderField || 'date';
+        const url = `https://data.lacity.org/resource/${ds.id}.json?$limit=200&$order=${orderField}+DESC`;
         console.log(`[sync] Trying ${ds.name} (${ds.id})...`);
         const res = await fetch(url, { headers: { 'Accept': 'application/json', 'X-App-Token': process.env.SOCRATA_APP_TOKEN } });
         if (!res.ok) { console.warn(`[sync] ${ds.name}: HTTP ${res.status}`); continue; }
