@@ -1,5 +1,8 @@
 // ParceLLA — Frontend
-const API = 'https://parcella-api-production.up.railway.app';
+// Use relative URL when served from Railway, absolute when on Vercel
+const API = window.location.hostname === 'parcella-api-production.up.railway.app'
+  ? ''  // same server — use relative paths
+  : 'https://parcella-api-production.up.railway.app';
 const GMAPS_KEY = 'AIzaSyAC7R0Wlh41L71vexWCYqdn3WAjx8PJeQ0';
 
 // Street View thumbnail for any address
