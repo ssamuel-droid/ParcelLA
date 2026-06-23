@@ -16,16 +16,12 @@
 const SOCRATA_BASE = 'https://data.lacity.org/resource';
 
 function socrataHeaders() {
-  const token  = process.env.SOCRATA_APP_TOKEN;
-  const appId  = process.env.SOCRATA_APP_ID;
-  const headers = { 'Accept': 'application/json' };
-  // Socrata supports app token auth via X-App-Token header
-  if (token) headers['X-App-Token'] = token;
-  // Some datasets need keyId/keySecret basic auth
-  if (appId && token) {
-    headers['Authorization'] = 'Basic ' + Buffer.from(`${appId}:${token}`).toString('base64');
-  }
-  return headers;
+  // Socrata only needs X-App-Token header — no Basic auth needed
+  const token = process.env.SOCRATA_APP_TOKEN;
+  return {
+    'Accept': 'application/json',
+    ...(token ? { 'X-App-Token': token } : {}),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
