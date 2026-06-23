@@ -51,9 +51,11 @@ jobs:
             });
           }
 
-          async function fetchDataset(id, orderField) {
-            const url = `https://data.lacity.org/resource/${id}.json?%24limit=500&%24order=${orderField}%20DESC`;
-            console.log('Fetching:', `https://data.lacity.org/resource/${id}.json`);
+          async function fetchDataset(id, orderField, where = null) {
+            let params = `%24limit=500&%24order=${orderField}%20DESC`;
+            if (where) params += `&%24where=${encodeURIComponent(where)}`;
+            const url = `https://data.lacity.org/resource/${id}.json?${params}`;
+            console.log('Fetching:', `https://data.lacity.org/resource/${id}.json`, where ? `(filtered: ${where})` : '');
             const r = await request(url, {
               headers: { 'Accept': 'application/json', 'X-App-Token': TOKEN }
             });
@@ -80,19 +82,27 @@ jobs:
           }
 
           const DATASETS = [
-            { id: 't57t-h8jb', name: 'DBS Permits',       order: 'issue_date' },
-            { id: '6q2s-9pnn', name: 'Building Permits',   order: 'permitissuancedate' },
-            { id: 'hbkd-qubn', name: 'LADBS Community',    order: 'permitissuancedate' },
-            { id: 'cpkv-aajs', name: 'New Housing Units',  order: 'date' },
-            { id: 'w53t-rwwp', name: 'Permit Valuations',  order: 'issueddate' },
-            { id: 'peyn-q7x3', name: 'DBS Permits 2',      order: 'issueddate' },
+            // Filter for permits that are ISSUED but not yet finaled/expired
+            // These are active development opportunities
+            { id: 't57t-h8jb', name: 'DBS Permits',       order: 'issue_date',
+              where: "status='Issued' OR status='Ready to Issue' OR status='Plan Check'" },
+            { id: '6q2s-9pnn', name: 'Building Permits',   order: 'permitissuancedate',
+              where: "permitstatus='Issued' OR permitstatus='Ready to Issue'" },
+            { id: 'hbkd-qubn', name: 'LADBS Community',    order: 'permitissuancedate',
+              where: "permitstatus='Issued' OR permitstatus='Ready to Issue'" },
+            { id: 'cpkv-aajs', name: 'New Housing Units',  order: 'date',
+              where: null },  // keep all housing unit records
+            { id: 'w53t-rwwp', name: 'Permit Valuations',  order: 'issueddate',
+              where: null },
+            { id: 'peyn-q7x3', name: 'DBS Permits 2',      order: 'issueddate',
+              where: null },
           ];
 
           let total = 0;
           for (const ds of DATASETS) {
             console.log(`\n--- ${ds.name} (${ds.id}) ---`);
             try {
-              const records = await fetchDataset(ds.id, ds.order);
+              const records = await fetchDataset(ds.id, ds.order, ds.where);
               console.log(`  Got ${records.length} records`);
               if (!records.length) continue;
 
