@@ -299,6 +299,24 @@ export async function enrichSite(site) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NEW HOUSING UNITS
+// Dataset: cpkv-aajs — tracks new residential units permitted in LA
+// ─────────────────────────────────────────────────────────────────────────────
+export async function fetchNewHousingUnits({ neighborhood, limit = 100 } = {}) {
+  const params = new URLSearchParams({ $limit: limit, $order: 'date DESC' });
+  if (neighborhood) params.set('$where', `upper(community_plan_area) LIKE '%${neighborhood.toUpperCase()}%'`);
+
+  const url = `${SOCRATA_BASE}/cpkv-aajs.json?${params}`;
+  console.log('[socrata] Fetching new housing units:', url);
+  const res = await fetch(url, { headers: socrataHeaders() });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`New housing units: HTTP ${res.status} — ${body.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GOOGLE MAPS GEOCODING (replaces Mapbox server-side geocoding)
 // Uses the same API key as the frontend map
 // ─────────────────────────────────────────────────────────────────────────────

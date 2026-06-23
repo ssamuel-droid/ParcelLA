@@ -136,6 +136,30 @@ async function syncLADBSPermits() {
     } catch (e) {
       console.warn('[sync] Valuation sync error:', e.message);
     }
+
+    // Sync new housing units — identifies active development pipeline
+    try {
+      const units = await fetchNewHousingUnits({ limit: 100 });
+      console.log(`[sync] Fetched ${units.length} new housing unit records`);
+      for (const u of units) {
+        // Match to existing sites or log as market data
+        const addr = u.address || u.location_address;
+        if (addr) {
+          await sb.from('permits').upsert({
+            permit_number: u.permit_number || u.id || ('HU-' + u.date + '-' + Math.random().toString(36).slice(2,6)),
+            permit_type:   'NEW_HOUSING',
+            address:       addr,
+            units:         u.units || u.net_units,
+            status:        u.status || 'Active',
+            raw_data:      u,
+            synced_at:     new Date().toISOString(),
+          }, { onConflict: 'permit_number', ignoreDuplicates: true });
+        }
+      }
+      console.log('[sync] New housing units sync complete');
+    } catch (e) {
+      console.warn('[sync] New housing units sync error:', e.message);
+    }
   } catch (err) {
     console.error('[sync] Fatal sync error:', err.message);
     await sb.from('sync_log').insert({ source: 'LADBS', status: 'error', error: err.message });
