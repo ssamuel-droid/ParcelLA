@@ -57,7 +57,7 @@ jobs:
             const url = `https://data.lacity.org/resource/${id}.json?${params}`;
             console.log('Fetching:', `https://data.lacity.org/resource/${id}.json`, where ? `(filtered: ${where})` : '');
             const r = await request(url, {
-              headers: { 'Accept': 'application/json', 'X-App-Token': TOKEN }
+              headers: { 'Accept': 'application/json' }  // no token — public datasets
             });
             console.log(`  HTTP ${r.status}`);
             if (r.status !== 200) throw new Error('HTTP ' + r.status);
