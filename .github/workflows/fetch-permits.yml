@@ -31,7 +31,7 @@ jobs:
                 res.on('end', () => {
                   console.log(url.split('?')[0], '→ HTTP', res.statusCode);
                   if (res.statusCode === 200) resolve(JSON.parse(d));
-                  else reject(new Error('HTTP ' + res.statusCode + ': ' + d.slice(0,200)));
+                  else reject(new Error('HTTP ' + res.statusCode + ': ' + d.slice(0,300)));
                 });
               }).on('error', reject);
             });
@@ -55,10 +55,7 @@ jobs:
               }, res => {
                 let d = '';
                 res.on('data', c => d += c);
-                res.on('end', () => {
-                  console.log('Supabase →', res.statusCode, d.slice(0,150));
-                  resolve(res.statusCode);
-                });
+                res.on('end', () => resolve({ status: res.statusCode, body: d }));
               });
               req.on('error', reject);
               req.write(body);
@@ -66,60 +63,100 @@ jobs:
             });
           }
 
+          async function fetchAll(baseUrl, offsetStep = 1000) {
+            let all = [];
+            let offset = 0;
+            while (true) {
+              const url = `${baseUrl}&$limit=${offsetStep}&$offset=${offset}`;
+              const records = await get(url);
+              if (!records.length) break;
+              all = all.concat(records);
+              console.log(`  Fetched ${all.length} so far...`);
+              if (records.length < offsetStep) break;
+              offset += offsetStep;
+              if (all.length > 50000) break; // safety cap
+            }
+            return all;
+          }
+
+          async function syncDataset(name, baseUrl, buildRow) {
+            console.log(`\n=== ${name} ===`);
+            try {
+              const records = await fetchAll(baseUrl);
+              console.log(`Total: ${records.length} records`);
+
+              let synced = 0;
+              for (let i = 0; i < records.length; i += 100) {
+                const batch = records.slice(i, i + 100);
+                const rows = batch.map((r, j) => buildRow(r, i + j)).filter(Boolean);
+                const result = await upsert(rows);
+                if (result.status < 300) synced += rows.length;
+                else console.log('Batch error:', result.status, result.body.slice(0,100));
+              }
+              console.log(`Synced: ${synced}`);
+              return synced;
+            } catch(e) {
+              console.log('FAILED:', e.message);
+              return 0;
+            }
+          }
+
           async function main() {
             let total = 0;
 
-            // Only use datasets with confirmed working column names
-            const datasets = [
-              // t57t-h8jb confirmed working — 500 records
-              { url: 'https://data.lacity.org/resource/t57t-h8jb.json?$limit=1000&$order=issue_date+DESC', name: 'DBS Permits' },
-              // Try others without $order to avoid column errors
-              { url: 'https://data.lacity.org/resource/hbkd-qubn.json?$limit=500', name: 'LADBS Community' },
-              { url: 'https://data.lacity.org/resource/cpkv-aajs.json?$limit=500', name: 'New Housing Units' },
-              { url: 'https://data.lacity.org/resource/w53t-rwwp.json?$limit=500', name: 'Permit Valuations' },
-              { url: 'https://data.lacity.org/resource/peyn-q7x3.json?$limit=500', name: 'DBS Permits 2' },
-              { url: 'https://data.lacity.org/resource/6q2s-9pnn.json?$limit=500', name: 'Building Permits' },
-            ];
-
-            for (const ds of datasets) {
-              console.log('\n---', ds.name, '---');
-              try {
-                const records = await get(ds.url);
-                console.log('Got', records.length, 'records');
-                if (!records.length) continue;
-
-                // Batch into groups of 100 to avoid payload limits
-                for (let i = 0; i < records.length; i += 100) {
-                  const batch = records.slice(i, i + 100);
-                  const rows = batch.map((r, j) => {
-                    const addr = r.address ||
-                      (r.address_start ? `${r.address_start} ${r.street_direction||''} ${r.street_name||''} ${r.street_suffix||''}`.trim() : '') ||
-                      r.location_address || r.streetaddress || '';
-                    const pnum = String(r.pcis_permit || r.permitnumber || r.permit_number || r.pcisid || r.id || `${ds.name}-${i+j}`).slice(0,100);
-                    const status = String(r.latest_status || r.status || r.permitstatus || 'Active').slice(0,50);
-                    return {
-                      permit_number: pnum,
-                      permit_type:   ds.name,
-                      status:        status,
-                      address:       addr.slice(0,255),
-                      units:         parseInt(r.of_residential_dwelling_units || r.units || r.net_units || '0') || 0,
-                      valuation:     parseFloat(r.valuation || r.permit_valuation || '0') || 0,
-                      issued_date:   (r.issue_date || r.issueddate || r.permitissuancedate || r.date || '').split('T')[0] || null,
-                      is_rti:        status.toLowerCase().includes('ready'),
-                      raw_data:      r,
-                      synced_at:     new Date().toISOString(),
-                    };
-                  });
-
-                  const status = await upsert(rows);
-                  if (status < 300) total += rows.length;
-                  else console.log('Batch failed with status', status);
-                }
-              } catch(e) {
-                console.log('FAILED:', e.message);
+            // ── t57t-h8jb: DBS Permits — filter RTI/entitled only ─────────────
+            // Status values we want: Ready to Issue, Issued (not Finaled/Expired/Cancelled)
+            // permit_type filter: Bldg-New (new construction) 
+            total += await syncDataset(
+              'DBS Permits (RTI & Issued)',
+              'https://data.lacity.org/resource/t57t-h8jb.json' +
+              '?$order=issue_date+DESC' +
+              "&$where=permit_type='Bldg-New'+OR+permit_type='Bldg-Addition'" +
+              "+AND+(latest_status='Ready+to+Issue'+OR+latest_status='Issued')",
+              (r, i) => {
+                const addr = `${r.address_start||''} ${r.street_direction||''} ${r.street_name||''} ${r.street_suffix||''}`.trim();
+                const pnum = String(r.pcis_permit || `t57t-${i}`).slice(0,100);
+                const status = String(r.latest_status || 'Active');
+                const units = parseInt(r.of_residential_dwelling_units || '0') || 0;
+                // Only include residential/multifamily with 2+ units
+                if (units < 2 && !addr) return null;
+                return {
+                  permit_number: pnum,
+                  permit_type:   'Bldg-New',
+                  status:        status,
+                  address:       addr.slice(0,255),
+                  units:         units,
+                  valuation:     parseFloat(r.valuation || '0') || 0,
+                  issued_date:   (r.issue_date || '').split('T')[0] || null,
+                  is_rti:        status.toLowerCase().includes('ready'),
+                  zone:          r.zone || null,
+                  raw_data:      r,
+                  synced_at:     new Date().toISOString(),
+                };
               }
-            }
-            console.log('\n=== TOTAL SYNCED:', total, 'records ===');
+            );
+
+            // ── hbkd-qubn: LADBS Community permits ───────────────────────────
+            total += await syncDataset(
+              'LADBS Community Permits',
+              'https://data.lacity.org/resource/hbkd-qubn.json?$limit=1000',
+              (r, i) => ({
+                permit_number: String(r.permit_nbr || r.permitnumber || `hbkd-${i}`).slice(0,100),
+                permit_type:   'LADBS',
+                status:        String(r.status || r.permit_status || 'Active').slice(0,50),
+                address:       String(r.address || r.site_address || '').slice(0,255),
+                units:         parseInt(r.units || '0') || 0,
+                valuation:     parseFloat(r.valuation || '0') || 0,
+                issued_date:   (r.issue_date || r.issued_date || '').split('T')[0] || null,
+                is_rti:        String(r.status || '').toLowerCase().includes('ready'),
+                raw_data:      r,
+                synced_at:     new Date().toISOString(),
+              })
+            );
+
+            console.log('\n=============================');
+            console.log('TOTAL SYNCED:', total, 'records');
+            console.log('=============================');
           }
 
           main().catch(console.error);
