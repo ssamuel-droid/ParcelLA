@@ -317,6 +317,27 @@ export async function fetchNewHousingUnits({ neighborhood, limit = 100 } = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DBS PERMITS — t57t-h8jb
+// ─────────────────────────────────────────────────────────────────────────────
+export async function fetchDBSPermits({ address, limit = 100 } = {}) {
+  const params = new URLSearchParams({ $limit: limit, $order: 'issue_date DESC' });
+  if (address) params.set('$where', `upper(address) LIKE '%${address.toUpperCase()}%'`);
+  const res = await fetch(`${SOCRATA_BASE}/t57t-h8jb.json?${params}`, { headers: socrataHeaders() });
+  if (!res.ok) throw new Error(`DBS permits: HTTP ${res.status}`);
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATASET peyn-q7x3
+// ─────────────────────────────────────────────────────────────────────────────
+export async function fetchPeynDataset({ limit = 100 } = {}) {
+  const params = new URLSearchParams({ $limit: limit });
+  const res = await fetch(`${SOCRATA_BASE}/peyn-q7x3.json?${params}`, { headers: socrataHeaders() });
+  if (!res.ok) throw new Error(`peyn-q7x3: HTTP ${res.status}`);
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GOOGLE MAPS GEOCODING (replaces Mapbox server-side geocoding)
 // Uses the same API key as the frontend map
 // ─────────────────────────────────────────────────────────────────────────────
