@@ -81,13 +81,15 @@ app.use('/api/', apiLimiter);
 const __dirname2 = dirname(fileURLToPath(import.meta.url));
 const publicDir  = join(__dirname2, '..', 'public');
 
+console.log('[server] Serving static files from:', publicDir);
+
 // Serve all static files from public/
 app.use(express.static(publicDir));
 
-// Fallback — serve index.html for any non-API route
-app.get('/', (req, res) => {
-  res.sendFile('index.html', { root: publicDir });
-});
+// Explicit routes for frontend files
+app.get('/', (req, res) => res.sendFile(join(publicDir, 'index.html')));
+app.get('/app.js', (req, res) => res.sendFile(join(publicDir, 'app.js')));
+app.get('/favicon.svg', (req, res) => res.sendFile(join(publicDir, 'favicon.svg')));
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/sites',       sitesRouter);
