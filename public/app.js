@@ -5,6 +5,32 @@ const API = window.location.hostname === 'parcella-api-production.up.railway.app
   : 'https://parcella-api-production.up.railway.app';
 const GMAPS_KEY = 'AIzaSyAC7R0Wlh41L71vexWCYqdn3WAjx8PJeQ0';
 
+// LA City Open Data — fetched client-side (browser not blocked like Railway)
+const SOCRATA_TOKEN = 'Mj7n61b8beE9ZbxZPhNMSUrh';
+const SOCRATA_BASE  = 'https://data.lacity.org/resource';
+
+async function fetchLACityData(datasetId, params = {}) {
+  const qs = new URLSearchParams({ $limit: 200, ...params });
+  const url = `${SOCRATA_BASE}/${datasetId}.json?${qs}`;
+  const res = await fetch(url, {
+    headers: { 'X-App-Token': SOCRATA_TOKEN, 'Accept': 'application/json' }
+  });
+  if (!res.ok) throw new Error(`LA City data: HTTP ${res.status}`);
+  return res.json();
+}
+
+// Fetch new housing unit permits from LA City
+async function fetchHousingPermits() {
+  try {
+    const data = await fetchLACityData('cpkv-aajs', { $order: 'date DESC' });
+    console.log('[ladbs] Fetched', data.length, 'housing permits from LA City');
+    return data;
+  } catch (e) {
+    console.warn('[ladbs] Could not fetch housing permits:', e.message);
+    return [];
+  }
+}
+
 // Street View thumbnail for any address
 function streetViewURL(lat, lng, w=400, h=200) {
   return `https://maps.googleapis.com/maps/api/streetview?size=${w}x${h}&location=${lat},${lng}&fov=90&heading=0&pitch=5&key=${GMAPS_KEY}`;
