@@ -328,12 +328,12 @@ export async function fetchDBSPermits({ address, limit = 100 } = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DATASET peyn-q7x3
+// DBS PERMITS 2 — peyn-q7x3
 // ─────────────────────────────────────────────────────────────────────────────
-export async function fetchPeynDataset({ limit = 100 } = {}) {
+export async function fetchDBSPermits2({ limit = 100 } = {}) {
   const params = new URLSearchParams({ $limit: limit });
   const res = await fetch(`${SOCRATA_BASE}/peyn-q7x3.json?${params}`, { headers: socrataHeaders() });
-  if (!res.ok) throw new Error(`peyn-q7x3: HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`DBS permits 2: HTTP ${res.status}`);
   return res.json();
 }
 
