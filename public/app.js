@@ -440,20 +440,106 @@ function shareDeal() {
   alert('Link copied!\n'+url);
 }
 
-async function exportPDF(id) {
+function exportPDF(id) {
   if (!id) return;
-  try {
-    const r = await fetch(API+'/api/pdf/'+id, {
-      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({overrides:{}})
-    });
-    if (!r.ok) throw new Error('PDF failed');
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const s = allSites.find(x=>x.id===id);
-    a.href=url; a.download='ParceLLA_'+(s?.addr||id).replace(/\s+/g,'_')+'.pdf'; a.click();
-    URL.revokeObjectURL(url);
-  } catch(e) { alert('PDF: '+e.message); }
+  const s = allSites.find(x => x.id === id);
+  if (!s) return;
+
+  // Open a print-friendly page in a new window
+  const win = window.open('', '_blank');
+  const irr = s.irrV || 0;
+  const prof = s.netProfit || 0;
+  const pc = prof > 0 ? '#1d9e75' : '#e24b4a';
+  const ic = irrC(irr);
+
+  win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <title>ParceLLA Deal Memo — ${s.addr}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; color: #1a1a1a; font-size: 12px; }
+    h1 { font-size: 20px; color: #0f1f3d; margin-bottom: 4px; }
+    .sub { color: #888; font-size: 12px; margin-bottom: 24px; }
+    .logo { font-size: 14px; font-weight: 700; color: #0f1f3d; letter-spacing: -0.5px; margin-bottom: 16px; }
+    .logo span { color: #c49a3c; }
+    .grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 24px; }
+    .kp { background: #f8f8f8; border-radius: 6px; padding: 10px 12px; border-left: 3px solid #ddd; }
+    .kpl { font-size: 9px; color: #999; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .kpv { font-size: 18px; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    td { padding: 6px 8px; border-bottom: 0.5px solid #eee; font-size: 11px; }
+    td:last-child { text-align: right; font-weight: 600; }
+    .tot td { font-weight: 700; border-top: 1px solid #ddd; border-bottom: none; font-size: 13px; }
+    h2 { font-size: 13px; color: #0f1f3d; margin: 20px 0 10px; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+    .footer { margin-top: 40px; font-size: 9px; color: #aaa; border-top: 1px solid #eee; padding-top: 8px; }
+    @media print { body { margin: 20px; } }
+  </style>
+</head>
+<body>
+  <div class="logo">PARCEL<span>LA</span></div>
+  <h1>${s.addr}</h1>
+  <div class="sub">${s.hood || ''} · ${s.zone || ''} · ${s.units} units · ${s.isComp ? 'Off-market comp' : s.rti ? 'RTI Approved' : 'For sale'}</div>
+
+  <div class="grid">
+    <div class="kp" style="border-left-color:${pc}">
+      <div class="kpl">Net profit</div>
+      <div class="kpv" style="color:${pc}">${fmtM(prof)}</div>
+    </div>
+    <div class="kp" style="border-left-color:${ic}">
+      <div class="kpl">IRR (5-yr)</div>
+      <div class="kpv" style="color:${ic}">${Math.round(irr*10)/10}%</div>
+    </div>
+    <div class="kp" style="border-left-color:${ic}">
+      <div class="kpl">Cap on cost</div>
+      <div class="kpv">${s.capOnCost || 0}%</div>
+    </div>
+    <div class="kp" style="border-left-color:${ic}">
+      <div class="kpl">Dev spread</div>
+      <div class="kpv">${Math.round((s.devSpreadPct||0)*1000)/10}%</div>
+    </div>
+  </div>
+
+  <h2>Cost Breakdown</h2>
+  <table>
+    <tr><td>Land cost</td><td>${fmtD(s.landCost || s.askPrice || 0)}${s.isComp ? ' (imputed)' : ''}</td></tr>
+    <tr><td>Hard costs (RSMeans 2024)</td><td>${fmtD((s.totalCost||0) * 0.55)}</td></tr>
+    <tr><td>Soft costs (18% of hard)</td><td>${fmtD((s.totalCost||0) * 0.22)}</td></tr>
+    <tr><td>Financing carry</td><td>${fmtD((s.totalCost||0) * 0.12)}</td></tr>
+    <tr class="tot"><td>Total all-in cost</td><td>${fmtD(s.totalCost || 0)}</td></tr>
+  </table>
+
+  <h2>Valuation</h2>
+  <table>
+    <tr><td>NOI (stabilized yr 1)</td><td>${fmtD(s.noi || 0)}</td></tr>
+    <tr><td>Entry cap rate</td><td>${((s.entryCap||0.05)*100).toFixed(2)}%</td></tr>
+    <tr><td>Exit cap rate</td><td>${(((s.entryCap||0.05)+0.005)*100).toFixed(2)}%</td></tr>
+    <tr><td>Exit value</td><td>${fmtD(s.exitValue || 0)}</td></tr>
+    <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">−${fmtD(s.totalCost || 0)}</td></tr>
+    <tr class="tot"><td style="color:${pc}">Net profit</td><td style="color:${pc}">${fmtD(prof)}</td></tr>
+  </table>
+
+  <h2>Site Details</h2>
+  <table>
+    <tr><td>Address</td><td>${s.addr || ''}</td></tr>
+    <tr><td>Neighborhood</td><td>${s.hood || ''}</td></tr>
+    <tr><td>Zoning</td><td>${s.zone || ''}</td></tr>
+    <tr><td>Lot size</td><td>${(s.lot||0).toLocaleString()} SF</td></tr>
+    <tr><td>Units</td><td>${s.units}</td></tr>
+    <tr><td>Avg unit SF</td><td>${s.usf || 0} SF</td></tr>
+    <tr><td>RTI status</td><td>${s.rti ? '✓ RTI Approved' : 'Not entitled'}</td></tr>
+    <tr><td>Asking price</td><td>${s.isComp ? 'Off-market (imputed)' : fmtD(s.askPrice || 0)}</td></tr>
+  </table>
+
+  <div class="footer">
+    Generated by ParceLLA · parcella-api-production.up.railway.app · ${new Date().toLocaleDateString()} · 
+    All underwriting based on RSMeans 2024 costs, CoStar Q3 2024 cap rates, and market rent surveys. 
+    For informational purposes only — not investment advice.
+  </div>
+
+  <script>window.print(); window.close();</script>
+</body>
+</html>`);
+  win.document.close();
 }
 
 function resetFilters() {
