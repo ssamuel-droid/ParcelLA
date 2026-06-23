@@ -38,9 +38,16 @@ async function syncLADBSPermits() {
     console.log('[sync] Token prefix:', process.env.SOCRATA_APP_TOKEN?.slice(0,8));
     console.log('[sync] App ID prefix:', process.env.SOCRATA_APP_ID?.slice(0,8));
 
-    // Pull last 200 permits ordered by most recent
-    const permits = await fetchPermits({ limit: 200 });
-    console.log(`[sync] Fetched ${permits.length} permits from LADBS`);
+    // Try LADBS permits (may be restricted — fallback to assessor data)
+    let permits = [];
+    try {
+      permits = await fetchPermits({ limit: 200 });
+      console.log(`[sync] Fetched ${permits.length} permits from LADBS`);
+    } catch (e) {
+      console.warn('[sync] LADBS restricted — switching to LA County Assessor data');
+      await syncAssessorData();
+      return;
+    }
 
     for (const permit of permits) {
       try {
@@ -146,6 +153,48 @@ async function fireAlerts(site) {
     }
   } catch (err) {
     console.error('[alerts] Error firing alerts:', err.message);
+  }
+}
+
+// ── LA County Assessor sync ──────────────────────────────────────────────────
+async function syncAssessorData() {
+  console.log('[sync] Fetching LA County Assessor parcel data...');
+  try {
+    // LA County Assessor open data — no auth required
+    // Dataset: assessor parcels with land use codes
+    const url = 'https://data.lacounty.gov/resource/9trm-uz8i.json?' +
+      '$limit=200&' +
+      '$where=taxratearea_city=%27LOS%20ANGELES%27%20AND%20usetype=%27Residential%27&' +
+      '$order=roll_year%20DESC';
+
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) throw new Error(`Assessor API: ${res.status}`);
+
+    const parcels = await res.json();
+    console.log(`[sync] Fetched ${parcels.length} parcels from LA County Assessor`);
+
+    for (const parcel of parcels.slice(0, 50)) {
+      try {
+        await sb.from('permits').upsert({
+          permit_number:    parcel.ain,
+          permit_type:      'ASSESSOR',
+          status:           'Active',
+          address:          parcel.situs_address,
+          zone:             parcel.zoning,
+          valuation:        parcel.land_value,
+          raw_data:         parcel,
+          synced_at:        new Date().toISOString(),
+        }, { onConflict: 'permit_number' });
+      } catch (e) { /* skip individual errors */ }
+    }
+
+    await sb.from('sync_log').insert({
+      source: 'LA_ASSESSOR', records: parcels.length, status: 'ok'
+    });
+    console.log('[sync] Assessor sync complete');
+  } catch (e) {
+    console.error('[sync] Assessor sync error:', e.message);
+    await sb.from('sync_log').insert({ source: 'LA_ASSESSOR', status: 'error', error: e.message });
   }
 }
 
