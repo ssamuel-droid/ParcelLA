@@ -52,9 +52,9 @@ jobs:
           }
 
           async function fetchDataset(id, orderField, where = null) {
-            let params = `%24limit=500&%24order=${orderField}%20DESC`;
-            if (where) params += `&%24where=${encodeURIComponent(where)}`;
-            const url = `https://data.lacity.org/resource/${id}.json?${params}`;
+            const params = new URLSearchParams({ '$limit': '500', '$order': `${orderField} DESC` });
+            if (where) params.set('$where', where);
+            const url = `https://data.lacity.org/resource/${id}.json?${params.toString()}`;
             console.log('Fetching:', `https://data.lacity.org/resource/${id}.json`, where ? `(filtered: ${where})` : '');
             const r = await request(url, {
               headers: { 'Accept': 'application/json' }  // no token — public datasets
