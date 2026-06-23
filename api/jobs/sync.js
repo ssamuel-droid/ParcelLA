@@ -117,6 +117,25 @@ async function syncLADBSPermits() {
     });
 
     console.log(`[sync] Complete — ${synced} synced, ${errors} errors`);
+
+    // Also sync permit valuations
+    try {
+      const valuations = await fetchPermitValuations({ limit: 100 });
+      console.log(`[sync] Fetched ${valuations.length} permit valuations`);
+      for (const v of valuations) {
+        await sb.from('permits').upsert({
+          permit_number: v.permitnumber || v.permit_number,
+          permit_type:   'VALUATION',
+          address:       v.address,
+          valuation:     v.valuation || v.permit_valuation,
+          raw_data:      v,
+          synced_at:     new Date().toISOString(),
+        }, { onConflict: 'permit_number', ignoreDuplicates: true });
+      }
+      console.log('[sync] Valuation sync complete');
+    } catch (e) {
+      console.warn('[sync] Valuation sync error:', e.message);
+    }
   } catch (err) {
     console.error('[sync] Fatal sync error:', err.message);
     await sb.from('sync_log').insert({ source: 'LADBS', status: 'error', error: err.message });
