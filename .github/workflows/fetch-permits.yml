@@ -111,15 +111,17 @@ jobs:
               'DBS Permits (RTI & Issued)',
               'https://data.lacity.org/resource/t57t-h8jb.json' +
               '?$order=issue_date+DESC' +
-              "&$where=permit_type='Bldg-New'+OR+permit_type='Bldg-Addition'" +
-              "+AND+(latest_status='Ready+to+Issue'+OR+latest_status='Issued')",
+              "&$where=(permit_type='Bldg-New'+OR+permit_type='Bldg-Addition')" +
+              "+AND+(latest_status='Ready+to+Issue'" +
+              "+OR+latest_status='Issued'" +
+              "+OR+latest_status='Plan+Check')",
               (r, i) => {
                 const addr = `${r.address_start||''} ${r.street_direction||''} ${r.street_name||''} ${r.street_suffix||''}`.trim();
                 const pnum = String(r.pcis_permit || `t57t-${i}`).slice(0,100);
                 const status = String(r.latest_status || 'Active');
                 const units = parseInt(r.of_residential_dwelling_units || '0') || 0;
-                // Only include residential/multifamily with 2+ units
-                if (units < 2 && !addr) return null;
+                // Include all residential including SFR+ADU
+                if (!addr && !pnum.startsWith('t57t')) return null;
                 return {
                   permit_number: pnum,
                   permit_type:   'Bldg-New',
