@@ -68,12 +68,14 @@ export function runModel(site, overrides = {}) {
   const totalSF = units * avgUnitSF;
 
   // ── COSTS ──────────────────────────────────────────────────────────────────
-  const hardCosts   = calcHardCosts(type, totalSF, overrides.hardCostPerSF);
-  const softCosts   = hardCosts * cfg.softPct;
-  const loanAmount  = (hardCosts + softCosts) * cfg.ltc;
-  const carryCost   = loanAmount * cfg.interestRate * (cfg.constructionMo / 12);
-  const demolition  = hasDemo ? cfg.demolitionCost : 0;
-  const totalCost   = price + hardCosts + softCosts + carryCost + demolition;
+  const hardCosts    = calcHardCosts(type, totalSF, overrides.hardCostPerSF);
+  const softCosts    = hardCosts * cfg.softPct;
+  const demolition   = hasDemo ? cfg.demolitionCost : 0;
+  // Size loan on pre-carry cost basis (standard construction loan sizing)
+  const preLoanCost  = price + hardCosts + softCosts + demolition;
+  const loanAmount   = preLoanCost * cfg.ltc;
+  const carryCost    = loanAmount * cfg.interestRate * (cfg.constructionMo / 12);
+  const totalCost    = preLoanCost + carryCost;
 
   // Soft cost breakdown
   const softDetail = {
@@ -103,25 +105,19 @@ export function runModel(site, overrides = {}) {
   const capRateOnCost   = noi / totalCost;
 
   // ── CASH FLOW ──────────────────────────────────────────────────────────────
-  // Permanent loan: sized at 65% LTC, 30yr amortization at 6.5%
+  // Development deals: interest-only during hold period (5yr)
+  // Typical perm loan is I/O for 3-5 years then converts
   const permRate    = cfg.interestRate;   // 6.5%
-  const permMo      = permRate / 12;
-  const permN       = 30 * 12;            // 30-year amortization
-  // Monthly P&I payment
-  const monthlyPI   = loanAmount * (permMo * Math.pow(1 + permMo, permN)) /
-                      (Math.pow(1 + permMo, permN) - 1);
-  const debtService = monthlyPI * 12;     // annual debt service
+  const debtService = loanAmount * permRate;  // I/O annual debt service
   const equity      = totalCost - loanAmount;
   const cfbt        = noi - debtService;
   const cocReturn   = cfbt / equity;
 
   // ── HOLD PERIOD & EXIT ─────────────────────────────────────────────────────
-  const exitCapRate  = cap + (cfg.exitCapSpread ?? 0.0025);
+  const exitCapRate  = cap + (cfg.exitCapSpread ?? 0.0050);
   const exitValue    = noi / exitCapRate;
-  // Remaining loan balance after 5 years of amortization
-  const loanBalance5 = loanAmount * Math.pow(1 + permMo, 60) -
-    monthlyPI * (Math.pow(1 + permMo, 60) - 1) / permMo;
-  const exitProceeds = exitValue - loanBalance5;
+  // Loan balance at exit (I/O — principal unchanged)
+  const exitProceeds = exitValue - loanAmount;
 
   // Annual cash flows (levered)
   const cashflows = [-equity];
