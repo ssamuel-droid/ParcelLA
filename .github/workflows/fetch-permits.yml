@@ -84,12 +84,14 @@ jobs:
           const DATASETS = [
             // Filter for permits that are ISSUED but not yet finaled/expired
             // These are active development opportunities
+            // RTI = Ready to Issue: fully approved, not yet started
+            // Also include "Issued" but flag separately — may or may not have started
             { id: 't57t-h8jb', name: 'DBS Permits',       order: 'issue_date',
-              where: "status='Issued' OR status='Ready to Issue' OR status='Plan Check'" },
+              where: "status='Ready to Issue'" },
             { id: '6q2s-9pnn', name: 'Building Permits',   order: 'permitissuancedate',
-              where: "permitstatus='Issued' OR permitstatus='Ready to Issue'" },
+              where: "permitstatus='Ready to Issue'" },
             { id: 'hbkd-qubn', name: 'LADBS Community',    order: 'permitissuancedate',
-              where: "permitstatus='Issued' OR permitstatus='Ready to Issue'" },
+              where: "permitstatus='Ready to Issue'" },
             { id: 'cpkv-aajs', name: 'New Housing Units',  order: 'date',
               where: null },  // keep all housing unit records
             { id: 'w53t-rwwp', name: 'Permit Valuations',  order: 'issueddate',
@@ -109,7 +111,8 @@ jobs:
               const rows = records.map((r, i) => ({
                 permit_number: String(r.permitnumber || r.permit_number || r.pcisid || r.id || `${ds.id}-${i}`).slice(0, 100),
                 permit_type:   ds.name,
-                status:        String(r.status || r.permitstatus || 'Active').slice(0, 50),
+                status:        String(r.status || r.permitstatus || 'Ready to Issue').slice(0, 50),
+                is_rti:        true,  // all records filtered to RTI status
                 address:       String(r.address || r.streetaddress || r.location_address || '').slice(0, 255),
                 units:         parseInt(r.units || r.net_units || r.numberofunits || '0') || 0,
                 valuation:     parseFloat(r.valuation || r.permit_valuation || '0') || 0,
