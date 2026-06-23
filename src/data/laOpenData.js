@@ -26,8 +26,8 @@ function socrataHeaders() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LADBS PERMITS
-// Dataset: hbkd-qubn
-// Docs: https://data.lacity.org/Building-Safety/Building-Permits/hbkd-qubn
+// Dataset: 6q2s-9pnn
+// Docs: https://data.lacity.org/Building-Safety/Building-Permits/6q2s-9pnn
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -50,7 +50,7 @@ export async function fetchPermits({ address, zone, type, limit = 50 } = {}) {
     ...(where.length ? { $where: where.join(' AND ') } : {}),
   });
 
-  const url = `${SOCRATA_BASE}/hbkd-qubn.json?${params}`;
+  const url = `${SOCRATA_BASE}/6q2s-9pnn.json?${params}`;
   console.log('[socrata] Fetching:', url);
   const res = await fetch(url, { headers: socrataHeaders() });
   if (!res.ok) {
