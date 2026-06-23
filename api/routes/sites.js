@@ -68,17 +68,25 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       try {
         const { data, error } = await supabase.from('sites').select('*').eq('status', 'active');
         if (!error && data?.length > 0) {
-          // Normalize Supabase column names to match model expectations
+          // Normalize ALL Supabase column names to match model expectations
           sites = data.map(s => ({
             ...s,
+            // Core fields
+            addr:   s.address      ?? s.addr,
             hood:   s.neighborhood ?? s.hood,
+            type:   s.project_type ?? s.type,
+            zone:   s.zoning       ?? s.zone,
+            lot:    s.lot_sf       ?? s.lot,
             usf:    s.avg_unit_sf  ?? s.usf ?? 800,
             demo:   s.has_demo     ?? s.demo ?? false,
+            rti:    s.rti          ?? false,
+            isComp: s.is_comp      ?? s.isComp ?? false,
             price:  s.price        ?? null,
-            ms:     s.unit_mix?.studio ?? 0.25,
-            mo:     s.unit_mix?.one    ?? 0.50,
-            mt:     s.unit_mix?.two    ?? 0.20,
-            mth:    s.unit_mix?.three  ?? 0.05,
+            // Unit mix from JSONB
+            ms:  s.unit_mix?.studio ?? 0.25,
+            mo:  s.unit_mix?.one    ?? 0.50,
+            mt:  s.unit_mix?.two    ?? 0.20,
+            mth: s.unit_mix?.three  ?? 0.05,
           }));
           console.log(`[sites] Loaded ${sites.length} sites from Supabase`);
         } else {
