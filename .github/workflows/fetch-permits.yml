@@ -23,7 +23,6 @@ jobs:
           const SB_URL = process.env.SUPABASE_URL.replace(/\/$/, '');
           const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-          // Simple HTTPS GET
           function get(url) {
             return new Promise((resolve, reject) => {
               https.get(url, { headers: { 'Accept': 'application/json' } }, res => {
@@ -32,32 +31,32 @@ jobs:
                 res.on('end', () => {
                   console.log(url.split('?')[0], '→ HTTP', res.statusCode);
                   if (res.statusCode === 200) resolve(JSON.parse(d));
-                  else reject(new Error('HTTP ' + res.statusCode + ': ' + d.slice(0,100)));
+                  else reject(new Error('HTTP ' + res.statusCode + ': ' + d.slice(0,200)));
                 });
               }).on('error', reject);
             });
           }
 
-          // Supabase upsert
           function upsert(rows) {
             return new Promise((resolve, reject) => {
               const body = JSON.stringify(rows);
-              const u = new URL(SB_URL + '/rest/v1/permits?on_conflict=permit_number');
+              const u = new URL(SB_URL + '/rest/v1/permits');
               const req = https.request({
-                hostname: u.hostname, path: u.pathname + u.search,
+                hostname: u.hostname,
+                path: u.pathname + '?on_conflict=permit_number',
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   'Authorization': 'Bearer ' + SB_KEY,
                   'apikey': SB_KEY,
-                  'Prefer': 'resolution=merge-duplicates',
+                  'Prefer': 'return=minimal,resolution=merge-duplicates',
                   'Content-Length': Buffer.byteLength(body)
                 }
               }, res => {
                 let d = '';
                 res.on('data', c => d += c);
                 res.on('end', () => {
-                  console.log('Supabase →', res.statusCode, d.slice(0,100));
+                  console.log('Supabase →', res.statusCode, d.slice(0,150));
                   resolve(res.statusCode);
                 });
               });
@@ -70,42 +69,57 @@ jobs:
           async function main() {
             let total = 0;
 
-            // t57t-h8jb worked before — start with this one, no filters
+            // Only use datasets with confirmed working column names
             const datasets = [
-              'https://data.lacity.org/resource/t57t-h8jb.json?$limit=500&$order=issue_date+DESC',
-              'https://data.lacity.org/resource/hbkd-qubn.json?$limit=500&$order=permitissuancedate+DESC',
-              'https://data.lacity.org/resource/cpkv-aajs.json?$limit=500&$order=date+DESC',
-              'https://data.lacity.org/resource/w53t-rwwp.json?$limit=500&$order=issueddate+DESC',
-              'https://data.lacity.org/resource/peyn-q7x3.json?$limit=500&$order=issueddate+DESC',
-              'https://data.lacity.org/resource/6q2s-9pnn.json?$limit=500&$order=permitissuancedate+DESC',
+              // t57t-h8jb confirmed working — 500 records
+              { url: 'https://data.lacity.org/resource/t57t-h8jb.json?$limit=1000&$order=issue_date+DESC', name: 'DBS Permits' },
+              // Try others without $order to avoid column errors
+              { url: 'https://data.lacity.org/resource/hbkd-qubn.json?$limit=500', name: 'LADBS Community' },
+              { url: 'https://data.lacity.org/resource/cpkv-aajs.json?$limit=500', name: 'New Housing Units' },
+              { url: 'https://data.lacity.org/resource/w53t-rwwp.json?$limit=500', name: 'Permit Valuations' },
+              { url: 'https://data.lacity.org/resource/peyn-q7x3.json?$limit=500', name: 'DBS Permits 2' },
+              { url: 'https://data.lacity.org/resource/6q2s-9pnn.json?$limit=500', name: 'Building Permits' },
             ];
 
-            for (const url of datasets) {
+            for (const ds of datasets) {
+              console.log('\n---', ds.name, '---');
               try {
-                const records = await get(url);
+                const records = await get(ds.url);
                 console.log('Got', records.length, 'records');
                 if (!records.length) continue;
 
-                const rows = records.map((r, i) => ({
-                  permit_number: String(r.pcis_permit || r.permitnumber || r.permit_number || r.id || `rec-${i}`).slice(0,100),
-                  permit_type:   'LADBS',
-                  status:        String(r.latest_status || r.status || r.permitstatus || 'Active').slice(0,50),
-                  address:       String(r.address || (r.address_start ? r.address_start+' '+r.street_name+' '+r.street_suffix : '') || '').slice(0,255),
-                  units:         parseInt(r.of_residential_dwelling_units || r.units || '0') || 0,
-                  valuation:     parseFloat(r.valuation || '0') || 0,
-                  issued_date:   (r.issue_date || r.issueddate || r.permitissuancedate || r.date || '').split('T')[0] || null,
-                  is_rti:        (r.latest_status || r.status || '').toLowerCase().includes('ready'),
-                  raw_data:      r,
-                  synced_at:     new Date().toISOString(),
-                }));
+                // Batch into groups of 100 to avoid payload limits
+                for (let i = 0; i < records.length; i += 100) {
+                  const batch = records.slice(i, i + 100);
+                  const rows = batch.map((r, j) => {
+                    const addr = r.address ||
+                      (r.address_start ? `${r.address_start} ${r.street_direction||''} ${r.street_name||''} ${r.street_suffix||''}`.trim() : '') ||
+                      r.location_address || r.streetaddress || '';
+                    const pnum = String(r.pcis_permit || r.permitnumber || r.permit_number || r.pcisid || r.id || `${ds.name}-${i+j}`).slice(0,100);
+                    const status = String(r.latest_status || r.status || r.permitstatus || 'Active').slice(0,50);
+                    return {
+                      permit_number: pnum,
+                      permit_type:   ds.name,
+                      status:        status,
+                      address:       addr.slice(0,255),
+                      units:         parseInt(r.of_residential_dwelling_units || r.units || r.net_units || '0') || 0,
+                      valuation:     parseFloat(r.valuation || r.permit_valuation || '0') || 0,
+                      issued_date:   (r.issue_date || r.issueddate || r.permitissuancedate || r.date || '').split('T')[0] || null,
+                      is_rti:        status.toLowerCase().includes('ready'),
+                      raw_data:      r,
+                      synced_at:     new Date().toISOString(),
+                    };
+                  });
 
-                const status = await upsert(rows);
-                if (status < 300) total += rows.length;
+                  const status = await upsert(rows);
+                  if (status < 300) total += rows.length;
+                  else console.log('Batch failed with status', status);
+                }
               } catch(e) {
                 console.log('FAILED:', e.message);
               }
             }
-            console.log('\nTOTAL SYNCED:', total);
+            console.log('\n=== TOTAL SYNCED:', total, 'records ===');
           }
 
           main().catch(console.error);
