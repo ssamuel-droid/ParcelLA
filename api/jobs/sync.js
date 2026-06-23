@@ -38,13 +38,32 @@ async function syncLADBSPermits() {
     console.log('[sync] Token prefix:', process.env.SOCRATA_APP_TOKEN?.slice(0,8));
     console.log('[sync] App ID prefix:', process.env.SOCRATA_APP_ID?.slice(0,8));
 
-    // Try LADBS permits (may be restricted — fallback to assessor data)
+    // Try each permit dataset in sequence until one works
     let permits = [];
-    try {
-      permits = await fetchPermits({ limit: 200 });
-      console.log(`[sync] Fetched ${permits.length} permits from LADBS`);
-    } catch (e) {
-      console.warn('[sync] LADBS restricted — switching to LA County Assessor data');
+    const datasets = [
+      { id: 'hbkd-qubn', name: 'LADBS Community' },
+      { id: 't57t-h8jb', name: 'DBS Permits' },
+      { id: 'peyn-q7x3', name: 'DBS Permits 2' },
+      { id: 'w53t-rwwp', name: 'Permit Valuations' },
+    ];
+
+    for (const ds of datasets) {
+      try {
+        const url = `https://data.lacity.org/resource/${ds.id}.json?$limit=200&$order=permitissuancedate+DESC`;
+        console.log(`[sync] Trying ${ds.name} (${ds.id})...`);
+        const res = await fetch(url, { headers: { 'Accept': 'application/json', 'X-App-Token': process.env.SOCRATA_APP_TOKEN } });
+        if (!res.ok) { console.warn(`[sync] ${ds.name}: HTTP ${res.status}`); continue; }
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          permits = data;
+          console.log(`[sync] ✅ Got ${permits.length} records from ${ds.name}`);
+          break;
+        }
+      } catch (e) { console.warn(`[sync] ${ds.name} error:`, e.message); }
+    }
+
+    if (!permits.length) {
+      console.warn('[sync] All LADBS datasets failed — trying housing units dataset');
       await syncAssessorData();
       return;
     }
@@ -205,10 +224,7 @@ async function syncAssessorData() {
   try {
     // LA County Assessor open data — no auth required
     // Dataset: assessor parcels with land use codes
-    const url = 'https://data.lacounty.gov/resource/9trm-uz8i.json?' +
-      '$limit=200&' +
-      '$where=taxratearea_city=%27LOS%20ANGELES%27%20AND%20usetype=%27Residential%27&' +
-      '$order=roll_year%20DESC';
+    const url = 'https://data.lacity.org/resource/cpkv-aajs.json?$limit=200&$order=date%20DESC';
 
     const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error(`Assessor API: ${res.status}`);
