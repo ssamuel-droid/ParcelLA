@@ -120,9 +120,10 @@ export function runModel(site, overrides = {}) {
   const exitProceeds = exitValue - loanAmount;
 
   // Annual cash flows (levered)
+  // IRR cashflows: equity in at start, CFBT each year, equity + net profit at exit
   const cashflows = [-equity];
   for (let y = 1; y < cfg.holdYears; y++) cashflows.push(cfbt);
-  cashflows.push(cfbt + exitProceeds);
+  cashflows.push(cfbt + exitProceeds);  // exitProceeds = exit - loan (equity return)
 
   const leveragedIRR  = calcIRR(cashflows) * 100;
   const equityMultiple = exitProceeds / equity;
@@ -167,6 +168,7 @@ export function runModel(site, overrides = {}) {
 
     // returns
     leveragedIRR, equityMultiple, exitValue, exitProceeds,
+    netProfit: exitValue - totalCost,  // true development profit
 
     // waterfall
     prefAmount, lpAnnual, gpAnnual,

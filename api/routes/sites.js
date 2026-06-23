@@ -126,7 +126,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
 
     // Sort
     const SORTS = {
-      profit:   (a,b) => b._m.exitProceeds   - a._m.exitProceeds,
+      profit:   (a,b) => b._m.netProfit   - a._m.netProfit,
       irr:      (a,b) => b._m.leveragedIRR        - a._m.leveragedIRR,
       spread:   (a,b) => b._m.devSpreadPct - a._m.devSpreadPct,
       capoc:    (a,b) => b._m.capRateOnCost   - a._m.capRateOnCost,
@@ -159,7 +159,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         totalCost:    s._m.totalCost,
         noi:          s._m.noi,
         exitValue:    s._m.exitValue,
-        netProfit:    s._m.exitProceeds,
+        netProfit:    s._m.netProfit,
         irrV:         s._m.leveragedIRR,
         capOnCost:    Math.round(s._m.capRateOnCost * 10000) / 100,
         devSpreadPct: s._m.devSpreadPct,
