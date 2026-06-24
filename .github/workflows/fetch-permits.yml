@@ -86,8 +86,8 @@ jobs:
               console.log(`Total: ${records.length} records`);
 
               let synced = 0;
-              for (let i = 0; i < records.length; i += 100) {
-                const batch = records.slice(i, i + 100);
+              for (let i = 0; i < records.length; i += 50) {
+                const batch = records.slice(i, i + 50);
                 const rawRows = batch.map((r, j) => buildRow(r, i + j)).filter(Boolean);
                 // Deduplicate by permit_number within batch
                 const seen = new Set();
@@ -99,6 +99,8 @@ jobs:
                 const result = await upsert(rows);
                 if (result.status < 300) synced += rows.length;
                 else console.log('Batch error:', result.status, result.body.slice(0,100));
+                // Small delay to avoid rate limits
+                await new Promise(r => setTimeout(r, 200));
               }
               console.log(`Synced: ${synced}`);
               return synced;
