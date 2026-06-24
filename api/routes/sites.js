@@ -19,6 +19,11 @@ import { supabase } from '../../src/data/supabase.js';
 
 const router = Router();
 
+// Cache computed model results (refreshed every 5 min)
+let _siteCache = null;
+let _cacheTime = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 // Guess project type from permit data
 function guessType(permitType, subType, units) {
   const pt = (permitType || '').toLowerCase();
@@ -103,7 +108,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
           .not('address', 'is', null)
           .neq('address', '')
           .gte('valuation', 100000)  // meaningful projects only
-          .limit(2000)
+          .limit(500)
           .order('issued_date', { ascending: false });
 
         if (!pErr && permits?.length > 0) {
