@@ -215,3 +215,219 @@ jobs:
 
           main().catch(e => { console.error(e); process.exit(1); });
           EOF
+
+  - name: Run underwriting on synced permits
+    env:
+      SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    run: |
+      node << 'EOF'
+      const https = require('https');
+
+      const SB_URL = process.env.SUPABASE_URL.replace(/\/$/, '');
+      const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+      function sbGet(path) {
+        return new Promise((resolve, reject) => {
+          const u = new URL(SB_URL + path);
+          https.get({
+            hostname: u.hostname, path: u.pathname + u.search,
+            headers: { 'Authorization': 'Bearer ' + SB_KEY, 'apikey': SB_KEY, 'Accept': 'application/json' }
+          }, res => {
+            let d = ''; res.on('data', c => d += c);
+            res.on('end', () => resolve(JSON.parse(d)));
+          }).on('error', reject);
+        });
+      }
+
+      function sbUpsert(table, rows) {
+        return new Promise((resolve, reject) => {
+          const body = JSON.stringify(rows);
+          const u = new URL(`${SB_URL}/rest/v1/${table}?on_conflict=address,project_type`);
+          const req = https.request({
+            hostname: u.hostname, path: u.pathname + u.search,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + SB_KEY,
+              'apikey': SB_KEY,
+              'Prefer': 'return=minimal,resolution=merge-duplicates',
+              'Content-Length': Buffer.byteLength(body)
+            }
+          }, res => {
+            let d = ''; res.on('data', c => d += c);
+            res.on('end', () => resolve(res.statusCode));
+          });
+          req.on('error', reject);
+          req.write(body); req.end();
+        });
+      }
+
+      // Submarket data
+      const RENTS = {
+        'Silver Lake':   { studio: 2600, one: 3400, two: 4400, three: 5800 },
+        'Echo Park':     { studio: 2400, one: 3100, two: 4000, three: 5300 },
+        'Highland Park': { studio: 2200, one: 2850, two: 3700, three: 4900 },
+        'Los Feliz':     { studio: 2800, one: 3600, two: 4700, three: 6200 },
+        'Koreatown':     { studio: 2100, one: 2700, two: 3500, three: 4600 },
+        'Mid-Wilshire':  { studio: 2500, one: 3200, two: 4100, three: 5400 },
+        'Culver City':   { studio: 2900, one: 3700, two: 4800, three: 6300 },
+        'Mar Vista':     { studio: 2700, one: 3500, two: 4500, three: 5900 },
+        'West Adams':    { studio: 2300, one: 2950, two: 3800, three: 5000 },
+        'Boyle Heights': { studio: 1900, one: 2450, two: 3200, three: 4200 },
+        'default':       { studio: 2100, one: 2700, two: 3500, three: 4600 },
+      };
+
+      const CAP_RATES = {
+        'Silver Lake': 0.0475, 'Echo Park': 0.0500, 'Highland Park': 0.0525,
+        'Los Feliz': 0.0475, 'Koreatown': 0.0525, 'Mid-Wilshire': 0.0500,
+        'Culver City': 0.0475, 'Mar Vista': 0.0500, 'West Adams': 0.0525,
+        'Boyle Heights': 0.0575, 'default': 0.0525,
+      };
+
+      const HARD_COSTS = {
+        'Multifamily': 285, 'Mixed-Use': 320, 'Condo/TH': 340, 'SFR+ADU': 275
+      };
+
+      function guessHood(address) {
+        const a = (address || '').toUpperCase();
+        if (a.includes('SILVER LAKE') || a.includes('SILVERLAKE')) return 'Silver Lake';
+        if (a.includes('ECHO PARK')) return 'Echo Park';
+        if (a.includes('HIGHLAND PARK')) return 'Highland Park';
+        if (a.includes('LOS FELIZ')) return 'Los Feliz';
+        if (a.includes('CULVER')) return 'Culver City';
+        if (a.includes('MAR VISTA')) return 'Mar Vista';
+        if (a.includes('WEST ADAMS')) return 'West Adams';
+        if (a.includes('BOYLE')) return 'Boyle Heights';
+        if (a.includes('WILSHIRE')) return 'Mid-Wilshire';
+        return 'Koreatown';
+      }
+
+      function guessType(permitType, subType, units) {
+        const st = (subType || '').toLowerCase();
+        if (st.includes('condo') || st.includes('townhouse')) return 'Condo/TH';
+        if (st.includes('commercial') || st.includes('mixed')) return 'Mixed-Use';
+        if (units >= 5) return 'Multifamily';
+        return 'SFR+ADU';
+      }
+
+      function runModel(permit) {
+        const hood  = guessHood(permit.address);
+        const type  = guessType(permit.permit_type, permit.permit_subtype, permit.units);
+        const units = Math.max(permit.units || 2, 2);
+        const usf   = 800;
+        const R     = RENTS[hood] || RENTS['default'];
+        const cap   = CAP_RATES[hood] || 0.0525;
+        const hcpsf = HARD_COSTS[type] || 285;
+
+        // Blended rent
+        const blendedRent = R.studio*0.25 + R.one*0.50 + R.two*0.20 + R.three*0.05;
+        const gpr  = blendedRent * 12 * units;
+        const egi  = gpr * 0.95;
+        const opex = egi * 0.38;
+        const noi  = egi - opex;
+
+        // Costs
+        const hard  = hcpsf * usf * units;
+        const soft  = hard * 0.18;
+        const demo  = 0;
+        const preLoan = (permit.valuation || hard*1.3) + soft + demo;
+        const loan  = preLoan * 0.65;
+        const carry = loan * 0.065 * 1.5;
+        const total = preLoan + carry;
+
+        // Valuation
+        const exitCap   = cap + 0.005;
+        const exitValue = noi / exitCap;
+        const netProfit = exitValue - total;
+        const capOnCost = noi / total;
+        const devSpread = netProfit / total;
+
+        // IRR (simplified)
+        const equity   = total - loan;
+        const debtSvc  = loan * 0.065;
+        const cfbt     = noi - debtSvc;
+        const exitProc = exitValue - loan;
+        const cfs = [-equity, cfbt, cfbt, cfbt, cfbt, cfbt + exitProc];
+        let irr = 0.15, rate = 0.15;
+        for (let i = 0; i < 50; i++) {
+          let npv = 0, dnpv = 0;
+          for (let t = 0; t < cfs.length; t++) {
+            npv  += cfs[t] / Math.pow(1+rate, t);
+            dnpv -= t * cfs[t] / Math.pow(1+rate, t+1);
+          }
+          const delta = npv / dnpv;
+          rate -= delta;
+          if (Math.abs(delta) < 0.00001) { irr = rate; break; }
+        }
+
+        return {
+          noi: Math.round(noi),
+          total_cost: Math.round(total),
+          exit_value: Math.round(exitValue),
+          net_profit: Math.round(netProfit),
+          irr_v: Math.round(irr * 1000) / 10,
+          cap_on_cost: Math.round(capOnCost * 10000) / 100,
+          dev_spread_pct: Math.round(devSpread * 10000) / 100,
+          hood, type, units,
+          underwritten_at: new Date().toISOString(),
+        };
+      }
+
+      async function main() {
+        console.log('Loading permits from Supabase...');
+        const permits = await sbGet(
+          '/rest/v1/permits?select=id,address,zone,units,valuation,issued_date,is_rti,permit_type,permit_subtype,lat,lng,status' +
+          '&valuation=gte.100000' +
+          '&address=neq.' +
+          '&limit=5000' +
+          '&order=issued_date.desc'
+        );
+
+        console.log('Permits loaded:', permits.length);
+
+        let processed = 0;
+        const BATCH = 50;
+
+        for (let i = 0; i < permits.length; i += BATCH) {
+          const batch = permits.slice(i, i + BATCH);
+          const rows = batch.map(p => {
+            const m = runModel(p);
+            return {
+              address:      p.address,
+              neighborhood: m.hood,
+              zoning:       p.zone || 'R3',
+              project_type: m.type,
+              units:        m.units,
+              avg_unit_sf:  800,
+              rti:          p.is_rti || false,
+              lot_sf:       5000,
+              status:       'active',
+              data_source:  'ladbs_permit',
+              // Pre-computed underwriting
+              noi:          m.noi,
+              total_cost:   m.total_cost,
+              exit_value:   m.exit_value,
+              net_profit:   m.net_profit,
+              irr_v:        m.irr_v,
+              cap_on_cost:  m.cap_on_cost,
+              dev_spread_pct: m.dev_spread_pct,
+              underwritten_at: m.underwritten_at,
+              // Location
+              lat: p.lat,
+              lng: p.lng,
+            };
+          });
+
+          await sbUpsert('sites', rows);
+          processed += rows.length;
+
+          if (i % 500 === 0) console.log(`Underwritten: ${processed}/${permits.length}`);
+          await new Promise(r => setTimeout(r, 100));
+        }
+
+        console.log('Underwriting complete:', processed, 'sites');
+      }
+
+      main().catch(console.error);
+      EOF
