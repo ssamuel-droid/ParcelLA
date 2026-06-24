@@ -19,6 +19,23 @@ import { supabase } from '../../src/data/supabase.js';
 
 const router = Router();
 
+// Guess neighborhood from LA address
+function guessHood(address) {
+  if (!address) return 'Koreatown';
+  const addr = address.toUpperCase();
+  if (addr.includes('SILVER LAKE') || addr.includes('SILVERLAKE')) return 'Silver Lake';
+  if (addr.includes('ECHO PARK')) return 'Echo Park';
+  if (addr.includes('HIGHLAND PARK')) return 'Highland Park';
+  if (addr.includes('LOS FELIZ')) return 'Los Feliz';
+  if (addr.includes('CULVER')) return 'Culver City';
+  if (addr.includes('MAR VISTA')) return 'Mar Vista';
+  if (addr.includes('WEST ADAMS')) return 'West Adams';
+  if (addr.includes('BOYLE')) return 'Boyle Heights';
+  if (addr.includes('MID-WILSHIRE') || addr.includes('WILSHIRE')) return 'Mid-Wilshire';
+  // Guess by zip or street
+  return 'Koreatown';  // default fallback
+}
+
 // ── Shared underwriting defaults ───────────────────────────────────────────────
 const DEFAULT_GLOBALS = {
   exitCapSpread: 0.0025,
@@ -89,6 +106,39 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
             mth: s.unit_mix?.three  ?? 0.05,
           }));
           console.log(`[sites] Loaded ${sites.length} sites from Supabase`);
+
+          // Also load permit data and merge as additional sites
+          try {
+            const { data: permits } = await supabase
+              .from('permits')
+              .select('*')
+              .not('address', 'is', null)
+              .neq('address', '')
+              .gt('units', 0)
+              .limit(500);
+
+            if (permits?.length) {
+              const permitSites = permits.map((p, i) => ({
+                id:      10000 + i,
+                addr:    p.address,
+                hood:    guessHood(p.address),
+                type:    p.units >= 5 ? 'Multifamily' : 'SFR+ADU',
+                zone:    p.zone || 'R3',
+                lot:     5000,
+                units:   p.units || 2,
+                usf:     800,
+                rti:     p.is_rti || false,
+                isComp:  false,
+                price:   null,  // unknown — will be imputed
+                demo:    false,
+                ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
+              }));
+              sites = [...sites, ...permitSites];
+              console.log(`[sites] Added ${permitSites.length} permit-based sites`);
+            }
+          } catch(e) {
+            console.warn('[sites] Could not load permits:', e.message);
+          }
         } else {
           console.log('[sites] Supabase empty or error — using mock data');
         }
