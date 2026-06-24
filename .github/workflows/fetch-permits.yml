@@ -29,27 +29,27 @@ jobs:
                 let d = '';
                 res.on('data', c => d += c);
                 res.on('end', () => {
-                  console.log(url.split('?')[0], '→ HTTP', res.statusCode);
                   if (res.statusCode === 200) resolve(JSON.parse(d));
-                  else reject(new Error('HTTP ' + res.statusCode + ': ' + d.slice(0,300)));
+                  else reject(new Error('HTTP ' + res.statusCode + ': ' + d.slice(0,200)));
                 });
               }).on('error', reject);
             });
           }
 
+          // Upsert a single batch to Supabase
           function upsert(rows) {
             return new Promise((resolve, reject) => {
               const body = JSON.stringify(rows);
-              const u = new URL(SB_URL + '/rest/v1/permits');
+              const u = new URL(SB_URL + '/rest/v1/permits?on_conflict=permit_number');
               const req = https.request({
                 hostname: u.hostname,
-                path: u.pathname + '?on_conflict=permit_number',
+                path: u.pathname + u.search,
                 method: 'POST',
                 headers: {
-                  'Content-Type': 'application/json',
+                  'Content-Type':  'application/json',
                   'Authorization': 'Bearer ' + SB_KEY,
-                  'apikey': SB_KEY,
-                  'Prefer': 'return=minimal,resolution=merge-duplicates',
+                  'apikey':        SB_KEY,
+                  'Prefer':        'return=minimal,resolution=merge-duplicates',
                   'Content-Length': Buffer.byteLength(body)
                 }
               }, res => {
@@ -63,112 +63,155 @@ jobs:
             });
           }
 
-          async function fetchAll(baseUrl, offsetStep = 1000) {
-            let all = [];
-            let offset = 0;
+          function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+          // Fetch ALL pages from a dataset
+          async function fetchAll(baseUrl) {
+            let all = [], offset = 0;
             while (true) {
-              const url = `${baseUrl}&$limit=${offsetStep}&$offset=${offset}`;
-              const records = await get(url);
-              if (!records.length) break;
-              all = all.concat(records);
-              console.log(`  Fetched ${all.length} so far...`);
-              if (records.length < offsetStep) break;
-              offset += offsetStep;
-              if (all.length > 50000) break; // safety cap
+              const url = baseUrl + '&$limit=1000&$offset=' + offset;
+              console.log('Fetching offset', offset, '...');
+              const batch = await get(url);
+              if (!batch.length) break;
+              all = all.concat(batch);
+              console.log('  Total so far:', all.length);
+              if (batch.length < 1000) break;
+              offset += 1000;
+              await sleep(500); // be nice to the API
             }
             return all;
           }
 
-          async function syncDataset(name, baseUrl, buildRow) {
-            console.log(`\n=== ${name} ===`);
-            try {
-              const records = await fetchAll(baseUrl);
-              console.log(`Total: ${records.length} records`);
+          // Convert a permit record to Supabase row
+          function toRow(r, i) {
+            const addr_parts = [
+              r.address_start || '',
+              r.street_direction || '',
+              r.street_name || '',
+              r.street_suffix || ''
+            ].filter(Boolean).join(' ').trim();
 
-              let synced = 0;
-              for (let i = 0; i < records.length; i += 50) {
-                const batch = records.slice(i, i + 50);
-                const rawRows = batch.map((r, j) => buildRow(r, i + j)).filter(Boolean);
-                // Deduplicate by permit_number within batch
-                const seen = new Set();
-                const rows = rawRows.filter(r => {
-                  if (seen.has(r.permit_number)) return false;
-                  seen.add(r.permit_number);
-                  return true;
-                });
-                const result = await upsert(rows);
-                if (result.status < 300) synced += rows.length;
-                else console.log('Batch error:', result.status, result.body.slice(0,100));
-                // Small delay to avoid rate limits
-                await new Promise(r => setTimeout(r, 200));
-              }
-              console.log(`Synced: ${synced}`);
-              return synced;
-            } catch(e) {
-              console.log('FAILED:', e.message);
-              return 0;
+            const addr = r.address || addr_parts || r.location_address || r.streetaddress || '';
+            const pnum = String(
+              r.pcis_permit || r.permitnumber || r.permit_number || 
+              r.pcisid || r.id || 'rec-' + i
+            ).slice(0, 100);
+
+            const status = String(r.latest_status || r.status || r.permitstatus || 'Active').slice(0, 50);
+            const units  = parseInt(r.of_residential_dwelling_units || r.units || r.net_units || '0') || 0;
+            const val    = parseFloat(r.valuation || r.permit_valuation || '0') || 0;
+            const date   = (r.issue_date || r.issueddate || r.permitissuancedate || r.date || '').split('T')[0] || null;
+            const zone   = r.zone || r.zone_code || null;
+
+            // Extract lat/lng if available
+            let lat = null, lng = null;
+            if (r.location_1?.coordinates) {
+              lng = r.location_1.coordinates[0];
+              lat = r.location_1.coordinates[1];
+            } else if (r.latitude) {
+              lat = parseFloat(r.latitude);
+              lng = parseFloat(r.longitude);
             }
+
+            return {
+              permit_number: pnum,
+              permit_type:   r.permit_type || 'Building',
+              permit_subtype: r.permit_sub_type || null,
+              status:        status,
+              address:       addr.slice(0, 255),
+              zone:          zone,
+              units:         units,
+              valuation:     val,
+              issued_date:   date,
+              is_rti:        status.toLowerCase().includes('ready'),
+              lat:           lat,
+              lng:           lng,
+              raw_data:      r,
+              synced_at:     new Date().toISOString(),
+            };
           }
 
           async function main() {
-            let total = 0;
+            let grandTotal = 0;
 
-            // ── t57t-h8jb: DBS Permits — filter RTI/entitled only ─────────────
-            // Status values we want: Ready to Issue, Issued (not Finaled/Expired/Cancelled)
-            // permit_type filter: Bldg-New (new construction) 
-            total += await syncDataset(
-              'DBS Permits (RTI & Issued)',
-              'https://data.lacity.org/resource/t57t-h8jb.json' +
-              '?$order=issue_date+DESC' +
-              "&$where=(permit_type='Bldg-New'+OR+permit_type='Bldg-Addition')" +
-              "+AND+(latest_status='Ready+to+Issue'" +
-              "+OR+latest_status='Issued'" +
-              "+OR+latest_status='Plan+Check')",
-              (r, i) => {
-                const addr = `${r.address_start||''} ${r.street_direction||''} ${r.street_name||''} ${r.street_suffix||''}`.trim();
-                const pnum = String(r.pcis_permit || `t57t-${i}`).slice(0,100);
-                const status = String(r.latest_status || 'Active');
-                const units = parseInt(r.of_residential_dwelling_units || '0') || 0;
-                // Include all residential including SFR+ADU
-                if (!addr && !pnum.startsWith('t57t')) return null;
-                return {
-                  permit_number: pnum,
-                  permit_type:   'Bldg-New',
-                  status:        status,
-                  address:       addr.slice(0,255),
-                  units:         units,
-                  valuation:     parseFloat(r.valuation || '0') || 0,
-                  issued_date:   (r.issue_date || '').split('T')[0] || null,
-                  is_rti:        status.toLowerCase().includes('ready'),
-                  zone:          r.zone || null,
-                  raw_data:      r,
-                  synced_at:     new Date().toISOString(),
-                };
+            // t57t-h8jb — confirmed working, has all building permit types
+            // Filter: Bldg-New OR Bldg-Addition (residential development opportunities)
+            // Status: Ready to Issue, Issued, Plan Check (approved/in-pipeline)
+            const datasets = [
+              {
+                name: 'DBS Permits — New Construction',
+                url: "https://data.lacity.org/resource/t57t-h8jb.json?$order=issue_date+DESC" +
+                     "&$where=(permit_type='Bldg-New'+OR+permit_type='Bldg-Addition')" +
+                     "+AND+(latest_status='Ready+to+Issue'+OR+latest_status='Issued'+OR+latest_status='Plan+Check')",
+              },
+              {
+                name: 'DBS Permits — All Residential',
+                url: "https://data.lacity.org/resource/t57t-h8jb.json?$order=issue_date+DESC" +
+                     "&$where=permit_type='Bldg-New'",
+              },
+            ];
+
+            for (const ds of datasets) {
+              console.log('\n========================================');
+              console.log('Dataset:', ds.name);
+              console.log('========================================');
+
+              try {
+                const records = await fetchAll(ds.url);
+                console.log('Total records fetched:', records.length);
+
+                // Deduplicate by permit number
+                const seen = new Set();
+                const unique = records.filter(r => {
+                  const pnum = String(r.pcis_permit || r.id || '').slice(0,100);
+                  if (seen.has(pnum)) return false;
+                  seen.add(pnum);
+                  return true;
+                });
+                console.log('Unique records:', unique.length);
+
+                // Process in batches of 25 (conservative for Supabase free tier)
+                let synced = 0;
+                const BATCH = 25;
+                for (let i = 0; i < unique.length; i += BATCH) {
+                  const batch = unique.slice(i, i + BATCH);
+                  const rows = batch.map((r, j) => toRow(r, i + j));
+
+                  // Deduplicate within batch
+                  const batchSeen = new Set();
+                  const dedupRows = rows.filter(r => {
+                    if (batchSeen.has(r.permit_number)) return false;
+                    batchSeen.add(r.permit_number);
+                    return true;
+                  });
+
+                  const result = await upsert(dedupRows);
+                  if (result.status < 300) {
+                    synced += dedupRows.length;
+                  } else {
+                    console.log('Batch error at offset', i, ':', result.status, result.body.slice(0,100));
+                  }
+
+                  // Progress every 500 records
+                  if (i % 500 === 0) {
+                    console.log(`Progress: ${i}/${unique.length} (synced: ${synced})`);
+                  }
+
+                  // Throttle to avoid rate limits
+                  await sleep(100);
+                }
+
+                console.log('Synced:', synced, 'of', unique.length);
+                grandTotal += synced;
+              } catch(e) {
+                console.log('Dataset failed:', e.message);
               }
-            );
+            }
 
-            // ── hbkd-qubn: LADBS Community permits ───────────────────────────
-            total += await syncDataset(
-              'LADBS Community Permits',
-              'https://data.lacity.org/resource/hbkd-qubn.json?$limit=1000',
-              (r, i) => ({
-                permit_number: String(r.permit_nbr || r.permitnumber || `hbkd-${i}`).slice(0,100),
-                permit_type:   'LADBS',
-                status:        String(r.status || r.permit_status || 'Active').slice(0,50),
-                address:       String(r.address || r.site_address || '').slice(0,255),
-                units:         parseInt(r.units || '0') || 0,
-                valuation:     parseFloat(r.valuation || '0') || 0,
-                issued_date:   (r.issue_date || r.issued_date || '').split('T')[0] || null,
-                is_rti:        String(r.status || '').toLowerCase().includes('ready'),
-                raw_data:      r,
-                synced_at:     new Date().toISOString(),
-              })
-            );
-
-            console.log('\n=============================');
-            console.log('TOTAL SYNCED:', total, 'records');
-            console.log('=============================');
+            console.log('\n========================================');
+            console.log('GRAND TOTAL SYNCED:', grandTotal);
+            console.log('========================================');
           }
 
-          main().catch(console.error);
+          main().catch(e => { console.error(e); process.exit(1); });
           EOF
