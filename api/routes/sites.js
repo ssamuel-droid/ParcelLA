@@ -19,8 +19,20 @@ import { supabase } from '../../src/data/supabase.js';
 
 const router = Router();
 
+// Guess project type from permit data
+function guessType(permitType, subType, units) {
+  const pt = (permitType || '').toLowerCase();
+  const st = (subType || '').toLowerCase();
+  if (st.includes('1 or 2') || st.includes('single')) return 'SFR+ADU';
+  if (st.includes('condo') || st.includes('townhouse')) return 'Condo/TH';
+  if (st.includes('commercial') || st.includes('mixed')) return 'Mixed-Use';
+  if (units >= 5) return 'Multifamily';
+  if (units >= 2) return 'SFR+ADU';
+  return 'Multifamily';
+}
+
 // Guess neighborhood from LA address
-function guessHood(address) {
+function guessHood(address, zone) {
   if (!address) return 'Koreatown';
   const addr = address.toUpperCase();
   if (addr.includes('SILVER LAKE') || addr.includes('SILVERLAKE')) return 'Silver Lake';
