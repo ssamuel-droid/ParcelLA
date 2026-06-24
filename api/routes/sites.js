@@ -90,74 +90,51 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
 
     const overrides = buildOverrides(req.query);
 
-    // Always start with all 27 mock sites — they have correct field names
-    // Supplement with additional sites from Supabase (user-added or permit-derived)
-    let sites = [...SITES];
-    console.log(`[sites] Base: ${sites.length} mock sites`);
+    // Primary source: real LADBS permits from Supabase (36,000+ records)
+    // Fallback: 27 mock sites if permits table is empty
+    let sites = [];
 
     if (process.env.SUPABASE_URL) {
       try {
-        const { data, error } = await supabase.from('sites').select('*').eq('status', 'active');
-        if (!error && data?.length > 0) {
-          // Only add Supabase sites not already in mock data
-          const mockIds = new Set(SITES.map(s => s.id));
-          const extraSites = data.filter(s => !mockIds.has(s.id)).map(s => ({
-            ...s,
-            addr:   s.address      ?? s.addr,
-            hood:   s.neighborhood ?? s.hood,
-            type:   s.project_type ?? s.type,
-            zone:   s.zoning       ?? s.zone,
-            lot:    s.lot_sf       ?? s.lot,
-            usf:    s.avg_unit_sf  ?? s.usf ?? 800,
-            demo:   s.has_demo     ?? s.demo ?? false,
-            rti:    s.rti          ?? false,
-            isComp: s.is_comp      ?? s.isComp ?? false,
-            price:  s.price        ?? null,
-            ms:  s.unit_mix?.studio ?? 0.25,
-            mo:  s.unit_mix?.one    ?? 0.50,
-            mt:  s.unit_mix?.two    ?? 0.20,
-            mth: s.unit_mix?.three  ?? 0.05,
+        // Load real LADBS permit data as primary sites (no unit filter — use all permits)
+        const { data: permits, error: pErr } = await supabase
+          .from('permits')
+          .select('id, permit_number, address, zone, units, valuation, issued_date, is_rti, permit_type, permit_subtype, lat, lng, status')
+          .not('address', 'is', null)
+          .neq('address', '')
+          .limit(5000)
+          .order('issued_date', { ascending: false });
+
+        if (!pErr && permits?.length > 0) {
+          sites = permits.map((p, i) => ({
+            id:           50000 + i,
+            addr:         p.address,
+            hood:         guessHood(p.address, p.zone),
+            type:         guessType(p.permit_type, p.permit_subtype, p.units),
+            zone:         p.zone || 'R3',
+            lot:          5000,
+            units:        Math.max(p.units || 2, 1),
+            usf:          800,
+            rti:          p.is_rti || false,
+            isComp:       false,
+            price:        null,
+            demo:         false,
+            lat:          p.lat,
+            lng:          p.lng,
+            permitNumber: p.permit_number,
+            valuation:    p.valuation,
+            permitStatus: p.status,
+            ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
           }));
-          if (extraSites.length) sites = [...sites, ...extraSites];
-          console.log(`[sites] Loaded ${sites.length} sites (${extraSites.length} from Supabase`);
+          console.log(`[sites] Loaded ${sites.length} real permit sites from Supabase`);
+        }
 
-          // Also load permit data and merge as additional sites
-          try {
-            const { data: permits } = await supabase
-              .from('permits')
-              .select('*')
-              .not('address', 'is', null)
-              .neq('address', '')
-              .gt('units', 0)
-              .limit(500);
-
-            if (permits?.length) {
-              const permitSites = permits.map((p, i) => ({
-                id:      10000 + i,
-                addr:    p.address,
-                hood:    guessHood(p.address),
-                type:    p.units >= 5 ? 'Multifamily' : 'SFR+ADU',
-                zone:    p.zone || 'R3',
-                lot:     5000,
-                units:   p.units || 2,
-                usf:     800,
-                rti:     p.is_rti || false,
-                isComp:  false,
-                price:   null,  // unknown — will be imputed
-                demo:    false,
-                ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
-              }));
-              sites = [...sites, ...permitSites];
-              console.log(`[sites] Added ${permitSites.length} permit-based sites`);
-            }
-          } catch(e) {
-            console.warn('[sites] Could not load permits:', e.message);
-          }
-        } else {
-          console.log('[sites] Supabase empty or error — using mock data');
+        if (sites.length === 0) {
+          console.log('[sites] No permits found — using mock sites');
+          sites = [...SITES];
         }
       } catch (e) {
-        console.log('[sites] Supabase failed — using mock data:', e.message);
+        console.log('[sites] Supabase failed — using mock sites:', e.message);
       }
     }
 
