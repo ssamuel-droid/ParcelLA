@@ -78,17 +78,19 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
 
     const overrides = buildOverrides(req.query);
 
-    // Pull from Supabase in production — fall back to in-memory for dev
-    let sites = SITES;
-    // Try Supabase first, fall back to mock data if empty
+    // Always start with all 27 mock sites — they have correct field names
+    // Supplement with additional sites from Supabase (user-added or permit-derived)
+    let sites = [...SITES];
+    console.log(`[sites] Base: ${sites.length} mock sites`);
+
     if (process.env.SUPABASE_URL) {
       try {
         const { data, error } = await supabase.from('sites').select('*').eq('status', 'active');
         if (!error && data?.length > 0) {
-          // Normalize ALL Supabase column names to match model expectations
-          sites = data.map(s => ({
+          // Only add Supabase sites not already in mock data
+          const mockIds = new Set(SITES.map(s => s.id));
+          const extraSites = data.filter(s => !mockIds.has(s.id)).map(s => ({
             ...s,
-            // Core fields
             addr:   s.address      ?? s.addr,
             hood:   s.neighborhood ?? s.hood,
             type:   s.project_type ?? s.type,
@@ -99,13 +101,13 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
             rti:    s.rti          ?? false,
             isComp: s.is_comp      ?? s.isComp ?? false,
             price:  s.price        ?? null,
-            // Unit mix from JSONB
             ms:  s.unit_mix?.studio ?? 0.25,
             mo:  s.unit_mix?.one    ?? 0.50,
             mt:  s.unit_mix?.two    ?? 0.20,
             mth: s.unit_mix?.three  ?? 0.05,
           }));
-          console.log(`[sites] Loaded ${sites.length} sites from Supabase`);
+          if (extraSites.length) sites = [...sites, ...extraSites];
+          console.log(`[sites] Loaded ${sites.length} sites (${extraSites.length} from Supabase`);
 
           // Also load permit data and merge as additional sites
           try {
