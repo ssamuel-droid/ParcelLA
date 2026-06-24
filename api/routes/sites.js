@@ -102,7 +102,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
           .select('id, permit_number, address, zone, units, valuation, issued_date, is_rti, permit_type, permit_subtype, lat, lng, status')
           .not('address', 'is', null)
           .neq('address', '')
-          .limit(5000)
+          .gte('valuation', 100000)  // meaningful projects only
+          .limit(2000)
           .order('issued_date', { ascending: false });
 
         if (!pErr && permits?.length > 0) {
@@ -113,7 +114,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
             type:         guessType(p.permit_type, p.permit_subtype, p.units),
             zone:         p.zone || 'R3',
             lot:          5000,
-            units:        Math.max(p.units || 2, 1),
+            units:        Math.max(p.units || 2, 2),  // minimum 2 units
             usf:          800,
             rti:          p.is_rti || false,
             isComp:       false,
