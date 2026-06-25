@@ -62,7 +62,42 @@ const CAPS = {
 };
 const HC = { 'Multifamily': 285, 'Mixed-Use': 320, 'Condo/TH': 340, 'SFR+ADU': 275 };
 
-function guessHood(a) {
+// Neighborhood lookup by lat/lng bounding boxes (LA neighborhoods)
+const HOOD_BOXES = [
+  { hood: 'Silver Lake',   latMin: 34.070, latMax: 34.100, lngMin: -118.285, lngMax: -118.255 },
+  { hood: 'Echo Park',     latMin: 34.065, latMax: 34.085, lngMin: -118.275, lngMax: -118.245 },
+  { hood: 'Highland Park', latMin: 34.095, latMax: 34.125, lngMin: -118.225, lngMax: -118.185 },
+  { hood: 'Los Feliz',     latMin: 34.095, latMax: 34.120, lngMin: -118.305, lngMax: -118.275 },
+  { hood: 'Koreatown',     latMin: 34.045, latMax: 34.075, lngMin: -118.320, lngMax: -118.285 },
+  { hood: 'Mid-Wilshire',  latMin: 34.055, latMax: 34.075, lngMin: -118.360, lngMax: -118.320 },
+  { hood: 'Culver City',   latMin: 34.000, latMax: 34.035, lngMin: -118.415, lngMax: -118.375 },
+  { hood: 'Mar Vista',     latMin: 33.985, latMax: 34.015, lngMin: -118.445, lngMax: -118.410 },
+  { hood: 'West Adams',    latMin: 34.000, latMax: 34.030, lngMin: -118.350, lngMax: -118.310 },
+  { hood: 'Boyle Heights', latMin: 34.020, latMax: 34.055, lngMin: -118.225, lngMax: -118.195 },
+];
+
+// Council district to neighborhood mapping
+const DISTRICT_HOOD = {
+  1: 'Highland Park', 2: 'Mid-Wilshire', 3: 'Mar Vista', 4: 'Los Feliz',
+  5: 'Mid-Wilshire',  6: 'West Adams',   7: 'Highland Park', 8: 'West Adams',
+  9: 'Koreatown',    10: 'Mid-Wilshire', 11: 'Mar Vista', 12: 'Culver City',
+  13: 'Silver Lake', 14: 'Highland Park', 15: 'Boyle Heights',
+};
+
+function guessHood(a, lat, lng, councilDistrict) {
+  // First try coordinates (most accurate)
+  if (lat && lng) {
+    for (const b of HOOD_BOXES) {
+      if (lat >= b.latMin && lat <= b.latMax && lng >= b.lngMin && lng <= b.lngMax) {
+        return b.hood;
+      }
+    }
+  }
+  // Fall back to council district
+  if (councilDistrict && DISTRICT_HOOD[councilDistrict]) {
+    return DISTRICT_HOOD[councilDistrict];
+  }
+  // Fall back to address text search
   a = (a || '').toUpperCase();
   if (a.includes('SILVER LAKE') || a.includes('SILVERLAKE')) return 'Silver Lake';
   if (a.includes('ECHO PARK'))     return 'Echo Park';
@@ -100,7 +135,7 @@ function calcIRR(cfs) {
 }
 
 function underwrite(p) {
-  const hood  = guessHood(p.address);
+  const hood  = guessHood(p.address, p.lat, p.lng, p.council_district);
   const type  = guessType(p.permit_type, p.permit_subtype, p.units);
   const units = Math.max(p.units || 2, 2);
   const R     = RENTS[hood] || RENTS['Koreatown'];
@@ -156,7 +191,7 @@ async function main() {
   while (true) {
     const batch = await sbGet(
       '/rest/v1/permits' +
-      '?select=id,address,zone,units,valuation,issued_date,is_rti,permit_type,permit_subtype,lat,lng,status' +
+      '?select=id,address,zone,units,valuation,issued_date,is_rti,permit_type,permit_subtype,lat,lng,status,raw_data->council_district' +
       '&valuation=gte.50000' +
       '&address=neq.' +
       '&limit=1000' +
