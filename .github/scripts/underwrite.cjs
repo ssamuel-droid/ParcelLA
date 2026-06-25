@@ -325,13 +325,12 @@ async function main() {
   while (true) {
     const batch = await sbGet(
       '/rest/v1/permits' +
-      '?select=id,address,zone,units,valuation,issued_date,is_rti,permit_type,permit_subtype,lat,lng,status,raw_data->council_district' +
+      '?select=id,address,zone,units,valuation,issued_date,is_rti,permit_type,permit_subtype,lat,lng,status' +
       '&valuation=gte.50000' +
-      '&address=neq.' +
+      '&address=not.is.null' +
       '&limit=1000' +
       '&offset=' + offset +
-      '&order=issued_date.desc' +
-      '&apikey=' + SB_KEY
+      '&order=issued_date.desc'
     );
     if (!batch.length) break;
     allPermits = allPermits.concat(batch);
@@ -357,10 +356,16 @@ async function main() {
     });
 
     const res = await sbUpsert('sites', dedup, 'address,project_type');
-    if (res.status < 300) done += dedup.length;
-    else console.log('Batch error:', res.status, res.body.slice(0, 100));
+    if (res.status < 300) {
+      done += dedup.length;
+    } else {
+      console.log('Batch error at', i, ':', res.status, res.body.slice(0, 200));
+      // Try inserting without conflict resolution as fallback
+      const res2 = await sbUpsert('sites', dedup.slice(0,10), 'address,project_type');
+      console.log('Fallback result:', res2.status);
+    }
 
-    if (i % 1000 === 0) console.log('Progress:', done, '/', allPermits.length);
+    if (i % 200 === 0) console.log('Progress:', i, '/', allPermits.length, '| Sites stored:', done);
     await sleep(50);
   }
 
