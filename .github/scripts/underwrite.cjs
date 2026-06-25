@@ -12,6 +12,7 @@ function req(method, path, body) {
       hostname: u.hostname,
       path: u.pathname + u.search,
       method,
+      timeout: 30000,  // 30 second timeout
       headers: {
         'Authorization': 'Bearer ' + SB_KEY,
         'apikey': SB_KEY,
@@ -25,11 +26,11 @@ function req(method, path, body) {
       let d = '';
       res.on('data', c => d += c);
       res.on('end', () => {
-        console.log(method, path.split('?')[0], '->', res.statusCode, d.slice(0,100));
         try { resolve({ status: res.statusCode, data: JSON.parse(d) }); }
         catch(e) { resolve({ status: res.statusCode, data: d }); }
       });
     });
+    r.on('timeout', () => { r.destroy(); reject(new Error('Request timeout')); });
     r.on('error', reject);
     if (data) r.write(data);
     r.end();
@@ -218,8 +219,8 @@ async function main() {
 
   // Underwrite in batches of 200
   let done=0;
-  for(let i=0;i<all.length;i+=200) {
-    const batch=all.slice(i,i+200);
+  for(let i=0;i<all.length;i+=50) {
+    const batch=all.slice(i,i+50);
     const seen=new Set();
     const rows=batch.map(p=>({address:p.address,...uw(p)})).filter(r=>{
       if(!r.address||seen.has(r.permit_source_id)) return false;
@@ -228,7 +229,7 @@ async function main() {
     const r=await req('POST','/rest/v1/sites?on_conflict=permit_source_id',rows);
     if(r.status<300) done+=rows.length;
     else console.log('Error:',r.status,JSON.stringify(r.data).slice(0,200));
-    if(i%2000===0) console.log('Progress:',i,'/',all.length,'stored:',done);
+    if(i%500===0) console.log('Progress:',i,'/',all.length,'stored:',done);
     await sleep(100);
   }
   console.log('DONE. Sites stored:',done);
