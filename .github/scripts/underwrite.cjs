@@ -296,6 +296,7 @@ function underwrite(p) {
     : 0;
 
   return {
+    permit_source_id: p.id ? String(p.id) : null,
     neighborhood:    hood,
     project_type:    type,
     units,
@@ -355,7 +356,7 @@ async function main() {
       return true;
     });
 
-    const res = await sbUpsert('sites', dedup, 'address,project_type');
+    const res = await sbUpsert('sites', dedup, 'permit_source_id');
     if (res.status < 300) {
       done += dedup.length;
     } else {
