@@ -17,6 +17,7 @@ function req(method, path, body) {
         'apikey': SB_KEY,
         'Accept': 'application/json',
         'Content-Type': 'application/json',
+        'Prefer': 'return=minimal,resolution=merge-duplicates',
       }
     };
     if (data) options.headers['Content-Length'] = Buffer.byteLength(data);
