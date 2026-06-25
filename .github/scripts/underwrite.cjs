@@ -18,7 +18,7 @@ function req(method, path, body) {
         'apikey': SB_KEY,
         'Accept': 'application/json',
         'Content-Type': 'application/json',
-        'Prefer': 'return=minimal,resolution=merge-duplicates',
+        'Prefer': 'return=minimal,resolution=ignore-duplicates',
       }
     };
     if (data) options.headers['Content-Length'] = Buffer.byteLength(data);
@@ -226,7 +226,7 @@ async function main() {
       if(!r.address||seen.has(r.permit_source_id)) return false;
       seen.add(r.permit_source_id); return true;
     });
-    const r=await req('POST','/rest/v1/sites?on_conflict=permit_source_id',rows);
+    const r=await req('POST','/rest/v1/sites',rows);
     if(r.status<300) done+=rows.length;
     else console.log('Error:',r.status,JSON.stringify(r.data).slice(0,200));
     if(i%500===0) console.log('Progress:',i,'/',all.length,'stored:',done);
