@@ -101,53 +101,68 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
 
     if (process.env.SUPABASE_URL) {
       try {
-        // Load real LADBS permit data as primary sites (no unit filter — use all permits)
-        const { data: permits, error: pErr } = await supabase
-          .from('permits')
-          .select('id, permit_number, address, zone, units, valuation, issued_date, is_rti, permit_type, permit_subtype, lat, lng, status')
-          .not('address', 'is', null)
-          .neq('address', '')
-          .gte('valuation', 200000)  // meaningful projects only
-          .limit(500)
-          .order('issued_date', { ascending: false });
+        // Load pre-underwritten sites from Supabase (populated by GitHub Action)
+        const { data: sbSites, error: sbErr } = await supabase
+          .from('sites')
+          .select('*')
+          .eq('status', 'active')
+          .not('net_profit', 'is', null)  // only pre-underwritten sites
+          .limit(2000)
+          .order('irr_v', { ascending: false });
 
-        if (!pErr && permits?.length > 0) {
-          sites = permits.map((p, i) => ({
-            id:           50000 + i,
-            addr:         p.address,
-            hood:         guessHood(p.address, p.zone),
-            type:         guessType(p.permit_type, p.permit_subtype, p.units),
-            zone:         p.zone || 'R3',
-            lot:          5000,
-            units:        Math.max(p.units || 4, 4),  // minimum 4 units for development
-            usf:          800,
-            rti:          p.is_rti || false,
-            isComp:       false,
-            price:        null,
-            demo:         false,
-            lat:          p.lat,
-            lng:          p.lng,
-            permitNumber: p.permit_number,
-            valuation:    p.valuation,
-            permitStatus: p.status,
+        if (!sbErr && sbSites?.length > 0) {
+          sites = sbSites.map((s, i) => ({
+            id:           s.id || (50000 + i),
+            addr:         s.address ?? s.addr,
+            hood:         s.neighborhood ?? s.hood ?? 'Koreatown',
+            type:         s.project_type ?? s.type ?? 'Multifamily',
+            zone:         s.zoning ?? s.zone ?? 'R3',
+            lot:          s.lot_sf ?? s.lot ?? 5000,
+            units:        s.units ?? 4,
+            usf:          s.avg_unit_sf ?? s.usf ?? 800,
+            rti:          s.rti ?? false,
+            isComp:       s.is_comp ?? false,
+            price:        s.price ?? null,
+            demo:         s.has_demo ?? false,
+            lat:          s.lat,
+            lng:          s.lng,
+            // Pre-computed underwriting — skip model calculation
+            _precomputed: true,
+            _m: {
+              noi:          s.noi,
+              totalCost:    s.total_cost,
+              exitValue:    s.exit_value,
+              exitProceeds: s.net_profit,
+              netProfit:    s.net_profit,
+              leveragedIRR: s.irr_v,
+              capRateOnCost: (s.cap_on_cost || 0) / 100,
+              devSpreadPct:  (s.dev_spread_pct || 0) / 100,
+              marketCapRate: 0.0500,
+              price:        s.price ?? 0,
+              hardCosts:    (s.total_cost || 0) * 0.55,
+              softCosts:    (s.total_cost || 0) * 0.22,
+              carryCost:    (s.total_cost || 0) * 0.12,
+              loanAmount:   (s.total_cost || 0) * 0.65,
+              equity:       (s.total_cost || 0) * 0.35,
+              equityMultiple: s.total_cost > 0 ? ((s.exit_value || 0) / ((s.total_cost || 1) * 0.35)) : 0,
+            },
             ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
           }));
-          console.log(`[sites] Loaded ${sites.length} real permit sites from Supabase`);
-        }
-
-        if (sites.length === 0) {
-          console.log('[sites] No permits found — using mock sites');
+          console.log(`[sites] Loaded ${sites.length} pre-underwritten sites from Supabase`);
+        } else {
+          console.log('[sites] No pre-underwritten sites found — using mock sites');
           sites = [...SITES];
         }
       } catch (e) {
         console.log('[sites] Supabase failed — using mock sites:', e.message);
+        sites = [...SITES];
       }
     }
 
-    // Run pre-underwriting on every site
+    // Use pre-computed model results if available, otherwise run model
     const modelled = sites.map(s => ({
       ...s,
-      _m: runModel(normalizeSite(s), overrides),
+      _m: s._precomputed ? s._m : runModel(normalizeSite(s), overrides),
     }));
 
     // Filter
