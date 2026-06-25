@@ -1,0 +1,20 @@
+name: Underwrite LA Sites
+
+on:
+  workflow_run:
+    workflows: ["Fetch LA City Permit Data"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  underwrite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run underwriting on permits
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node .github/scripts/underwrite.cjs
