@@ -204,6 +204,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     const total = filtered.length;
     const paginated = filtered.slice(+offset, +offset + +limit);
 
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.set('Pragma', 'no-cache');
     res.json({
       total,
       limit:   +limit,
