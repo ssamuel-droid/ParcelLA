@@ -84,7 +84,13 @@ const publicDir  = join(__dirname2, '..', 'public');
 console.log('[server] Serving static files from:', publicDir);
 
 // Serve all static files from public/
-app.use(express.static(publicDir));
+app.use(express.static(publicDir, {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  }
+}));
 
 // Explicit routes for frontend files
 app.get('/', (req, res) => res.sendFile(join(publicDir, 'index.html')));
