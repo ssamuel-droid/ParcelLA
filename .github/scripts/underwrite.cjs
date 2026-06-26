@@ -211,7 +211,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,address,zone,units,valuation,is_rti,permit_type,permit_subtype,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units&valuation=gte.50000&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,address,zone,units,valuation,is_rti,permit_type,permit_subtype,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;
