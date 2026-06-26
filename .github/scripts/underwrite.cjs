@@ -168,7 +168,11 @@ function irr(cfs) {
 function uw(p) {
   const h = hood(p.lat, p.lng, p.address);
   const t = ptype(p.permit_type, p.permit_subtype, p.units);
-  const u = Math.max(p.units||2,2);
+  // Estimate units from valuation if not available
+  // Typical LA construction cost: $285/SF × 800SF × units = ~$228K/unit
+  const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='SFR+ADU'?220000:228000;
+  const estimatedUnits = p.units > 0 ? p.units : Math.max(Math.round((p.valuation||228000)/costPerUnit), 2);
+  const u = Math.min(Math.max(estimatedUnits, 2), 200); // cap at 200 units
   const R = RENTS[h]||RENTS['Koreatown'];
   const cap = CAPS[h]||0.0525;
   const hc = HC[t]||285;
@@ -188,7 +192,7 @@ function uw(p) {
   const cf = noi-ds;
   const irrV = eq>500 ? Math.min(Math.max(irr([-eq,cf,cf,cf,cf,cf+exit-loan]),-50),100) : 0;
   return {
-    neighborhood:h, project_type:t, units:u, avg_unit_sf:800, lot_sf:5000,
+    neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:800, lot_sf:5000,
     status:'active', data_source:'ladbs_permit', rti:p.is_rti||false,
     lat:p.lat, lng:p.lng,
     noi:Math.round(noi), total_cost:Math.round(total), exit_value:Math.round(exit),
