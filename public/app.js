@@ -225,7 +225,10 @@ async function loadSites() {
     if (!r.ok) throw new Error('API ' + r.status);
     const data = await r.json();
     allSites = data.results || [];
+    console.log('[ParceLLA] Loaded', allSites.length, 'sites, first:', JSON.stringify(allSites[0]?.addr));
+    console.log('[ParceLLA] Sample site type:', allSites[0]?.type, 'rti:', allSites[0]?.rti, 'isComp:', allSites[0]?.isComp);
     applyFilters();
+    console.log('[ParceLLA] After filter:', filtered.length, 'sites visible');
   } catch (e) {
     g('list').innerHTML = '<div class="empty">Could not load sites<br><small style="color:#e24b4a">' + e.message + '</small></div>';
   }
