@@ -167,12 +167,14 @@ function irr(cfs) {
 
 function uw(p) {
   const h = hood(p.lat, p.lng, p.address);
-  const t = ptype(p.permit_type, p.permit_subtype, p.units);
+  // Get actual unit count from multiple sources
+  const rawUnits = parseInt(p['of_residential_dwelling_units'] || p['number_of_units'] || '0') || 0;
+  const actualUnits = rawUnits > 0 ? rawUnits : (p.units > 0 ? p.units : 0);
+  const t = ptype(p.permit_type, p.permit_subtype, actualUnits);
   // Estimate units from valuation if not available
-  // Typical LA construction cost: $285/SF × 800SF × units = ~$228K/unit
   const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='SFR+ADU'?220000:228000;
-  const estimatedUnits = p.units > 0 ? p.units : Math.max(Math.round((p.valuation||228000)/costPerUnit), 2);
-  const u = Math.min(Math.max(estimatedUnits, 2), 200); // cap at 200 units
+  const estimatedUnits = actualUnits > 0 ? actualUnits : Math.max(Math.round((p.valuation||228000)/costPerUnit), 2);
+  const u = Math.min(Math.max(estimatedUnits, 2), 200);
   const R = RENTS[h]||RENTS['Koreatown'];
   const cap = CAPS[h]||0.0525;
   const hc = HC[t]||285;
@@ -209,7 +211,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,address,zone,units,valuation,is_rti,permit_type,permit_subtype,lat,lng&valuation=gte.50000&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,address,zone,units,valuation,is_rti,permit_type,permit_subtype,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units&valuation=gte.50000&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;
