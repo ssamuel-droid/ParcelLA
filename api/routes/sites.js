@@ -121,6 +121,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
             units:        s.units ?? 4,
             usf:          s.avg_unit_sf ?? s.usf ?? 800,
             rti:          s.rti ?? false,
+            forSale:      true,  // permit sites are acquirable
             isComp:       s.is_comp ?? false,
             price:        s.price ?? null,
             demo:         s.has_demo ?? false,

@@ -246,7 +246,7 @@ function applyFilters() {
   if (g('f-sf')?.checked) types.push('SFR+ADU');
 
   filtered = allSites.filter(s => {
-    if (!ffs && !s.isComp && !s.rti) return false;
+    if (!ffs && !s.isComp && !s.rti && !s.forSale) return false;
     if (!frti && s.rti) return false;
     if (!fcomp && s.isComp) return false;
     if (types.length && !types.includes(s.type)) return false;
