@@ -257,10 +257,10 @@ function applyFilters() {
     if (zone && s.zone !== zone) return false;
     if (s.units < umin || s.units > umax) return false;
     if (!s.isComp && s.askPrice && (s.askPrice < pmin || s.askPrice > pmax)) return false;
-    if ((s.netProfit||0) < mfp) return false;
-    if ((s.irrV||0) < mfi) return false;
-    if (((s.devSpreadPct||0)*100) < mfs) return false;
-    if ((s.capOnCost||0) < mfc) return false;
+    if (mfp && (s.netProfit||0) < mfp) return false;
+    if (mfi && (s.irrV||0) < mfi) return false;
+    if (mfs && ((s.devSpreadPct||0)*100) < mfs) return false;
+    if (mfc && (s.capOnCost||0) < mfc) return false;
     return true;
   });
 
