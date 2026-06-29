@@ -85,8 +85,9 @@ async function main() {
   try {
     const records = await fetchAll(
       "https://data.lacity.org/resource/t57t-h8jb.json?$order=issue_date+DESC" +
-      "&$where=(permit_type='Bldg-New'+OR+permit_type='Bldg-Addition')" +
-      "+AND+(latest_status='Ready+to+Issue'+OR+latest_status='Issued'+OR+latest_status='Plan+Check')"
+      "&$where=permit_type='Bldg-New'" +
+      "+AND+(latest_status='Ready+to+Issue'+OR+latest_status='Issued'+OR+latest_status='Plan+Check')" +
+      "&$where=permit_sub_type+NOT+IN+('ADU','Accessory+Dwelling+Unit','1+or+2+Family+Dwelling+Addition')"
     );
     total += await syncDataset('DBS Permits', records, (r, i) => {
       const addr = r.address || [r.address_start, r.street_direction, r.street_name, r.street_suffix].filter(Boolean).join(' ').trim();

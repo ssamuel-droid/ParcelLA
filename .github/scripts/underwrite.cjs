@@ -170,6 +170,10 @@ function uw(p) {
   // Get actual unit count from multiple sources
   const rawUnits = parseInt(p['of_residential_dwelling_units'] || p['number_of_units'] || '0') || 0;
   const actualUnits = rawUnits > 0 ? rawUnits : (p.units > 0 ? p.units : 0);
+  // Skip ADUs and additions — not development opportunities
+  const subtype = (p.permit_subtype || '').toLowerCase();
+  if (subtype.includes('adu') || subtype.includes('accessory') || subtype.includes('addition')) return null;
+
   const t = ptype(p.permit_type, p.permit_subtype, actualUnits);
   // Estimate units from valuation if not available
   const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='SFR+ADU'?220000:228000;
