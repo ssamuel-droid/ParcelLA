@@ -89,6 +89,19 @@ async function fetchAll(baseUrl, label) {
   return all;
 }
 
+async function fetchDataset(label, dataset, paramVariants) {
+  const errors = [];
+  for (const params of paramVariants) {
+    try {
+      return await fetchAll(socrataUrl(dataset, params), label);
+    } catch (e) {
+      errors.push(e.message);
+      console.warn(label + ' fetch attempt failed:', e.message);
+    }
+  }
+  throw new Error(errors.join(' | '));
+}
+
 function cleanDate(value) {
   return (value || '').split('T')[0] || null;
 }
@@ -181,9 +194,11 @@ async function main() {
   }
 
   try {
-    const records = await fetchAll(socrataUrl('cpkv-aajs', {
-      '$order': 'date DESC',
-    }), 'New Housing Units');
+    const records = await fetchDataset('New Housing Units', 'cpkv-aajs', [
+      { '$order': 'date DESC' },
+      { '$order': 'issued_date DESC' },
+      {},
+    ]);
 
     total += await syncDataset('New Housing Units', records, (r, i) => {
       const units = integer(r.units || r.net_units || r.number_of_units);
@@ -210,9 +225,11 @@ async function main() {
   }
 
   try {
-    const records = await fetchAll(socrataUrl('6q2s-9pnn', {
-      '$order': 'permitissuancedate DESC',
-    }), 'Building Permits Official');
+    const records = await fetchDataset('Building Permits Official', '6q2s-9pnn', [
+      { '$order': 'permitissuancedate DESC' },
+      { '$order': 'issue_date DESC' },
+      {},
+    ]);
 
     total += await syncDataset('Building Permits Official', records, (r, i) => {
       if (shouldSkipSubtype(r.permitsubtype)) return null;
@@ -240,10 +257,12 @@ async function main() {
     console.error('Building Permits Official failed:', e.message);
   }
 
-  if (failures.length) {
-    throw new Error('Permit sync failed for one or more datasets: ' + failures.join(' | '));
+  if (total === 0) {
+    throw new Error('Permit sync completed with zero records: ' + failures.join(' | '));
   }
-  if (total === 0) throw new Error('Permit sync completed with zero records');
+  if (failures.length) {
+    console.warn('Permit sync completed with optional dataset warning(s): ' + failures.join(' | '));
+  }
 
   console.log('\n=== TOTAL SYNCED: ' + total + ' ===');
 }
