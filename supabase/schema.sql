@@ -29,6 +29,16 @@ CREATE TABLE sites (
   rti             BOOLEAN DEFAULT FALSE,
   has_demo        BOOLEAN DEFAULT FALSE,
   unit_mix        JSONB DEFAULT '{"studio":0.25,"one":0.5,"two":0.2,"three":0.05}',
+  estimated_units BOOLEAN DEFAULT FALSE,
+  noi             BIGINT,
+  total_cost      BIGINT,
+  exit_value      BIGINT,
+  net_profit      BIGINT,
+  irr_v           NUMERIC(8,2),
+  cap_on_cost     NUMERIC(8,2),
+  dev_spread_pct  NUMERIC(8,2),
+  permit_source_id TEXT,
+  underwritten_at TIMESTAMPTZ,
   rso_status      TEXT,
   data_source     TEXT DEFAULT 'manual',
   status          TEXT DEFAULT 'active' CHECK (status IN ('active','pending','sold','off-market')),
@@ -45,6 +55,9 @@ CREATE INDEX sites_type_idx  ON sites(project_type);
 CREATE INDEX sites_rti_idx   ON sites(rti);
 CREATE INDEX sites_price_idx ON sites(price);
 CREATE INDEX sites_addr_trgm ON sites USING GIN(address gin_trgm_ops);
+CREATE INDEX sites_irr_idx ON sites(irr_v DESC);
+CREATE INDEX sites_profit_idx ON sites(net_profit DESC);
+CREATE UNIQUE INDEX sites_permit_source_uidx ON sites(permit_source_id) WHERE permit_source_id IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION update_site_geom() RETURNS TRIGGER AS $$
 BEGIN

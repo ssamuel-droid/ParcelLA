@@ -81,6 +81,53 @@ function buildOverrides(query) {
   return ov;
 }
 
+function modelFromSupabaseSite(s) {
+  return {
+    noi:           s.noi          || 0,
+    totalCost:     s.total_cost   || 0,
+    exitValue:     s.exit_value   || 0,
+    exitProceeds:  s.net_profit   || 0,
+    netProfit:     s.net_profit   || 0,
+    leveragedIRR:  s.irr_v        || 0,
+    capRateOnCost: (s.cap_on_cost   || 0) / 100,
+    devSpreadPct:  (s.dev_spread_pct || 0) / 100,
+    marketCapRate: 0.0500,
+    price:         s.price        || 0,
+    hardCosts:     (s.total_cost  || 0) * 0.55,
+    softCosts:     (s.total_cost  || 0) * 0.22,
+    carryCost:     (s.total_cost  || 0) * 0.12,
+    loanAmount:    (s.total_cost  || 0) * 0.65,
+    equity:        (s.total_cost  || 0) * 0.35,
+    equityMultiple: (s.total_cost || 0) > 0
+      ? ((s.exit_value || 0) / ((s.total_cost || 1) * 0.35)) : 0,
+  };
+}
+
+function mapSupabaseSite(s, i = 0) {
+  return {
+    id:           s.id || (50000 + i),
+    addr:         s.address ?? s.addr,
+    hood:         s.neighborhood ?? s.hood ?? 'Koreatown',
+    type:         s.project_type ?? s.type ?? 'Multifamily',
+    zone:         s.zoning ?? s.zone ?? 'R3',
+    lot:          s.lot_sf ?? s.lot ?? 5000,
+    units:        s.units ?? 4,
+    usf:          s.avg_unit_sf ?? s.usf ?? 800,
+    rti:          s.rti ?? false,
+    forSale:      true,
+    isComp:       s.is_comp ?? false,
+    price:        s.price ?? null,
+    demo:         s.has_demo ?? false,
+    lat:          s.lat,
+    lng:          s.lng,
+    permitSourceId: s.permit_source_id,
+    underwrittenAt: s.underwritten_at,
+    _precomputed: true,
+    _m: modelFromSupabaseSite(s),
+    ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
+  };
+}
+
 // ── GET /api/sites ─────────────────────────────────────────────────────────────
 router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
   try {
@@ -94,6 +141,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     } = req.query;
 
     const overrides = buildOverrides(req.query);
+    const requestedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 5000);
+    const requestedOffset = Math.max(parseInt(offset, 10) || 0, 0);
 
     // Primary source: real LADBS permits from Supabase (36,000+ records)
     // Fallback: 27 mock sites if permits table is empty
@@ -107,50 +156,11 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
           .select('*')
           .eq('status', 'active')
           .not('net_profit', 'is', null)  // only pre-underwritten sites
-          .limit(2000)
+          .limit(Math.min(Math.max(requestedLimit + requestedOffset, 2000), 10000))
           .order('irr_v', { ascending: false });
 
         if (!sbErr && sbSites?.length > 0) {
-          sites = sbSites.map((s, i) => ({
-            id:           s.id || (50000 + i),
-            addr:         s.address ?? s.addr,
-            hood:         s.neighborhood ?? s.hood ?? 'Koreatown',
-            type:         s.project_type ?? s.type ?? 'Multifamily',
-            zone:         s.zoning ?? s.zone ?? 'R3',
-            lot:          s.lot_sf ?? s.lot ?? 5000,
-            units:        s.units ?? 4,
-            usf:          s.avg_unit_sf ?? s.usf ?? 800,
-            rti:          s.rti ?? false,
-            forSale:      true,  // permit sites are acquirable
-            isComp:       s.is_comp ?? false,
-            price:        s.price ?? null,
-            demo:         s.has_demo ?? false,
-            lat:          s.lat,
-            lng:          s.lng,
-            // Pre-computed underwriting — use stored values directly
-            _precomputed: true,
-            forSale: true,
-            _m: {
-              noi:           s.noi          || 0,
-              totalCost:     s.total_cost   || 0,
-              exitValue:     s.exit_value   || 0,
-              exitProceeds:  s.net_profit   || 0,
-              netProfit:     s.net_profit   || 0,
-              leveragedIRR:  s.irr_v        || 0,
-              capRateOnCost: (s.cap_on_cost   || 0) / 100,
-              devSpreadPct:  (s.dev_spread_pct || 0) / 100,
-              marketCapRate: 0.0500,
-              price:         s.price        || 0,
-              hardCosts:     (s.total_cost  || 0) * 0.55,
-              softCosts:     (s.total_cost  || 0) * 0.22,
-              carryCost:     (s.total_cost  || 0) * 0.12,
-              loanAmount:    (s.total_cost  || 0) * 0.65,
-              equity:        (s.total_cost  || 0) * 0.35,
-              equityMultiple: (s.total_cost || 0) > 0 
-                ? ((s.exit_value || 0) / ((s.total_cost || 1) * 0.35)) : 0,
-            },
-            ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
-          }));
+          sites = sbSites.map(mapSupabaseSite);
           console.log(`[sites] Loaded ${sites.length} pre-underwritten sites from Supabase`);
         } else {
           console.log('[sites] No pre-underwritten sites found — using mock sites');
@@ -202,7 +212,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     if (SORTS[sort]) filtered.sort(SORTS[sort]);
 
     const total = filtered.length;
-    const paginated = filtered.slice(+offset, +offset + +limit);
+    const paginated = filtered.slice(requestedOffset, requestedOffset + requestedLimit);
 
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
@@ -249,12 +259,30 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
 router.get('/:id', optionalAuth, async (req, res, next) => {
   try {
     const id = +req.params.id;
-    const site = SITES.find(s => s.id === id);
-    if (!site) return res.status(404).json({ error: 'Site not found' });
-
     const overrides = buildOverrides(req.query);
-    const model     = runModel(normalizeSite(site), overrides);
-    const scenarios = runScenarios(normalizeSite(site), overrides);
+    let site = SITES.find(s => s.id === id);
+    let model = null;
+    let scenarios = null;
+
+    if (site) {
+      const normalized = normalizeSite(site);
+      model = runModel(normalized, overrides);
+      scenarios = runScenarios(normalized, overrides);
+    } else if (process.env.SUPABASE_URL) {
+      const { data, error } = await supabase
+        .from('sites')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) {
+        site = mapSupabaseSite(data);
+        model = site._m;
+        scenarios = { base: model };
+      }
+    }
+
+    if (!site) return res.status(404).json({ error: 'Site not found' });
 
     // If user is logged in, check if they've saved this site
     let isSaved = false;

@@ -1,51 +1,87 @@
-// ParceLLA — Full LA City Permit Sync
-// Pulls from multiple datasets to capture both small and large developments
+// ParceLLA - Full LA City Permit Sync
+// Pulls from multiple LA City datasets to capture both small and large developments.
 
 const https = require('https');
-const SB_URL = process.env.SUPABASE_URL.replace(/\/$/, '');
+const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+if (!SB_URL || !SB_KEY) {
+  throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY are required');
+}
+
+const EXCLUDE_SUBTYPE = /adu|accessory|addition/i;
 
 function get(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'Accept': 'application/json' } }, res => {
-      let d = ''; res.on('data', c => d += c);
+    const req = https.get(url, { headers: { 'Accept': 'application/json' }, timeout: 30000 }, res => {
+      let d = '';
+      res.on('data', c => d += c);
       res.on('end', () => {
-        if (res.statusCode === 200) resolve(JSON.parse(d));
-        else reject(new Error('HTTP ' + res.statusCode + ': ' + d.slice(0,100)));
+        if (res.statusCode !== 200) {
+          reject(new Error('HTTP ' + res.statusCode + ': ' + d.slice(0,300)));
+          return;
+        }
+        try { resolve(JSON.parse(d)); }
+        catch (e) { reject(new Error('Invalid JSON: ' + d.slice(0,300))); }
       });
-    }).on('error', reject);
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+    req.on('error', reject);
+  });
+}
+
+function supabaseReq(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const data = body ? JSON.stringify(body) : null;
+    const u = new URL(SB_URL + path);
+    const req = https.request({
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      method,
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + SB_KEY,
+        'apikey': SB_KEY,
+        'Prefer': 'return=minimal,resolution=merge-duplicates',
+        ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
+      },
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => resolve({ status: res.statusCode, body: d }));
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Supabase request timeout')); });
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
   });
 }
 
 function upsert(rows) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify(rows);
-    const u = new URL(SB_URL + '/rest/v1/permits?on_conflict=permit_number');
-    const req = https.request({
-      hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + SB_KEY, 'apikey': SB_KEY,
-        'Prefer': 'return=minimal,resolution=merge-duplicates',
-        'Content-Length': Buffer.byteLength(body)
-      }
-    }, res => {
-      let d = ''; res.on('data', c => d += c);
-      res.on('end', () => resolve({ status: res.statusCode, body: d }));
-    });
-    req.on('error', reject); req.write(body); req.end();
-  });
+  if (!rows.length) return Promise.resolve({ status: 204, body: '' });
+  return supabaseReq('POST', '/rest/v1/permits?on_conflict=permit_number', rows);
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function fetchAll(baseUrl) {
+function socrataUrl(dataset, params = {}) {
+  const u = new URL('https://data.lacity.org/resource/' + dataset + '.json');
+  for (const [key, value] of Object.entries(params)) u.searchParams.set(key, value);
+  return u.toString();
+}
+
+async function fetchAll(baseUrl, label) {
   let all = [], offset = 0;
   while (true) {
-    const batch = await get(baseUrl + '&$limit=1000&$offset=' + offset);
+    const u = new URL(baseUrl);
+    u.searchParams.set('$limit', '1000');
+    u.searchParams.set('$offset', String(offset));
+    const batch = await get(u.toString());
+    if (!Array.isArray(batch)) throw new Error(label + ' did not return an array');
     if (!batch.length) break;
     all = all.concat(batch);
-    console.log('  ' + baseUrl.split('?')[0].split('/').pop() + ': fetched ' + all.length + '...');
+    console.log('  ' + label + ': fetched ' + all.length + '...');
     if (batch.length < 1000) break;
     offset += 1000;
     await sleep(300);
@@ -53,105 +89,161 @@ async function fetchAll(baseUrl) {
   return all;
 }
 
+function cleanDate(value) {
+  return (value || '').split('T')[0] || null;
+}
+
+function cleanAddress(value) {
+  return String(value || '').trim().slice(0,255);
+}
+
+function number(value) {
+  return parseFloat(value || '0') || 0;
+}
+
+function integer(value) {
+  return parseInt(value || '0', 10) || 0;
+}
+
+function shouldSkipSubtype(value) {
+  return EXCLUDE_SUBTYPE.test(String(value || ''));
+}
+
 async function syncDataset(name, records, buildRow) {
   console.log('\n--- ' + name + ': ' + records.length + ' records ---');
   const seen = new Set();
-  const unique = records.filter(r => {
-    const k = buildRow(r, 0).permit_number;
-    if (seen.has(k)) return false;
-    seen.add(k); return true;
-  });
-  
+  const rows = [];
+
+  for (const record of records) {
+    const row = buildRow(record, rows.length);
+    if (!row || !row.permit_number || !row.address) continue;
+    if (seen.has(row.permit_number)) continue;
+    seen.add(row.permit_number);
+    rows.push(row);
+  }
+
   let synced = 0;
-  for (let i = 0; i < unique.length; i += 25) {
-    const batch = unique.slice(i, i + 25);
-    const bseen = new Set();
-    const rows = batch.map((r, j) => buildRow(r, i+j)).filter(r => {
-      if (bseen.has(r.permit_number)) return false;
-      bseen.add(r.permit_number); return true;
-    });
-    const res = await upsert(rows);
-    if (res.status < 300) synced += rows.length;
+  for (let i = 0; i < rows.length; i += 25) {
+    const batch = rows.slice(i, i + 25);
+    const res = await upsert(batch);
+    if (res.status >= 300) {
+      throw new Error(name + ' upsert failed: HTTP ' + res.status + ' ' + res.body.slice(0,300));
+    }
+    synced += batch.length;
     await sleep(80);
   }
-  console.log('Synced: ' + synced + '/' + unique.length);
+
+  console.log('Synced: ' + synced + '/' + rows.length);
   return synced;
 }
 
 async function main() {
   let total = 0;
+  const failures = [];
 
-  // ── Dataset 1: DBS Permits (t57t-h8jb) — ALL residential, small + large ──
   try {
-    const records = await fetchAll(
-      "https://data.lacity.org/resource/t57t-h8jb.json?$order=issue_date+DESC" +
-      "&$where=permit_type='Bldg-New'" +
-      "+AND+(latest_status='Ready+to+Issue'+OR+latest_status='Issued'+OR+latest_status='Plan+Check')" +
-      "&$where=permit_sub_type+NOT+IN+('ADU','Accessory+Dwelling+Unit','1+or+2+Family+Dwelling+Addition')"
-    );
+    const where = [
+      "permit_type='Bldg-New'",
+      "(latest_status='Ready to Issue' OR latest_status='Issued' OR latest_status='Plan Check')",
+    ].join(' AND ');
+    const records = await fetchAll(socrataUrl('t57t-h8jb', {
+      '$order': 'issue_date DESC',
+      '$where': where,
+    }), 'DBS Permits');
+
     total += await syncDataset('DBS Permits', records, (r, i) => {
-      const addr = r.address || [r.address_start, r.street_direction, r.street_name, r.street_suffix].filter(Boolean).join(' ').trim();
-      const units = parseInt(r.of_residential_dwelling_units || r.number_of_units || '0') || 0;
+      if (shouldSkipSubtype(r.permit_sub_type)) return null;
+      const addr = cleanAddress(r.address || [r.address_start, r.street_direction, r.street_name, r.street_suffix].filter(Boolean).join(' '));
       let lat = null, lng = null;
-      if (r.location_1 && r.location_1.coordinates) { lng = r.location_1.coordinates[0]; lat = r.location_1.coordinates[1]; }
+      if (r.location_1 && r.location_1.coordinates) {
+        lng = r.location_1.coordinates[0];
+        lat = r.location_1.coordinates[1];
+      }
       return {
-        permit_number: String(r.pcis_permit || r.id || 'dbs-'+i).slice(0,100),
+        permit_number: String(r.pcis_permit || r.id || 'dbs-' + i).slice(0,100),
         permit_type: r.permit_type || 'Bldg-New',
         permit_subtype: r.permit_sub_type || null,
         status: String(r.latest_status || 'Issued').slice(0,50),
-        address: addr.slice(0,255), zone: r.zone || null,
-        units, valuation: parseFloat(r.valuation||'0')||0,
-        issued_date: (r.issue_date||'').split('T')[0]||null,
-        is_rti: (r.latest_status||'').toLowerCase().includes('ready'),
-        lat, lng, raw_data: r, synced_at: new Date().toISOString(),
+        address: addr,
+        zone: r.zone || null,
+        units: integer(r.of_residential_dwelling_units || r.number_of_units),
+        valuation: number(r.valuation),
+        issued_date: cleanDate(r.issue_date),
+        is_rti: String(r.latest_status || '').toLowerCase().includes('ready'),
+        lat, lng,
+        raw_data: r,
+        synced_at: new Date().toISOString(),
       };
     });
-  } catch(e) { console.log('DBS Permits failed:', e.message); }
+  } catch (e) {
+    failures.push('DBS Permits: ' + e.message);
+    console.error('DBS Permits failed:', e.message);
+  }
 
-  // ── Dataset 2: New Housing Units (cpkv-aajs) — large multifamily ──────────
   try {
-    const records = await fetchAll(
-      "https://data.lacity.org/resource/cpkv-aajs.json?$order=date+DESC"
-    );
+    const records = await fetchAll(socrataUrl('cpkv-aajs', {
+      '$order': 'date DESC',
+    }), 'New Housing Units');
+
     total += await syncDataset('New Housing Units', records, (r, i) => {
-      const units = parseInt(r.units || r.net_units || r.number_of_units || '0') || 0;
+      const units = integer(r.units || r.net_units || r.number_of_units);
       return {
-        permit_number: String(r.permit_number || r.id || 'hu-'+i).slice(0,100),
+        permit_number: String(r.permit_number || r.id || 'hu-' + i).slice(0,100),
         permit_type: 'Bldg-New',
         permit_subtype: 'Multifamily',
-        status: String(r.status || 'Issued').slice(0,50),
-        address: String(r.address || r.location_address || '').slice(0,255),
+        status: String(r.status || r.project_status || 'Issued').slice(0,50),
+        address: cleanAddress(r.address || r.location_address || r.project_address),
         zone: r.zoning || r.zone || null,
-        units, valuation: parseFloat(r.valuation||'0')||0,
-        issued_date: (r.date||r.issued_date||'').split('T')[0]||null,
+        units,
+        valuation: number(r.valuation),
+        issued_date: cleanDate(r.date || r.issued_date),
         is_rti: false,
         lat: r.latitude ? parseFloat(r.latitude) : null,
         lng: r.longitude ? parseFloat(r.longitude) : null,
-        raw_data: r, synced_at: new Date().toISOString(),
+        raw_data: r,
+        synced_at: new Date().toISOString(),
       };
     });
-  } catch(e) { console.log('New Housing Units failed:', e.message); }
+  } catch (e) {
+    failures.push('New Housing Units: ' + e.message);
+    console.error('New Housing Units failed:', e.message);
+  }
 
-  // ── Dataset 3: Building Permits (6q2s-9pnn) — additional coverage ─────────
   try {
-    const records = await fetchAll(
-      "https://data.lacity.org/resource/6q2s-9pnn.json?$order=permitissuancedate+DESC&$limit=1000"
-    );
-    total += await syncDataset('Building Permits Official', records, (r, i) => ({
-      permit_number: String(r.permitnumber || r.pcisid || 'bp-'+i).slice(0,100),
-      permit_type: r.permittype || 'Bldg-New',
-      permit_subtype: r.permitsubtype || null,
-      status: String(r.permitstatus || 'Issued').slice(0,50),
-      address: String(r.address || '').slice(0,255),
-      zone: r.zone || null,
-      units: parseInt(r.numberofunits||'0')||0,
-      valuation: parseFloat(r.valuation||'0')||0,
-      issued_date: (r.permitissuancedate||'').split('T')[0]||null,
-      is_rti: (r.permitstatus||'').toLowerCase().includes('ready'),
-      lat: null, lng: null,
-      raw_data: r, synced_at: new Date().toISOString(),
-    }));
-  } catch(e) { console.log('Building Permits Official failed:', e.message); }
+    const records = await fetchAll(socrataUrl('6q2s-9pnn', {
+      '$order': 'permitissuancedate DESC',
+    }), 'Building Permits Official');
+
+    total += await syncDataset('Building Permits Official', records, (r, i) => {
+      if (shouldSkipSubtype(r.permitsubtype)) return null;
+      const permitType = r.permittype || 'Bldg-New';
+      if (!/new|bldg-new/i.test(permitType)) return null;
+      return {
+        permit_number: String(r.permitnumber || r.pcisid || 'bp-' + i).slice(0,100),
+        permit_type: permitType,
+        permit_subtype: r.permitsubtype || null,
+        status: String(r.permitstatus || 'Issued').slice(0,50),
+        address: cleanAddress(r.address),
+        zone: r.zone || null,
+        units: integer(r.numberofunits),
+        valuation: number(r.valuation),
+        issued_date: cleanDate(r.permitissuancedate),
+        is_rti: String(r.permitstatus || '').toLowerCase().includes('ready'),
+        lat: null,
+        lng: null,
+        raw_data: r,
+        synced_at: new Date().toISOString(),
+      };
+    });
+  } catch (e) {
+    failures.push('Building Permits Official: ' + e.message);
+    console.error('Building Permits Official failed:', e.message);
+  }
+
+  if (failures.length) {
+    throw new Error('Permit sync failed for one or more datasets: ' + failures.join(' | '));
+  }
+  if (total === 0) throw new Error('Permit sync completed with zero records');
 
   console.log('\n=== TOTAL SYNCED: ' + total + ' ===');
 }

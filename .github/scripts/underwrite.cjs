@@ -1,8 +1,12 @@
 // ParceLLA — Underwriting Engine
 const https = require('https');
 
-const SB_URL = process.env.SUPABASE_URL.replace(/\/$/, '');
+const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+if (!SB_URL || !SB_KEY) {
+  throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY are required');
+}
 
 function req(method, path, body) {
   return new Promise((resolve, reject) => {
@@ -18,7 +22,7 @@ function req(method, path, body) {
         'apikey': SB_KEY,
         'Accept': 'application/json',
         'Content-Type': 'application/json',
-        'Prefer': 'return=minimal,resolution=ignore-duplicates',
+        'Prefer': 'return=minimal,resolution=merge-duplicates',
       }
     };
     if (data) options.headers['Content-Length'] = Buffer.byteLength(data);
@@ -227,22 +231,37 @@ async function main() {
   }
   console.log('Total to underwrite:',all.length);
 
-  // Underwrite in batches of 200
-  let done=0;
+  // Underwrite in batches. ADUs/additions are deliberately skipped by uw().
+  let done=0, skipped=0, failed=0;
+  const seen=new Set();
   for(let i=0;i<all.length;i+=50) {
     const batch=all.slice(i,i+50);
-    const seen=new Set();
-    const rows=batch.map(p=>({address:p.address,...uw(p)})).filter(r=>{
-      if(!r.address||seen.has(r.permit_source_id)) return false;
+    const rows=batch.map(p=>{
+      const model = uw(p);
+      if (!model) {
+        skipped++;
+        return null;
+      }
+      return {address:p.address,...model};
+    }).filter(r=>{
+      if(!r || !r.address || seen.has(r.permit_source_id)) return false;
       seen.add(r.permit_source_id); return true;
     });
-    const r=await req('POST','/rest/v1/sites',rows);
+    if (!rows.length) {
+      if(i%500===0) console.log('Progress:',i,'/',all.length,'stored:',done,'skipped:',skipped);
+      continue;
+    }
+    const r=await req('POST','/rest/v1/sites?on_conflict=permit_source_id',rows);
     if(r.status<300) done+=rows.length;
-    else console.log('Error:',r.status,JSON.stringify(r.data).slice(0,200));
-    if(i%500===0) console.log('Progress:',i,'/',all.length,'stored:',done);
+    else {
+      failed += rows.length;
+      console.error('Batch failed:',r.status,JSON.stringify(r.data).slice(0,500));
+    }
+    if(i%500===0) console.log('Progress:',i,'/',all.length,'stored:',done,'skipped:',skipped,'failed:',failed);
     await sleep(100);
   }
-  console.log('DONE. Sites stored:',done);
+  if (failed) throw new Error(`Underwriting failed for ${failed} row(s)`);
+  console.log('DONE. Sites stored:',done,'skipped:',skipped);
 }
 
 main().catch(e=>{console.error('FATAL:',e.message);process.exit(1);});

@@ -221,7 +221,7 @@ async function boot() {
 async function loadSites() {
   g('list').innerHTML = '<div class="sw"><div class="spin"></div>Underwriting sites...</div>';
   try {
-    const r = await fetch(API + '/api/sites?limit=50&sort=profit');
+    const r = await fetch(API + '/api/sites?limit=2000&sort=profit');
     if (!r.ok) throw new Error('API ' + r.status);
     const data = await r.json();
     allSites = data.results || [];
