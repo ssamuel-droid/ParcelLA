@@ -1,5 +1,5 @@
--- Add columns used by the GitHub underwriting job.
--- Run this before enabling on_conflict=permit_source_id upserts.
+-- Supabase REST upsert needs a plain unique index for on_conflict=permit_source_id.
+-- This is safe to run even if the earlier underwriting migration was missed.
 
 ALTER TABLE sites ADD COLUMN IF NOT EXISTS estimated_units BOOLEAN DEFAULT FALSE;
 ALTER TABLE sites ADD COLUMN IF NOT EXISTS noi BIGINT;
@@ -14,5 +14,6 @@ ALTER TABLE sites ADD COLUMN IF NOT EXISTS underwritten_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS sites_irr_idx ON sites(irr_v DESC);
 CREATE INDEX IF NOT EXISTS sites_profit_idx ON sites(net_profit DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS sites_permit_source_uidx
-  ON sites(permit_source_id);
+
+DROP INDEX IF EXISTS sites_permit_source_uidx;
+CREATE UNIQUE INDEX sites_permit_source_uidx ON sites(permit_source_id);

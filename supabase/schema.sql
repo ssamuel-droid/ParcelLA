@@ -57,7 +57,7 @@ CREATE INDEX sites_price_idx ON sites(price);
 CREATE INDEX sites_addr_trgm ON sites USING GIN(address gin_trgm_ops);
 CREATE INDEX sites_irr_idx ON sites(irr_v DESC);
 CREATE INDEX sites_profit_idx ON sites(net_profit DESC);
-CREATE UNIQUE INDEX sites_permit_source_uidx ON sites(permit_source_id) WHERE permit_source_id IS NOT NULL;
+CREATE UNIQUE INDEX sites_permit_source_uidx ON sites(permit_source_id);
 
 CREATE OR REPLACE FUNCTION update_site_geom() RETURNS TRIGGER AS $$
 BEGIN
