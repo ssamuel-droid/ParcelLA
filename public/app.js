@@ -450,12 +450,31 @@ function safeFileName(value) {
   return String(value || 'ParceLLA_Report').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').slice(0,80);
 }
 
-function csvCell(value) {
-  const s = value === undefined || value === null ? '' : String(value);
-  return '"' + s.replace(/"/g, '""') + '"';
+function xmlEscape(value) {
+  return String(value === undefined || value === null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
-function downloadTextFile(filename, content, type = 'text/csv;charset=utf-8') {
+function xlsCell(value, type = 'String') {
+  const empty = value === undefined || value === null || value === '';
+  const numeric = type === 'Number' && !empty && isFinite(Number(value));
+  const dataType = numeric ? 'Number' : 'String';
+  const data = numeric ? String(Number(value)) : xmlEscape(empty ? '' : value);
+  return '<Cell><Data ss:Type="' + dataType + '">' + data + '</Data></Cell>';
+}
+
+function xlsRow(values = []) {
+  return '<Row>' + values.map(v => Array.isArray(v) ? xlsCell(v[0], v[1]) : xlsCell(v)).join('') + '</Row>';
+}
+
+function xlsSheet(name, rows) {
+  return '<Worksheet ss:Name="' + xmlEscape(name).slice(0,31) + '"><Table>' + rows.join('') + '</Table></Worksheet>';
+}
+
+function downloadTextFile(filename, content, type = 'application/vnd.ms-excel;charset=utf-8') {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -467,9 +486,66 @@ function downloadTextFile(filename, content, type = 'text/csv;charset=utf-8') {
   URL.revokeObjectURL(url);
 }
 
-function exportExcel(id) {
+async function fetchJSON(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) return null;
+  return await r.json();
+}
+
+function rentRowsFromSubmarket(s, submarket) {
+  const rents = submarket?.rents || {};
+  const unitMix = [
+    ['Studio', s.ms ?? 0.25, rents.studio],
+    ['1 BR', s.mo ?? 0.50, rents.one],
+    ['2 BR', s.mt ?? 0.20, rents.two],
+    ['3 BR', s.mth ?? 0.05, rents.three],
+  ];
+  const units = s.units || 0;
+  const rows = [
+    xlsRow(['Unit Type', 'Mix %', 'Units', 'Rent / Month', 'Monthly Rent', 'Annual Rent']),
+  ];
+  unitMix.forEach(([label, mix, rent]) => {
+    const unitCount = Math.round(units * mix * 10) / 10;
+    const monthly = Math.round(unitCount * (rent || 0));
+    rows.push(xlsRow([label, [Math.round(mix * 1000) / 10, 'Number'], [unitCount, 'Number'], [rent || 0, 'Number'], [monthly, 'Number'], [monthly * 12, 'Number']]));
+  });
+  const blended = unitMix.reduce((sum, [, mix, rent]) => sum + mix * (rent || 0), 0);
+  rows.push(xlsRow(['']));
+  rows.push(xlsRow(['Blended Rent', '', '', [Math.round(blended), 'Number'], [Math.round(blended * units), 'Number'], [Math.round(blended * units * 12), 'Number']]));
+  return rows;
+}
+
+function salesCompRows(comps) {
+  const rows = [xlsRow(['Sale Date', 'Sale Price', 'Units', 'Cap Rate', 'Price / Unit'])];
+  const list = comps?.recentComps || [];
+  if (!list.length) {
+    rows.push(xlsRow(['No recent sold comps returned for this submarket']));
+    return rows;
+  }
+  list.forEach(c => rows.push(xlsRow([
+    c.saleDate || '',
+    [c.salePrice || 0, 'Number'],
+    [c.units || 0, 'Number'],
+    [c.capRate ? Math.round(c.capRate * 10000) / 100 : '', c.capRate ? 'Number' : 'String'],
+    [c.pricePerUnit || 0, 'Number'],
+  ])));
+  rows.push(xlsRow(['']));
+  rows.push(xlsRow(['Summary']));
+  rows.push(xlsRow(['Comps Count', [comps?.comps || 0, 'Number']]));
+  rows.push(xlsRow(['Avg Cap Rate %', [comps?.capRate?.avg ? Math.round(comps.capRate.avg * 10000) / 100 : '', comps?.capRate?.avg ? 'Number' : 'String']]));
+  rows.push(xlsRow(['Median Cap Rate %', [comps?.capRate?.median ? Math.round(comps.capRate.median * 10000) / 100 : '', comps?.capRate?.median ? 'Number' : 'String']]));
+  rows.push(xlsRow(['Avg Price / Unit', [comps?.pricePerUnit?.avg || '', comps?.pricePerUnit?.avg ? 'Number' : 'String']]));
+  return rows;
+}
+
+async function exportExcel(id) {
   const s = allSites.find(x => x.id === id);
   if (!s) return;
+
+  const [submarket, comps] = await Promise.all([
+    fetchJSON('/api/submarkets/' + encodeURIComponent(s.hood)),
+    fetchJSON('/api/comps/submarket/' + encodeURIComponent(s.hood)),
+  ]);
 
   const tc = s.totalCost || 0;
   const land = s.landCost || s.askPrice || 0;
@@ -477,70 +553,97 @@ function exportExcel(id) {
   const exitValue = s.exitValue || 0;
   const netProfit = s.netProfit || 0;
   const irr = s.irrV || 0;
-  const entryCap = s.entryCap || 0.0475;
-  const exitCap = s.exitCap || entryCap + 0.0025;
+  const entryCap = s.entryCap || submarket?.entryCap || 0.0475;
+  const exitCap = s.exitCap || submarket?.exitCap || entryCap + 0.0025;
   const loan = tc * 0.65;
   const equity = tc * 0.35;
   const debtService = loan * 0.065;
   const today = new Date().toISOString().slice(0,10);
-  const rows = [];
+  const rentMonthly = noi > 0 ? Math.round(noi / 0.62 / 0.95 / 12) : 0;
 
-  const add = (...cols) => rows.push(cols.map(csvCell).join(','));
-  add('ParceLLA Deal Export', s.addr);
-  add('Generated', today);
-  add('');
-  add('Site Summary');
-  add('Address', s.addr);
-  add('Neighborhood', s.hood);
-  add('Zoning', s.zone);
-  add('Project type', s.type);
-  add('Units', s.units);
-  add('Average unit SF', s.usf);
-  add('Lot SF', s.lot);
-  add('RTI', s.rti ? 'Yes' : 'No');
-  add('Status', s.isComp ? 'Off-market' : 'For sale');
-  add('');
-  add('Returns');
-  add('Net profit', Math.round(netProfit));
-  add('IRR %', Math.round(irr * 10) / 10);
-  add('Cap on cost %', s.capOnCost || 0);
-  add('Development spread %', Math.round((s.devSpreadPct || 0) * 1000) / 10);
-  add('Equity multiple', s.eqMult || '');
-  add('');
-  add('Costs');
-  add('Land cost', Math.round(land));
-  add('Hard costs', Math.round((tc - land) * 0.58));
-  add('Soft costs', Math.round((tc - land) * 0.24));
-  add('Financing carry', Math.round((tc - land) * 0.18));
-  add('Total all-in cost', Math.round(tc));
-  add('Loan amount', Math.round(loan));
-  add('Equity required', Math.round(equity));
-  add('');
-  add('Valuation');
-  add('NOI', Math.round(noi));
-  add('Entry cap rate %', Math.round(entryCap * 10000) / 100);
-  add('Exit cap rate %', Math.round(exitCap * 10000) / 100);
-  add('Exit value', Math.round(exitValue));
-  add('Less all-in cost', Math.round(tc));
-  add('Net profit', Math.round(netProfit));
-  add('');
-  add('Five Year Cash Flow');
-  add('Year', 'NOI', 'Debt Service', 'Cash Flow Before Tax', 'Exit Value', 'Loan Payoff', 'Net Sale Proceeds');
+  const summaryRows = [
+    xlsRow(['ParceLLA Comprehensive Underwriting', s.addr]),
+    xlsRow(['Generated', today]),
+    xlsRow(['']),
+    xlsRow(['Address', s.addr]),
+    xlsRow(['Neighborhood', s.hood]),
+    xlsRow(['Zoning', s.zone]),
+    xlsRow(['Project Type', s.type]),
+    xlsRow(['Units', [s.units || 0, 'Number']]),
+    xlsRow(['Average Unit SF', [s.usf || 0, 'Number']]),
+    xlsRow(['Lot SF', [s.lot || 0, 'Number']]),
+    xlsRow(['RTI', s.rti ? 'Yes' : 'No']),
+    xlsRow(['Status', s.isComp ? 'Off-market' : 'For sale']),
+    xlsRow(['Permit Source ID', s.permitSourceId || '']),
+    xlsRow(['Underwritten At', s.underwrittenAt || '']),
+  ];
+
+  const underwritingRows = [
+    xlsRow(['Metric', 'Value']),
+    xlsRow(['Land Cost', [Math.round(land), 'Number']]),
+    xlsRow(['Hard Costs', [Math.round((tc - land) * 0.58), 'Number']]),
+    xlsRow(['Soft Costs', [Math.round((tc - land) * 0.24), 'Number']]),
+    xlsRow(['Financing Carry', [Math.round((tc - land) * 0.18), 'Number']]),
+    xlsRow(['Total All-In Cost', [Math.round(tc), 'Number']]),
+    xlsRow(['Loan Amount', [Math.round(loan), 'Number']]),
+    xlsRow(['Equity Required', [Math.round(equity), 'Number']]),
+    xlsRow(['NOI', [Math.round(noi), 'Number']]),
+    xlsRow(['Entry Cap Rate %', [Math.round(entryCap * 10000) / 100, 'Number']]),
+    xlsRow(['Exit Cap Rate %', [Math.round(exitCap * 10000) / 100, 'Number']]),
+    xlsRow(['Exit Value', [Math.round(exitValue), 'Number']]),
+    xlsRow(['Net Profit', [Math.round(netProfit), 'Number']]),
+    xlsRow(['IRR %', [Math.round(irr * 10) / 10, 'Number']]),
+    xlsRow(['Cap On Cost %', [s.capOnCost || 0, 'Number']]),
+    xlsRow(['Development Spread %', [Math.round((s.devSpreadPct || 0) * 1000) / 10, 'Number']]),
+  ];
+
+  const rentRows = [
+    xlsRow(['Rent Assumptions']),
+    xlsRow(['Submarket', s.hood]),
+    xlsRow(['Implied Monthly Gross Rent', [rentMonthly, 'Number']]),
+    xlsRow(['Implied Annual Gross Rent', [rentMonthly * 12, 'Number']]),
+    xlsRow(['Vacancy', '5.0%']),
+    xlsRow(['Expense Ratio', '38.0%']),
+    xlsRow(['']),
+    ...rentRowsFromSubmarket(s, submarket),
+  ];
+
+  const cashFlowRows = [
+    xlsRow(['Year', 'NOI', 'Debt Service', 'Cash Flow Before Tax', 'Exit Value', 'Loan Payoff', 'Net Sale Proceeds']),
+  ];
   for (let year = 1; year <= 5; year++) {
     const yearNoi = Math.round(noi * Math.pow(1.025, year - 1));
-    const sale = year === 5 ? Math.round(yearNoi / exitCap) : "";
-    const payoff = year === 5 ? Math.round(loan) : "";
-    const proceeds = year === 5 ? Math.round((sale || 0) - loan) : "";
-    add(year, yearNoi, Math.round(debtService), Math.round(yearNoi - debtService), sale, payoff, proceeds);
+    const sale = year === 5 ? Math.round(yearNoi / exitCap) : '';
+    const payoff = year === 5 ? Math.round(loan) : '';
+    const proceeds = year === 5 ? Math.round((sale || 0) - loan) : '';
+    cashFlowRows.push(xlsRow([[year, 'Number'], [yearNoi, 'Number'], [Math.round(debtService), 'Number'], [Math.round(yearNoi - debtService), 'Number'], [sale, sale === '' ? 'String' : 'Number'], [payoff, payoff === '' ? 'String' : 'Number'], [proceeds, proceeds === '' ? 'String' : 'Number']]));
   }
-  add('');
-  add('Source');
-  add('Permit source ID', s.permitSourceId || '');
-  add('Underwritten at', s.underwrittenAt || '');
 
-  downloadTextFile('ParceLLA_' + safeFileName(s.addr) + '.csv', rows.join('\r\n'));
+  const sensitivityRows = [
+    xlsRow(['Scenario', 'Rent Change', 'Exit Cap Change', 'Cost Change', 'Estimated Impact']),
+    xlsRow(['Bear', '-10%', '+50 bps', '+8%', 'Lower rents, wider exit cap, higher construction cost']),
+    xlsRow(['Base', '0%', '0 bps', '0%', 'Current underwriting assumptions']),
+    xlsRow(['Bull', '+8%', '-40 bps', '-5%', 'Higher rents, tighter exit cap, value engineering']),
+    xlsRow(['']),
+    xlsRow(['Risk', 'Impact', 'Mitigation']),
+    xlsRow(['Rent miss 5%', [-Math.round(noi * 0.05 * 5), 'Number'], 'Validate achievable rents with local comps']),
+    xlsRow(['Cap expansion 50 bps', [-Math.round(noi / 0.005), 'Number'], 'Use conservative exit cap and stress test']),
+    xlsRow(['Cost overrun 10%', [-Math.round(tc * 0.10), 'Number'], 'GC pricing, contingency, value engineering']),
+  ];
+
+  const workbook = '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
+    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
+    xlsSheet('Summary', summaryRows) +
+    xlsSheet('Underwriting', underwritingRows) +
+    xlsSheet('Rent Roll', rentRows) +
+    xlsSheet('Rent Comps', rentRowsFromSubmarket(s, submarket)) +
+    xlsSheet('Sales Comps', salesCompRows(comps)) +
+    xlsSheet('Cash Flow', cashFlowRows) +
+    xlsSheet('Sensitivity', sensitivityRows) +
+    '</Workbook>';
+
+  downloadTextFile('ParceLLA_' + safeFileName(s.addr) + '_Underwriting.xls', workbook);
 }
-
 function exportPDF(id) {
   if (!id) return;
   const s = allSites.find(x => x.id === id);
