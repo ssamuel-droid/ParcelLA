@@ -202,7 +202,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f4f4f4;color:#1a1a1a;h
     <span class="dht" id="d-title">Analysis</span>
     <div class="dha">
       <button class="da" onclick="shareDeal()">⤴ Share</button>
-      <button class="da p" onclick="exportPDF()">↓ PDF</button>
+      <button class="da" onclick="exportExcel(openId)">Excel</button>
+      <button class="da p" onclick="exportPDF(openId)">↓ PDF</button>
     </div>
     <button class="dhx" onclick="closeDetail()">×</button>
   </div>
@@ -409,6 +410,7 @@ function renderDetail(s) {
     <div class="sh">AI deal analysis <span style="font-size:8px;color:#bbb;font-weight:400">powered by Claude</span></div>
     <div id="narr-${s.id}"><button class="gb" onclick="generateNarrative(${s.id})">Generate analysis →</button></div>
     <button class="ab as" onclick="shareDeal()">⤴ Copy share link</button>
+    <button class="ab as" onclick="exportExcel(${s.id})">Download Excel workbook</button>
     <button class="ab ap" onclick="exportPDF(${s.id})">↓ Download PDF deal memo</button>`;
 }
 
@@ -441,6 +443,101 @@ function shareDeal() {
   const url = window.location.origin+'?site='+openId;
   if (navigator.clipboard) navigator.clipboard.writeText(url);
   alert('Link copied!\n'+url);
+}
+
+function safeFileName(value) {
+  return String(value || 'ParceLLA_Report').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').slice(0,80);
+}
+
+function csvCell(value) {
+  const s = value === undefined || value === null ? '' : String(value);
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+function downloadTextFile(filename, content, type = 'text/csv;charset=utf-8') {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportExcel(id) {
+  const s = allSites.find(x => x.id === id);
+  if (!s) return;
+
+  const tc = s.totalCost || 0;
+  const land = s.landCost || s.askPrice || 0;
+  const noi = s.noi || 0;
+  const exitValue = s.exitValue || 0;
+  const netProfit = s.netProfit || 0;
+  const irr = s.irrV || 0;
+  const entryCap = s.entryCap || 0.0475;
+  const exitCap = s.exitCap || entryCap + 0.0025;
+  const loan = tc * 0.65;
+  const equity = tc * 0.35;
+  const debtService = loan * 0.065;
+  const today = new Date().toISOString().slice(0,10);
+  const rows = [];
+
+  const add = (...cols) => rows.push(cols.map(csvCell).join(','));
+  add('ParceLLA Deal Export', s.addr);
+  add('Generated', today);
+  add('');
+  add('Site Summary');
+  add('Address', s.addr);
+  add('Neighborhood', s.hood);
+  add('Zoning', s.zone);
+  add('Project type', s.type);
+  add('Units', s.units);
+  add('Average unit SF', s.usf);
+  add('Lot SF', s.lot);
+  add('RTI', s.rti ? 'Yes' : 'No');
+  add('Status', s.isComp ? 'Off-market' : 'For sale');
+  add('');
+  add('Returns');
+  add('Net profit', Math.round(netProfit));
+  add('IRR %', Math.round(irr * 10) / 10);
+  add('Cap on cost %', s.capOnCost || 0);
+  add('Development spread %', Math.round((s.devSpreadPct || 0) * 1000) / 10);
+  add('Equity multiple', s.eqMult || '');
+  add('');
+  add('Costs');
+  add('Land cost', Math.round(land));
+  add('Hard costs', Math.round((tc - land) * 0.58));
+  add('Soft costs', Math.round((tc - land) * 0.24));
+  add('Financing carry', Math.round((tc - land) * 0.18));
+  add('Total all-in cost', Math.round(tc));
+  add('Loan amount', Math.round(loan));
+  add('Equity required', Math.round(equity));
+  add('');
+  add('Valuation');
+  add('NOI', Math.round(noi));
+  add('Entry cap rate %', Math.round(entryCap * 10000) / 100);
+  add('Exit cap rate %', Math.round(exitCap * 10000) / 100);
+  add('Exit value', Math.round(exitValue));
+  add('Less all-in cost', Math.round(tc));
+  add('Net profit', Math.round(netProfit));
+  add('');
+  add('Five Year Cash Flow');
+  add('Year', 'NOI', 'Debt Service', 'Cash Flow Before Tax', 'Exit Value', 'Loan Payoff', 'Net Sale Proceeds');
+  for (let year = 1; year <= 5; year++) {
+    const yearNoi = Math.round(noi * Math.pow(1.025, year - 1));
+    const sale = year === 5 ? Math.round(yearNoi / exitCap) : "";
+    const payoff = year === 5 ? Math.round(loan) : "";
+    const proceeds = year === 5 ? Math.round((sale || 0) - loan) : "";
+    add(year, yearNoi, Math.round(debtService), Math.round(yearNoi - debtService), sale, payoff, proceeds);
+  }
+  add('');
+  add('Source');
+  add('Permit source ID', s.permitSourceId || '');
+  add('Underwritten at', s.underwrittenAt || '');
+
+  downloadTextFile('ParceLLA_' + safeFileName(s.addr) + '.csv', rows.join('\r\n'));
 }
 
 function exportPDF(id) {
