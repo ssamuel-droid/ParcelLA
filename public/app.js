@@ -492,6 +492,24 @@ async function fetchJSON(path) {
   return await r.json();
 }
 
+function compQueryForSite(s, limit = 12) {
+  const p = new URLSearchParams({ limit: String(limit) });
+  if (s?.lat && s?.lng) {
+    p.set('siteLat', s.lat);
+    p.set('siteLng', s.lng);
+  }
+  const q = p.toString();
+  return q ? '?' + q : '';
+}
+
+function cellNumber(value) {
+  return value === undefined || value === null || value === '' ? '' : [value, 'Number'];
+}
+
+function fmtCompDate(value) {
+  return value ? String(value).slice(0, 10) : '';
+}
+
 function rentRowsFromSubmarket(s, submarket) {
   const rents = submarket?.rents || {};
   const unitMix = [
@@ -515,36 +533,132 @@ function rentRowsFromSubmarket(s, submarket) {
   return rows;
 }
 
+function rentCompPropertyRows(rentComps, s, submarket) {
+  const rows = [xlsRow(['Property / Address', 'Distance mi', 'Unit Type', 'Beds', 'Baths', 'Monthly Rent', 'Unit SF', 'Rent / SF', 'Year Built', 'Property Units', 'Amenities / Notes', 'Source', 'Period / Listed', 'URL'])];
+  const list = rentComps?.recentComps || [];
+  if (list.length) {
+    list.forEach(c => rows.push(xlsRow([
+      c.propertyName ? c.propertyName + ' - ' + (c.address || '') : c.address || '',
+      cellNumber(c.distanceMiles),
+      c.bedroomType || '',
+      cellNumber(c.bedrooms),
+      cellNumber(c.bathrooms),
+      cellNumber(c.monthlyRent),
+      cellNumber(c.unitSf),
+      cellNumber(c.rentPerSf),
+      cellNumber(c.yearBuilt),
+      cellNumber(c.propertyUnits),
+      c.amenities || '',
+      c.source || '',
+      fmtCompDate(c.period),
+      c.url || '',
+    ])));
+  } else {
+    rows.push(xlsRow(['No property-level rent comps returned. Market rent benchmarks are shown below.']));
+  }
+
+  rows.push(xlsRow(['']));
+  rows.push(xlsRow(['Market Rent Benchmark']));
+  rows.push(...rentRowsFromSubmarket(s, submarket));
+
+  const benchmarkRows = rentComps?.benchmarkRows || [];
+  if (benchmarkRows.length) {
+    rows.push(xlsRow(['']));
+    rows.push(xlsRow(['Saved Rent Benchmark Rows']));
+    rows.push(xlsRow(['Bedroom Type', 'Monthly Rent', 'Source', 'Period']));
+    benchmarkRows.forEach(c => rows.push(xlsRow([c.bedroomType || '', cellNumber(c.monthlyRent), c.source || '', fmtCompDate(c.period)])));
+  }
+  return rows;
+}
+
 function salesCompRows(comps) {
-  const rows = [xlsRow(['Sale Date', 'Sale Price', 'Units', 'Cap Rate', 'Price / Unit'])];
+  const rows = [xlsRow(['Address', 'Distance mi', 'Neighborhood', 'Sale Date', 'Sale Price', 'Units', 'Avg Unit SF', 'Year Built', 'Cap Rate %', 'Price / Unit', 'Price / SF', 'NOI', 'Project Type', 'Buyer', 'Seller', 'Source', 'Amenities / Notes'])];
   const list = comps?.recentComps || [];
   if (!list.length) {
     rows.push(xlsRow(['No recent sold comps returned for this submarket']));
-    return rows;
+  } else {
+    list.forEach(c => rows.push(xlsRow([
+      c.address || '',
+      cellNumber(c.distanceMiles),
+      c.neighborhood || '',
+      fmtCompDate(c.saleDate),
+      cellNumber(c.salePrice),
+      cellNumber(c.units),
+      cellNumber(c.avgUnitSf),
+      cellNumber(c.yearBuilt),
+      c.capRate ? [Math.round(c.capRate * 10000) / 100, 'Number'] : '',
+      cellNumber(c.pricePerUnit),
+      cellNumber(c.pricePerSf),
+      cellNumber(c.noi),
+      c.projectType || '',
+      c.buyer || '',
+      c.seller || '',
+      c.source || '',
+      c.amenities || c.notes || '',
+    ])));
   }
-  list.forEach(c => rows.push(xlsRow([
-    c.saleDate || '',
-    [c.salePrice || 0, 'Number'],
-    [c.units || 0, 'Number'],
-    [c.capRate ? Math.round(c.capRate * 10000) / 100 : '', c.capRate ? 'Number' : 'String'],
-    [c.pricePerUnit || 0, 'Number'],
-  ])));
   rows.push(xlsRow(['']));
   rows.push(xlsRow(['Summary']));
   rows.push(xlsRow(['Comps Count', [comps?.comps || 0, 'Number']]));
   rows.push(xlsRow(['Avg Cap Rate %', [comps?.capRate?.avg ? Math.round(comps.capRate.avg * 10000) / 100 : '', comps?.capRate?.avg ? 'Number' : 'String']]));
   rows.push(xlsRow(['Median Cap Rate %', [comps?.capRate?.median ? Math.round(comps.capRate.median * 10000) / 100 : '', comps?.capRate?.median ? 'Number' : 'String']]));
   rows.push(xlsRow(['Avg Price / Unit', [comps?.pricePerUnit?.avg || '', comps?.pricePerUnit?.avg ? 'Number' : 'String']]));
+  rows.push(xlsRow(['Median Price / Unit', [comps?.pricePerUnit?.median || '', comps?.pricePerUnit?.median ? 'Number' : 'String']]));
+  rows.push(xlsRow(['Avg Price / SF', [comps?.pricePerSf?.avg || '', comps?.pricePerSf?.avg ? 'Number' : 'String']]));
   return rows;
 }
+
+function constructionCostRows(s, tc, land) {
+  const units = s.units || 0;
+  const avgUnitSf = s.usf || 800;
+  const totalSF = units * avgUnitSf;
+  const hardCosts = Math.round(s.hardCosts ?? Math.max(0, (tc - land) * 0.58));
+  const softCosts = Math.round(s.softCosts ?? Math.max(0, (tc - land) * 0.24));
+  const carryCost = Math.round(s.carryCost ?? Math.max(0, (tc - land) * 0.18));
+  const loan = Math.round(s.loanAmount ?? tc * 0.65);
+  const equity = Math.round(s.equity ?? tc * 0.35);
+  const hardPerSf = totalSF ? Math.round(hardCosts / totalSF) : 0;
+  const hardPerUnit = units ? Math.round(hardCosts / units) : 0;
+  const totalPerSf = totalSF ? Math.round(tc / totalSF) : 0;
+  const totalPerUnit = units ? Math.round(tc / units) : 0;
+  const softPctHard = hardCosts ? Math.round((softCosts / hardCosts) * 1000) / 10 : 0;
+  return [
+    xlsRow(['Construction Cost Validation']),
+    xlsRow(['Project Type', s.type || '']),
+    xlsRow(['Units', cellNumber(units)]),
+    xlsRow(['Avg Unit SF', cellNumber(avgUnitSf)]),
+    xlsRow(['Total Net Rentable SF', cellNumber(totalSF)]),
+    xlsRow([''] ),
+    xlsRow(['Line Item', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
+    xlsRow(['Land Cost', cellNumber(Math.round(land)), totalSF ? cellNumber(Math.round(land / totalSF)) : '', units ? cellNumber(Math.round(land / units)) : '', tc ? cellNumber(Math.round(land / tc * 1000) / 10) : '', 'Purchase price or imputed land basis']),
+    xlsRow(['Hard Costs', cellNumber(hardCosts), cellNumber(hardPerSf), cellNumber(hardPerUnit), tc ? cellNumber(Math.round(hardCosts / tc * 1000) / 10) : '', 'RSMeans-style LA benchmark by project type']),
+    xlsRow(['Soft Costs', cellNumber(softCosts), totalSF ? cellNumber(Math.round(softCosts / totalSF)) : '', units ? cellNumber(Math.round(softCosts / units)) : '', tc ? cellNumber(Math.round(softCosts / tc * 1000) / 10) : '', 'Permits, A&E, legal, contingency, developer fee']),
+    xlsRow(['Financing Carry', cellNumber(carryCost), totalSF ? cellNumber(Math.round(carryCost / totalSF)) : '', units ? cellNumber(Math.round(carryCost / units)) : '', tc ? cellNumber(Math.round(carryCost / tc * 1000) / 10) : '', 'Construction interest, loan fees, tax carry']),
+    xlsRow(['Total All-In Cost', cellNumber(Math.round(tc)), cellNumber(totalPerSf), cellNumber(totalPerUnit), cellNumber(100), 'Total underwriting basis']),
+    xlsRow([''] ),
+    xlsRow(['Financing Metrics']),
+    xlsRow(['Construction Loan', cellNumber(loan), totalSF ? cellNumber(Math.round(loan / totalSF)) : '', units ? cellNumber(Math.round(loan / units)) : '', tc ? cellNumber(Math.round(loan / tc * 1000) / 10) : '', 'Assumes 65% loan-to-cost unless model overrides']),
+    xlsRow(['Equity Required', cellNumber(equity), totalSF ? cellNumber(Math.round(equity / totalSF)) : '', units ? cellNumber(Math.round(equity / units)) : '', tc ? cellNumber(Math.round(equity / tc * 1000) / 10) : '', 'Borrower cash / sponsor equity']),
+    xlsRow([''] ),
+    xlsRow(['Benchmark Checks']),
+    xlsRow(['Hard Cost / SF', cellNumber(hardPerSf), '', '', '', 'Primary construction-cost reasonableness check']),
+    xlsRow(['Hard Cost / Unit', cellNumber(hardPerUnit), '', '', '', 'Useful for comparing similar unit-count projects']),
+    xlsRow(['Soft Costs / Hard Costs %', cellNumber(softPctHard), '', '', '', 'Soft costs commonly underwritten as % of hard costs']),
+    xlsRow(['Total Cost / SF', cellNumber(totalPerSf), '', '', '', 'All-in basis including land, soft costs, carry']),
+    xlsRow(['Total Cost / Unit', cellNumber(totalPerUnit), '', '', '', 'All-in basis per delivered unit']),
+  ];
+}
+
 
 async function exportExcel(id) {
   const s = allSites.find(x => x.id === id);
   if (!s) return;
 
-  const [submarket, comps] = await Promise.all([
+  const compQuery = compQueryForSite(s, 12);
+  const [submarket, comps, rentComps] = await Promise.all([
     fetchJSON('/api/submarkets/' + encodeURIComponent(s.hood)),
-    fetchJSON('/api/comps/submarket/' + encodeURIComponent(s.hood)),
+    fetchJSON('/api/comps/submarket/' + encodeURIComponent(s.hood) + compQuery),
+    fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(s.hood) + compQuery),
   ]);
 
   const tc = s.totalCost || 0;
@@ -560,6 +674,14 @@ async function exportExcel(id) {
   const debtService = loan * 0.065;
   const today = new Date().toISOString().slice(0,10);
   const rentMonthly = noi > 0 ? Math.round(noi / 0.62 / 0.95 / 12) : 0;
+  const totalSF = (s.units || 0) * (s.usf || 800);
+  const hardCosts = Math.round(s.hardCosts ?? Math.max(0, (tc - land) * 0.58));
+  const softCosts = Math.round(s.softCosts ?? Math.max(0, (tc - land) * 0.24));
+  const carryCost = Math.round(s.carryCost ?? Math.max(0, (tc - land) * 0.18));
+  const hardPerSf = totalSF ? Math.round(hardCosts / totalSF) : 0;
+  const hardPerUnit = s.units ? Math.round(hardCosts / s.units) : 0;
+  const totalPerSf = totalSF ? Math.round(tc / totalSF) : 0;
+  const totalPerUnit = s.units ? Math.round(tc / s.units) : 0;
 
   const summaryRows = [
     xlsRow(['ParceLLA Comprehensive Underwriting', s.addr]),
@@ -579,22 +701,22 @@ async function exportExcel(id) {
   ];
 
   const underwritingRows = [
-    xlsRow(['Metric', 'Value']),
-    xlsRow(['Land Cost', [Math.round(land), 'Number']]),
-    xlsRow(['Hard Costs', [Math.round((tc - land) * 0.58), 'Number']]),
-    xlsRow(['Soft Costs', [Math.round((tc - land) * 0.24), 'Number']]),
-    xlsRow(['Financing Carry', [Math.round((tc - land) * 0.18), 'Number']]),
-    xlsRow(['Total All-In Cost', [Math.round(tc), 'Number']]),
-    xlsRow(['Loan Amount', [Math.round(loan), 'Number']]),
-    xlsRow(['Equity Required', [Math.round(equity), 'Number']]),
-    xlsRow(['NOI', [Math.round(noi), 'Number']]),
-    xlsRow(['Entry Cap Rate %', [Math.round(entryCap * 10000) / 100, 'Number']]),
-    xlsRow(['Exit Cap Rate %', [Math.round(exitCap * 10000) / 100, 'Number']]),
-    xlsRow(['Exit Value', [Math.round(exitValue), 'Number']]),
-    xlsRow(['Net Profit', [Math.round(netProfit), 'Number']]),
-    xlsRow(['IRR %', [Math.round(irr * 10) / 10, 'Number']]),
-    xlsRow(['Cap On Cost %', [s.capOnCost || 0, 'Number']]),
-    xlsRow(['Development Spread %', [Math.round((s.devSpreadPct || 0) * 1000) / 10, 'Number']]),
+    xlsRow(['Metric', 'Value', '$ / SF', '$ / Unit', 'Notes']),
+    xlsRow(['Land Cost', [Math.round(land), 'Number'], totalSF ? [Math.round(land / totalSF), 'Number'] : '', s.units ? [Math.round(land / s.units), 'Number'] : '', 'Purchase price or imputed land basis']),
+    xlsRow(['Hard Costs', [hardCosts, 'Number'], [hardPerSf, 'Number'], [hardPerUnit, 'Number'], 'Construction cost validation shown in Construction Costs tab']),
+    xlsRow(['Soft Costs', [softCosts, 'Number'], totalSF ? [Math.round(softCosts / totalSF), 'Number'] : '', s.units ? [Math.round(softCosts / s.units), 'Number'] : '', 'A&E, permits, fees, contingency, developer fee']),
+    xlsRow(['Financing Carry', [carryCost, 'Number'], totalSF ? [Math.round(carryCost / totalSF), 'Number'] : '', s.units ? [Math.round(carryCost / s.units), 'Number'] : '', 'Interest, loan fees, taxes during construction']),
+    xlsRow(['Total All-In Cost', [Math.round(tc), 'Number'], [totalPerSf, 'Number'], [totalPerUnit, 'Number'], 'Total development basis']),
+    xlsRow(['Loan Amount', [Math.round(loan), 'Number'], totalSF ? [Math.round(loan / totalSF), 'Number'] : '', s.units ? [Math.round(loan / s.units), 'Number'] : '', '65% LTC assumption unless overridden']),
+    xlsRow(['Equity Required', [Math.round(equity), 'Number'], totalSF ? [Math.round(equity / totalSF), 'Number'] : '', s.units ? [Math.round(equity / s.units), 'Number'] : '', 'Sponsor equity requirement']),
+    xlsRow(['NOI', [Math.round(noi), 'Number'], totalSF ? [Math.round(noi / totalSF), 'Number'] : '', s.units ? [Math.round(noi / s.units), 'Number'] : '', 'Stabilized annual NOI']),
+    xlsRow(['Entry Cap Rate %', [Math.round(entryCap * 10000) / 100, 'Number'], '', '', 'Market cap rate input']),
+    xlsRow(['Exit Cap Rate %', [Math.round(exitCap * 10000) / 100, 'Number'], '', '', 'Exit cap assumption']),
+    xlsRow(['Exit Value', [Math.round(exitValue), 'Number'], totalSF ? [Math.round(exitValue / totalSF), 'Number'] : '', s.units ? [Math.round(exitValue / s.units), 'Number'] : '', 'NOI divided by exit cap']),
+    xlsRow(['Net Profit', [Math.round(netProfit), 'Number'], totalSF ? [Math.round(netProfit / totalSF), 'Number'] : '', s.units ? [Math.round(netProfit / s.units), 'Number'] : '', 'Exit value less total all-in cost']),
+    xlsRow(['IRR %', [Math.round(irr * 10) / 10, 'Number'], '', '', 'Levered 5-year IRR']),
+    xlsRow(['Cap On Cost %', [s.capOnCost || 0, 'Number'], '', '', 'NOI / total cost']),
+    xlsRow(['Development Spread %', [Math.round((s.devSpreadPct || 0) * 1000) / 10, 'Number'], '', '', 'Spread over all-in cost']),
   ];
 
   const rentRows = [
@@ -636,8 +758,9 @@ async function exportExcel(id) {
     xlsSheet('Summary', summaryRows) +
     xlsSheet('Underwriting', underwritingRows) +
     xlsSheet('Rent Roll', rentRows) +
-    xlsSheet('Rent Comps', rentRowsFromSubmarket(s, submarket)) +
+    xlsSheet('Rent Comps', rentCompPropertyRows(rentComps, s, submarket)) +
     xlsSheet('Sales Comps', salesCompRows(comps)) +
+    xlsSheet('Construction Costs', constructionCostRows(s, tc, land)) +
     xlsSheet('Cash Flow', cashFlowRows) +
     xlsSheet('Sensitivity', sensitivityRows) +
     '</Workbook>';
