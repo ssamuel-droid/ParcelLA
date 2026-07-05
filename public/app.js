@@ -333,11 +333,21 @@ function renderDetail(s) {
   const irr=s.irrV||0, prof=s.netProfit||0, tc=s.totalCost||0;
   const pc=prof>0?'#1d9e75':'#e24b4a', ic=irrC(irr);
   const spd=Math.round((s.devSpreadPct||0)*1000)/10;
+  const land=s.landCost||s.askPrice||0;
+  const totalSF=(s.units||0)*(s.usf||800);
+  const hardCosts=Math.round(s.hardCosts ?? Math.max(0,(tc-land)*0.58));
+  const softCosts=Math.round(s.softCosts ?? Math.max(0,(tc-land)*0.24));
+  const carryCost=Math.round(s.carryCost ?? Math.max(0,(tc-land)*0.18));
+  const hardPerSf=totalSF?Math.round(hardCosts/totalSF):0;
+  const hardPerUnit=s.units?Math.round(hardCosts/s.units):0;
+  const totalPerSf=totalSF?Math.round(tc/totalSF):0;
+  const totalPerUnit=s.units?Math.round(tc/s.units):0;
+  const softPctHard=hardCosts?Math.round((softCosts/hardCosts)*1000)/10:0;
   const bars=[
-    [s.landCost||s.askPrice||0,'#0f1f3d','Land'+(s.isComp?' (imputed)':'')],
-    [(tc-(s.landCost||0))*0.58,'#378add','Hard costs'],
-    [(tc-(s.landCost||0))*0.24,'#1d9e75','Soft costs'],
-    [(tc-(s.landCost||0))*0.18,'#ef9f27','Financing carry'],
+    [land,'#0f1f3d','Land'+(s.isComp?' (imputed)':'')],
+    [hardCosts,'#378add','Hard costs'],
+    [softCosts,'#1d9e75','Soft costs'],
+    [carryCost,'#ef9f27','Financing carry'],
   ].filter(x=>x[0]>0);
 
   // Load comps async
@@ -376,7 +386,7 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">Zoning</div><div class="icv">${s.zone}</div></div>
       <div class="ic"><div class="icl">Status</div><div class="icv">${s.rti?'✓ RTI':s.isComp?'Off-market':'For sale'}</div></div>
       <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${s.units} / ${s.usf} SF</div></div>
-      <div class="ic"><div class="icl">Land cost</div><div class="icv">${fmtD(s.landCost||s.askPrice||0)}${s.isComp?' <span style="font-size:8px;color:#ef9f27">(est)</span>':''}</div></div>
+      <div class="ic"><div class="icl">Land cost</div><div class="icv">${fmtD(land)}${s.isComp?' <span style="font-size:8px;color:#ef9f27">(est)</span>':''}</div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
     <div class="sh">Street View</div>
@@ -397,6 +407,16 @@ function renderDetail(s) {
     <div class="sh">Cost waterfall</div>
     ${bars.map(([v,c,l])=>`<div class="wfr"><div class="wfl"><span>${l}</span><span>${fmtD(v)}</span></div><div class="wft"><div class="wff" style="width:${Math.round(v/tc*100)}%;background:${c}"></div></div></div>`).join('')}
     <div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid #e8e8e8;margin-top:4px;font-size:11px;font-weight:600"><span>Total all-in</span><span>${fmtD(tc)}</span></div>
+    <div class="sh">Construction budget</div>
+    <table class="ct">
+      <tr><td>Total building SF</td><td>${totalSF.toLocaleString()} SF</td></tr>
+      <tr><td>Hard construction</td><td>${fmtD(hardCosts)}</td></tr>
+      <tr><td>Hard cost / SF</td><td>${fmtD(hardPerSf)}/SF</td></tr>
+      <tr><td>Hard cost / unit</td><td>${fmtD(hardPerUnit)}/unit</td></tr>
+      <tr><td>Soft costs / hard costs</td><td>${softPctHard}%</td></tr>
+      <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/unit</td></tr>
+    </table>
+    <div style="font-size:9px;color:#999;line-height:1.35;margin:5px 0 8px">The Excel Construction Costs tab includes these budget checks plus % of total cost.</div>
     <div class="sh">Valuation</div>
     <table class="ct">
       <tr><td>NOI (stabilized)</td><td>${fmtD(s.noi||0)}</td></tr>
@@ -458,20 +478,75 @@ function xmlEscape(value) {
     .replace(/"/g, '&quot;');
 }
 
-function xlsCell(value, type = 'String') {
+function xlsCell(value, type = 'String', style = '') {
+  if (Array.isArray(value)) {
+    [value, type = 'String', style = ''] = value;
+  }
   const empty = value === undefined || value === null || value === '';
   const numeric = type === 'Number' && !empty && isFinite(Number(value));
   const dataType = numeric ? 'Number' : 'String';
   const data = numeric ? String(Number(value)) : xmlEscape(empty ? '' : value);
-  return '<Cell><Data ss:Type="' + dataType + '">' + data + '</Data></Cell>';
+  const styleId = style || (numeric ? 'num' : 'body');
+  return '<Cell ss:StyleID="' + styleId + '"><Data ss:Type="' + dataType + '">' + data + '</Data></Cell>';
 }
 
-function xlsRow(values = []) {
-  return '<Row>' + values.map(v => Array.isArray(v) ? xlsCell(v[0], v[1]) : xlsCell(v)).join('') + '</Row>';
+function xlsRow(values = [], style = '') {
+  return '<Row>' + values.map(v => {
+    if (Array.isArray(v)) return xlsCell(v[0], v[1], v[2] || style);
+    return xlsCell(v, 'String', style);
+  }).join('') + '</Row>';
 }
 
-function xlsSheet(name, rows) {
-  return '<Worksheet ss:Name="' + xmlEscape(name).slice(0,31) + '"><Table>' + rows.join('') + '</Table></Worksheet>';
+function xlsTitleRow(title, subtitle = '') {
+  return xlsRow([title, subtitle], 'title');
+}
+
+function xlsSectionRow(title) {
+  return xlsRow([title], 'section');
+}
+
+function xlsHeaderRow(values = []) {
+  return xlsRow(values, 'header');
+}
+
+function cellNumber(value) {
+  return value === undefined || value === null || value === '' ? '' : [value, 'Number', 'num'];
+}
+
+function cellMoney(value) {
+  return value === undefined || value === null || value === '' ? '' : [value, 'Number', 'money'];
+}
+
+function cellMoneyRed(value) {
+  return value === undefined || value === null || value === '' ? '' : [value, 'Number', 'moneyRed'];
+}
+
+function cellMoneySigned(value) {
+  return Number(value) < 0 ? cellMoneyRed(value) : cellMoney(value);
+}
+
+function cellPct(value) {
+  return value === undefined || value === null || value === '' ? '' : [Number(value) / 100, 'Number', 'pctNum'];
+}
+
+function xlsStyles() {
+  return '<Styles>' +
+    '<Style ss:ID="body"><Alignment ss:Vertical="Top"/><Font ss:FontName="Calibri" ss:Size="11"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E8E8E8"/></Borders></Style>' +
+    '<Style ss:ID="title"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="14" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#0F1F3D" ss:Pattern="Solid"/></Style>' +
+    '<Style ss:ID="section"><Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#0F1F3D"/><Interior ss:Color="#F3F6FA" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#C9D3E2"/></Borders></Style>' +
+    '<Style ss:ID="header"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#1A3560" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#0F1F3D"/></Borders></Style>' +
+    '<Style ss:ID="num"><Alignment ss:Horizontal="Right" ss:Vertical="Top"/><Font ss:FontName="Calibri" ss:Size="11"/><NumberFormat ss:Format="#,##0.0"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E8E8E8"/></Borders></Style>' +
+    '<Style ss:ID="money"><Alignment ss:Horizontal="Right" ss:Vertical="Top"/><Font ss:FontName="Calibri" ss:Size="11"/><NumberFormat ss:Format="$#,##0;[Red]($#,##0);-"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E8E8E8"/></Borders></Style>' +
+    '<Style ss:ID="moneyRed"><Alignment ss:Horizontal="Right" ss:Vertical="Top"/><Font ss:FontName="Calibri" ss:Size="11" ss:Color="#E24B4A"/><NumberFormat ss:Format="$#,##0;[Red]($#,##0);-"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E8E8E8"/></Borders></Style>' +
+    '<Style ss:ID="pctNum"><Alignment ss:Horizontal="Right" ss:Vertical="Top"/><Font ss:FontName="Calibri" ss:Size="11"/><NumberFormat ss:Format="0.0%"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E8E8E8"/></Borders></Style>' +
+    '<Style ss:ID="note"><Alignment ss:WrapText="1" ss:Vertical="Top"/><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#666666"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EEEEEE"/></Borders></Style>' +
+    '</Styles>';
+}
+
+function xlsSheet(name, rows, widths = []) {
+  const defaultWidths = widths.length ? widths : [180, 120, 110, 110, 120, 180, 180, 120, 120, 120, 160, 160, 140, 140];
+  const cols = defaultWidths.map(w => '<Column ss:Width="' + w + '"/>').join('');
+  return '<Worksheet ss:Name="' + xmlEscape(name).slice(0,31) + '"><Table>' + cols + rows.join('') + '</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>1</SplitHorizontal><TopRowBottomPane>1</TopRowBottomPane><ActivePane>2</ActivePane></WorksheetOptions></Worksheet>';
 }
 
 function downloadTextFile(filename, content, type = 'application/vnd.ms-excel;charset=utf-8') {
@@ -502,9 +577,6 @@ function compQueryForSite(s, limit = 12) {
   return q ? '?' + q : '';
 }
 
-function cellNumber(value) {
-  return value === undefined || value === null || value === '' ? '' : [value, 'Number'];
-}
 
 function fmtCompDate(value) {
   return value ? String(value).slice(0, 10) : '';
@@ -520,21 +592,24 @@ function rentRowsFromSubmarket(s, submarket) {
   ];
   const units = s.units || 0;
   const rows = [
-    xlsRow(['Unit Type', 'Mix %', 'Units', 'Rent / Month', 'Monthly Rent', 'Annual Rent']),
+    xlsHeaderRow(['Unit Type', 'Mix %', 'Units', 'Rent / Month', 'Monthly Rent', 'Annual Rent']),
   ];
   unitMix.forEach(([label, mix, rent]) => {
     const unitCount = Math.round(units * mix * 10) / 10;
     const monthly = Math.round(unitCount * (rent || 0));
-    rows.push(xlsRow([label, [Math.round(mix * 1000) / 10, 'Number'], [unitCount, 'Number'], [rent || 0, 'Number'], [monthly, 'Number'], [monthly * 12, 'Number']]));
+    rows.push(xlsRow([label, cellPct(Math.round(mix * 1000) / 10), cellNumber(unitCount), cellMoney(rent || 0), cellMoney(monthly), cellMoney(monthly * 12)]));
   });
   const blended = unitMix.reduce((sum, [, mix, rent]) => sum + mix * (rent || 0), 0);
   rows.push(xlsRow(['']));
-  rows.push(xlsRow(['Blended Rent', '', '', [Math.round(blended), 'Number'], [Math.round(blended * units), 'Number'], [Math.round(blended * units * 12), 'Number']]));
+  rows.push(xlsRow(['Blended Rent', '', '', cellMoney(Math.round(blended)), cellMoney(Math.round(blended * units)), cellMoney(Math.round(blended * units * 12))], 'section'));
   return rows;
 }
 
 function rentCompPropertyRows(rentComps, s, submarket) {
-  const rows = [xlsRow(['Property / Address', 'Distance mi', 'Unit Type', 'Beds', 'Baths', 'Monthly Rent', 'Unit SF', 'Rent / SF', 'Year Built', 'Property Units', 'Amenities / Notes', 'Source', 'Period / Listed', 'URL'])];
+  const rows = [
+    xlsTitleRow('Rent Comps', s.addr),
+    xlsHeaderRow(['Property / Address', 'Distance mi', 'Unit Type', 'Beds', 'Baths', 'Monthly Rent', 'Unit SF', 'Rent / SF', 'Year Built', 'Property Units', 'Amenities / Notes', 'Source', 'Period / Listed', 'URL']),
+  ];
   const list = rentComps?.recentComps || [];
   if (list.length) {
     list.forEach(c => rows.push(xlsRow([
@@ -543,68 +618,71 @@ function rentCompPropertyRows(rentComps, s, submarket) {
       c.bedroomType || '',
       cellNumber(c.bedrooms),
       cellNumber(c.bathrooms),
-      cellNumber(c.monthlyRent),
+      cellMoney(c.monthlyRent),
       cellNumber(c.unitSf),
-      cellNumber(c.rentPerSf),
+      cellMoney(c.rentPerSf),
       cellNumber(c.yearBuilt),
       cellNumber(c.propertyUnits),
-      c.amenities || '',
+      [c.amenities || '', 'String', 'note'],
       c.source || '',
       fmtCompDate(c.period),
       c.url || '',
     ])));
   } else {
-    rows.push(xlsRow(['No property-level rent comps returned. Market rent benchmarks are shown below.']));
+    rows.push(xlsRow(['No property-level rent comps returned. Market rent benchmarks are shown below.'], 'note'));
   }
 
   rows.push(xlsRow(['']));
-  rows.push(xlsRow(['Market Rent Benchmark']));
+  rows.push(xlsSectionRow('Market Rent Benchmark'));
   rows.push(...rentRowsFromSubmarket(s, submarket));
 
   const benchmarkRows = rentComps?.benchmarkRows || [];
   if (benchmarkRows.length) {
     rows.push(xlsRow(['']));
-    rows.push(xlsRow(['Saved Rent Benchmark Rows']));
-    rows.push(xlsRow(['Bedroom Type', 'Monthly Rent', 'Source', 'Period']));
-    benchmarkRows.forEach(c => rows.push(xlsRow([c.bedroomType || '', cellNumber(c.monthlyRent), c.source || '', fmtCompDate(c.period)])));
+    rows.push(xlsSectionRow('Saved Rent Benchmark Rows'));
+    rows.push(xlsHeaderRow(['Bedroom Type', 'Monthly Rent', 'Source', 'Period']));
+    benchmarkRows.forEach(c => rows.push(xlsRow([c.bedroomType || '', cellMoney(c.monthlyRent), c.source || '', fmtCompDate(c.period)])));
   }
   return rows;
 }
 
 function salesCompRows(comps) {
-  const rows = [xlsRow(['Address', 'Distance mi', 'Neighborhood', 'Sale Date', 'Sale Price', 'Units', 'Avg Unit SF', 'Year Built', 'Cap Rate %', 'Price / Unit', 'Price / SF', 'NOI', 'Project Type', 'Buyer', 'Seller', 'Source', 'Amenities / Notes'])];
+  const rows = [
+    xlsTitleRow('Sales Comps', comps?.hood || ''),
+    xlsHeaderRow(['Address', 'Distance mi', 'Neighborhood', 'Sale Date', 'Sale Price', 'Units', 'Avg Unit SF', 'Year Built', 'Cap Rate %', 'Price / Unit', 'Price / SF', 'NOI', 'Project Type', 'Buyer', 'Seller', 'Source', 'Amenities / Notes']),
+  ];
   const list = comps?.recentComps || [];
   if (!list.length) {
-    rows.push(xlsRow(['No recent sold comps returned for this submarket']));
+    rows.push(xlsRow(['No recent sold comps returned for this submarket'], 'note'));
   } else {
     list.forEach(c => rows.push(xlsRow([
       c.address || '',
       cellNumber(c.distanceMiles),
       c.neighborhood || '',
       fmtCompDate(c.saleDate),
-      cellNumber(c.salePrice),
+      cellMoney(c.salePrice),
       cellNumber(c.units),
       cellNumber(c.avgUnitSf),
       cellNumber(c.yearBuilt),
-      c.capRate ? [Math.round(c.capRate * 10000) / 100, 'Number'] : '',
-      cellNumber(c.pricePerUnit),
-      cellNumber(c.pricePerSf),
-      cellNumber(c.noi),
+      c.capRate ? cellPct(Math.round(c.capRate * 10000) / 100) : '',
+      cellMoney(c.pricePerUnit),
+      cellMoney(c.pricePerSf),
+      cellMoney(c.noi),
       c.projectType || '',
       c.buyer || '',
       c.seller || '',
       c.source || '',
-      c.amenities || c.notes || '',
+      [c.amenities || c.notes || '', 'String', 'note'],
     ])));
   }
   rows.push(xlsRow(['']));
-  rows.push(xlsRow(['Summary']));
-  rows.push(xlsRow(['Comps Count', [comps?.comps || 0, 'Number']]));
-  rows.push(xlsRow(['Avg Cap Rate %', [comps?.capRate?.avg ? Math.round(comps.capRate.avg * 10000) / 100 : '', comps?.capRate?.avg ? 'Number' : 'String']]));
-  rows.push(xlsRow(['Median Cap Rate %', [comps?.capRate?.median ? Math.round(comps.capRate.median * 10000) / 100 : '', comps?.capRate?.median ? 'Number' : 'String']]));
-  rows.push(xlsRow(['Avg Price / Unit', [comps?.pricePerUnit?.avg || '', comps?.pricePerUnit?.avg ? 'Number' : 'String']]));
-  rows.push(xlsRow(['Median Price / Unit', [comps?.pricePerUnit?.median || '', comps?.pricePerUnit?.median ? 'Number' : 'String']]));
-  rows.push(xlsRow(['Avg Price / SF', [comps?.pricePerSf?.avg || '', comps?.pricePerSf?.avg ? 'Number' : 'String']]));
+  rows.push(xlsSectionRow('Summary'));
+  rows.push(xlsRow(['Comps Count', cellNumber(comps?.comps || 0)]));
+  rows.push(xlsRow(['Avg Cap Rate %', comps?.capRate?.avg ? cellPct(Math.round(comps.capRate.avg * 10000) / 100) : '']));
+  rows.push(xlsRow(['Median Cap Rate %', comps?.capRate?.median ? cellPct(Math.round(comps.capRate.median * 10000) / 100) : '']));
+  rows.push(xlsRow(['Avg Price / Unit', comps?.pricePerUnit?.avg ? cellMoney(comps.pricePerUnit.avg) : '']));
+  rows.push(xlsRow(['Median Price / Unit', comps?.pricePerUnit?.median ? cellMoney(comps.pricePerUnit.median) : '']));
+  rows.push(xlsRow(['Avg Price / SF', comps?.pricePerSf?.avg ? cellMoney(comps.pricePerSf.avg) : '']));
   return rows;
 }
 
@@ -623,29 +701,55 @@ function constructionCostRows(s, tc, land) {
   const totalPerUnit = units ? Math.round(tc / units) : 0;
   const softPctHard = hardCosts ? Math.round((softCosts / hardCosts) * 1000) / 10 : 0;
   return [
-    xlsRow(['Construction Cost Validation']),
+    xlsTitleRow('Construction Cost Validation', s.addr),
     xlsRow(['Project Type', s.type || '']),
     xlsRow(['Units', cellNumber(units)]),
     xlsRow(['Avg Unit SF', cellNumber(avgUnitSf)]),
     xlsRow(['Total Net Rentable SF', cellNumber(totalSF)]),
-    xlsRow([''] ),
-    xlsRow(['Line Item', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
-    xlsRow(['Land Cost', cellNumber(Math.round(land)), totalSF ? cellNumber(Math.round(land / totalSF)) : '', units ? cellNumber(Math.round(land / units)) : '', tc ? cellNumber(Math.round(land / tc * 1000) / 10) : '', 'Purchase price or imputed land basis']),
-    xlsRow(['Hard Costs', cellNumber(hardCosts), cellNumber(hardPerSf), cellNumber(hardPerUnit), tc ? cellNumber(Math.round(hardCosts / tc * 1000) / 10) : '', 'RSMeans-style LA benchmark by project type']),
-    xlsRow(['Soft Costs', cellNumber(softCosts), totalSF ? cellNumber(Math.round(softCosts / totalSF)) : '', units ? cellNumber(Math.round(softCosts / units)) : '', tc ? cellNumber(Math.round(softCosts / tc * 1000) / 10) : '', 'Permits, A&E, legal, contingency, developer fee']),
-    xlsRow(['Financing Carry', cellNumber(carryCost), totalSF ? cellNumber(Math.round(carryCost / totalSF)) : '', units ? cellNumber(Math.round(carryCost / units)) : '', tc ? cellNumber(Math.round(carryCost / tc * 1000) / 10) : '', 'Construction interest, loan fees, tax carry']),
-    xlsRow(['Total All-In Cost', cellNumber(Math.round(tc)), cellNumber(totalPerSf), cellNumber(totalPerUnit), cellNumber(100), 'Total underwriting basis']),
-    xlsRow([''] ),
-    xlsRow(['Financing Metrics']),
-    xlsRow(['Construction Loan', cellNumber(loan), totalSF ? cellNumber(Math.round(loan / totalSF)) : '', units ? cellNumber(Math.round(loan / units)) : '', tc ? cellNumber(Math.round(loan / tc * 1000) / 10) : '', 'Assumes 65% loan-to-cost unless model overrides']),
-    xlsRow(['Equity Required', cellNumber(equity), totalSF ? cellNumber(Math.round(equity / totalSF)) : '', units ? cellNumber(Math.round(equity / units)) : '', tc ? cellNumber(Math.round(equity / tc * 1000) / 10) : '', 'Borrower cash / sponsor equity']),
-    xlsRow([''] ),
-    xlsRow(['Benchmark Checks']),
-    xlsRow(['Hard Cost / SF', cellNumber(hardPerSf), '', '', '', 'Primary construction-cost reasonableness check']),
-    xlsRow(['Hard Cost / Unit', cellNumber(hardPerUnit), '', '', '', 'Useful for comparing similar unit-count projects']),
-    xlsRow(['Soft Costs / Hard Costs %', cellNumber(softPctHard), '', '', '', 'Soft costs commonly underwritten as % of hard costs']),
-    xlsRow(['Total Cost / SF', cellNumber(totalPerSf), '', '', '', 'All-in basis including land, soft costs, carry']),
-    xlsRow(['Total Cost / Unit', cellNumber(totalPerUnit), '', '', '', 'All-in basis per delivered unit']),
+    xlsRow(['']),
+    xlsHeaderRow(['Line Item', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
+    xlsRow(['Land Cost', cellMoney(Math.round(land)), totalSF ? cellMoney(Math.round(land / totalSF)) : '', units ? cellMoney(Math.round(land / units)) : '', tc ? cellPct(Math.round(land / tc * 1000) / 10) : '', 'Purchase price or imputed land basis']),
+    xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), tc ? cellPct(Math.round(hardCosts / tc * 1000) / 10) : '', 'RSMeans-style LA benchmark by project type']),
+    xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(Math.round(softCosts / totalSF)) : '', units ? cellMoney(Math.round(softCosts / units)) : '', tc ? cellPct(Math.round(softCosts / tc * 1000) / 10) : '', 'Permits, A&E, legal, contingency, developer fee']),
+    xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(Math.round(carryCost / totalSF)) : '', units ? cellMoney(Math.round(carryCost / units)) : '', tc ? cellPct(Math.round(carryCost / tc * 1000) / 10) : '', 'Construction interest, loan fees, tax carry']),
+    xlsRow(['Total All-In Cost', cellMoney(Math.round(tc)), cellMoney(totalPerSf), cellMoney(totalPerUnit), cellPct(100), 'Total underwriting basis'], 'section'),
+    xlsRow(['']),
+    xlsSectionRow('Financing Metrics'),
+    xlsRow(['Construction Loan', cellMoney(loan), totalSF ? cellMoney(Math.round(loan / totalSF)) : '', units ? cellMoney(Math.round(loan / units)) : '', tc ? cellPct(Math.round(loan / tc * 1000) / 10) : '', 'Assumes 65% loan-to-cost unless model overrides']),
+    xlsRow(['Equity Required', cellMoney(equity), totalSF ? cellMoney(Math.round(equity / totalSF)) : '', units ? cellMoney(Math.round(equity / units)) : '', tc ? cellPct(Math.round(equity / tc * 1000) / 10) : '', 'Borrower cash / sponsor equity']),
+    xlsRow(['']),
+    xlsSectionRow('Benchmark Checks'),
+    xlsRow(['Hard Cost / SF', cellMoney(hardPerSf), '', '', '', 'Primary construction-cost reasonableness check']),
+    xlsRow(['Hard Cost / Unit', cellMoney(hardPerUnit), '', '', '', 'Useful for comparing similar unit-count projects']),
+    xlsRow(['Soft Costs / Hard Costs %', cellPct(softPctHard), '', '', '', 'Soft costs commonly underwritten as % of hard costs']),
+    xlsRow(['Total Cost / SF', cellMoney(totalPerSf), '', '', '', 'All-in basis including land, soft costs, carry']),
+    xlsRow(['Total Cost / Unit', cellMoney(totalPerUnit), '', '', '', 'All-in basis per delivered unit']),
+  ];
+}
+
+function pencilCheckRows(s, m) {
+  const gap = Math.max(0, m.tc - m.exitValue);
+  const breakevenLand = Math.max(0, m.land + m.netProfit);
+  const requiredLandDiscount = Math.max(0, m.land - breakevenLand);
+  const requiredNoi = m.exitCap ? m.tc * m.exitCap : 0;
+  const noiGap = Math.max(0, requiredNoi - m.noi);
+  const noiIncreasePct = m.noi ? Math.round((noiGap / m.noi) * 1000) / 10 : 0;
+  const hardCost10Impact = Math.round(m.hardCosts * 0.10);
+  const profitAfter10CostCut = Math.round(m.netProfit + hardCost10Impact);
+  return [
+    xlsTitleRow('Pencil Check', s.addr),
+    xlsHeaderRow(['Question', 'Answer', 'Metric', 'Read']),
+    xlsRow(['Does it pencil?', m.netProfit >= 0 ? 'Yes' : 'No', cellMoneySigned(Math.round(m.netProfit)), m.netProfit >= 0 ? 'Positive net profit' : 'Net loss / value gap'], m.netProfit >= 0 ? '' : 'note'),
+    xlsRow(['Gap to breakeven', gap ? 'Needs improvement' : 'No gap', cellMoney(gap), 'Amount by which all-in cost exceeds exit value']),
+    xlsRow(['Breakeven land basis', '', cellMoney(breakevenLand), 'Approximate max land basis if all else stays constant']),
+    xlsRow(['Required land discount', '', cellMoney(requiredLandDiscount), 'Land price reduction needed to reach breakeven']),
+    xlsRow(['Current hard cost / SF', '', cellMoney(m.hardPerSf), 'Construction-cost reasonableness check']),
+    xlsRow(['Current total cost / SF', '', cellMoney(m.totalPerSf), 'All-in basis including land, soft costs, carry']),
+    xlsRow(['Current total cost / unit', '', cellMoney(m.totalPerUnit), 'All-in delivered unit basis']),
+    xlsRow(['NOI required at exit cap', '', cellMoney(Math.round(requiredNoi)), 'NOI needed for exit value to equal all-in cost']),
+    xlsRow(['NOI gap', '', cellMoney(noiGap), 'Required NOI increase to breakeven']),
+    xlsRow(['Implied NOI / rent increase', '', cellPct(noiIncreasePct), 'Approximate rent lift needed if expense ratio holds']),
+    xlsRow(['If hard costs drop 10%', '', cellMoneySigned(profitAfter10CostCut), 'Estimated net profit after a 10% hard-cost reduction']),
   ];
 }
 
@@ -684,16 +788,20 @@ async function exportExcel(id) {
   const totalPerUnit = s.units ? Math.round(tc / s.units) : 0;
 
   const summaryRows = [
-    xlsRow(['ParceLLA Comprehensive Underwriting', s.addr]),
+    xlsTitleRow('ParceLLA Comprehensive Underwriting', s.addr),
     xlsRow(['Generated', today]),
     xlsRow(['']),
+    xlsSectionRow('Property Summary'),
     xlsRow(['Address', s.addr]),
     xlsRow(['Neighborhood', s.hood]),
     xlsRow(['Zoning', s.zone]),
     xlsRow(['Project Type', s.type]),
-    xlsRow(['Units', [s.units || 0, 'Number']]),
-    xlsRow(['Average Unit SF', [s.usf || 0, 'Number']]),
-    xlsRow(['Lot SF', [s.lot || 0, 'Number']]),
+    xlsRow(['Units', cellNumber(s.units || 0)]),
+    xlsRow(['Average Unit SF', cellNumber(s.usf || 0)]),
+    xlsRow(['Lot SF', cellNumber(s.lot || 0)]),
+    xlsRow(['Land Cost', cellMoney(Math.round(land))]),
+    xlsRow(['All-In Cost', cellMoney(Math.round(tc))]),
+    xlsRow(['Net Profit', cellMoneySigned(Math.round(netProfit))]),
     xlsRow(['RTI', s.rti ? 'Yes' : 'No']),
     xlsRow(['Status', s.isComp ? 'Off-market' : 'For sale']),
     xlsRow(['Permit Source ID', s.permitSourceId || '']),
@@ -701,29 +809,31 @@ async function exportExcel(id) {
   ];
 
   const underwritingRows = [
-    xlsRow(['Metric', 'Value', '$ / SF', '$ / Unit', 'Notes']),
-    xlsRow(['Land Cost', [Math.round(land), 'Number'], totalSF ? [Math.round(land / totalSF), 'Number'] : '', s.units ? [Math.round(land / s.units), 'Number'] : '', 'Purchase price or imputed land basis']),
-    xlsRow(['Hard Costs', [hardCosts, 'Number'], [hardPerSf, 'Number'], [hardPerUnit, 'Number'], 'Construction cost validation shown in Construction Costs tab']),
-    xlsRow(['Soft Costs', [softCosts, 'Number'], totalSF ? [Math.round(softCosts / totalSF), 'Number'] : '', s.units ? [Math.round(softCosts / s.units), 'Number'] : '', 'A&E, permits, fees, contingency, developer fee']),
-    xlsRow(['Financing Carry', [carryCost, 'Number'], totalSF ? [Math.round(carryCost / totalSF), 'Number'] : '', s.units ? [Math.round(carryCost / s.units), 'Number'] : '', 'Interest, loan fees, taxes during construction']),
-    xlsRow(['Total All-In Cost', [Math.round(tc), 'Number'], [totalPerSf, 'Number'], [totalPerUnit, 'Number'], 'Total development basis']),
-    xlsRow(['Loan Amount', [Math.round(loan), 'Number'], totalSF ? [Math.round(loan / totalSF), 'Number'] : '', s.units ? [Math.round(loan / s.units), 'Number'] : '', '65% LTC assumption unless overridden']),
-    xlsRow(['Equity Required', [Math.round(equity), 'Number'], totalSF ? [Math.round(equity / totalSF), 'Number'] : '', s.units ? [Math.round(equity / s.units), 'Number'] : '', 'Sponsor equity requirement']),
-    xlsRow(['NOI', [Math.round(noi), 'Number'], totalSF ? [Math.round(noi / totalSF), 'Number'] : '', s.units ? [Math.round(noi / s.units), 'Number'] : '', 'Stabilized annual NOI']),
-    xlsRow(['Entry Cap Rate %', [Math.round(entryCap * 10000) / 100, 'Number'], '', '', 'Market cap rate input']),
-    xlsRow(['Exit Cap Rate %', [Math.round(exitCap * 10000) / 100, 'Number'], '', '', 'Exit cap assumption']),
-    xlsRow(['Exit Value', [Math.round(exitValue), 'Number'], totalSF ? [Math.round(exitValue / totalSF), 'Number'] : '', s.units ? [Math.round(exitValue / s.units), 'Number'] : '', 'NOI divided by exit cap']),
-    xlsRow(['Net Profit', [Math.round(netProfit), 'Number'], totalSF ? [Math.round(netProfit / totalSF), 'Number'] : '', s.units ? [Math.round(netProfit / s.units), 'Number'] : '', 'Exit value less total all-in cost']),
-    xlsRow(['IRR %', [Math.round(irr * 10) / 10, 'Number'], '', '', 'Levered 5-year IRR']),
-    xlsRow(['Cap On Cost %', [s.capOnCost || 0, 'Number'], '', '', 'NOI / total cost']),
-    xlsRow(['Development Spread %', [Math.round((s.devSpreadPct || 0) * 1000) / 10, 'Number'], '', '', 'Spread over all-in cost']),
+    xlsTitleRow('Underwriting', s.addr),
+    xlsHeaderRow(['Metric', 'Value', '$ / SF', '$ / Unit', 'Notes']),
+    xlsRow(['Land Cost', cellMoney(Math.round(land)), totalSF ? cellMoney(Math.round(land / totalSF)) : '', s.units ? cellMoney(Math.round(land / s.units)) : '', 'Purchase price or imputed land basis']),
+    xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), 'Construction cost validation shown in Construction Costs tab']),
+    xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(Math.round(softCosts / totalSF)) : '', s.units ? cellMoney(Math.round(softCosts / s.units)) : '', 'A&E, permits, fees, contingency, developer fee']),
+    xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(Math.round(carryCost / totalSF)) : '', s.units ? cellMoney(Math.round(carryCost / s.units)) : '', 'Interest, loan fees, taxes during construction']),
+    xlsRow(['Total All-In Cost', cellMoney(Math.round(tc)), cellMoney(totalPerSf), cellMoney(totalPerUnit), 'Total development basis'], 'section'),
+    xlsRow(['Loan Amount', cellMoney(Math.round(loan)), totalSF ? cellMoney(Math.round(loan / totalSF)) : '', s.units ? cellMoney(Math.round(loan / s.units)) : '', '65% LTC assumption unless overridden']),
+    xlsRow(['Equity Required', cellMoney(Math.round(equity)), totalSF ? cellMoney(Math.round(equity / totalSF)) : '', s.units ? cellMoney(Math.round(equity / s.units)) : '', 'Sponsor equity requirement']),
+    xlsRow(['NOI', cellMoney(Math.round(noi)), totalSF ? cellMoney(Math.round(noi / totalSF)) : '', s.units ? cellMoney(Math.round(noi / s.units)) : '', 'Stabilized annual NOI']),
+    xlsRow(['Entry Cap Rate %', cellPct(Math.round(entryCap * 10000) / 100), '', '', 'Market cap rate input']),
+    xlsRow(['Exit Cap Rate %', cellPct(Math.round(exitCap * 10000) / 100), '', '', 'Exit cap assumption']),
+    xlsRow(['Exit Value', cellMoney(Math.round(exitValue)), totalSF ? cellMoney(Math.round(exitValue / totalSF)) : '', s.units ? cellMoney(Math.round(exitValue / s.units)) : '', 'NOI divided by exit cap']),
+    xlsRow(['Net Profit', cellMoneySigned(Math.round(netProfit)), totalSF ? cellMoneySigned(Math.round(netProfit / totalSF)) : '', s.units ? cellMoneySigned(Math.round(netProfit / s.units)) : '', 'Exit value less total all-in cost']),
+    xlsRow(['IRR %', cellPct(Math.round(irr * 10) / 10), '', '', 'Levered 5-year IRR']),
+    xlsRow(['Cap On Cost %', cellPct(s.capOnCost || 0), '', '', 'NOI / total cost']),
+    xlsRow(['Development Spread %', cellPct(Math.round((s.devSpreadPct || 0) * 1000) / 10), '', '', 'Spread over all-in cost']),
   ];
 
   const rentRows = [
-    xlsRow(['Rent Assumptions']),
+    xlsTitleRow('Rent Roll', s.addr),
+    xlsSectionRow('Rent Assumptions'),
     xlsRow(['Submarket', s.hood]),
-    xlsRow(['Implied Monthly Gross Rent', [rentMonthly, 'Number']]),
-    xlsRow(['Implied Annual Gross Rent', [rentMonthly * 12, 'Number']]),
+    xlsRow(['Implied Monthly Gross Rent', cellMoney(rentMonthly)]),
+    xlsRow(['Implied Annual Gross Rent', cellMoney(rentMonthly * 12)]),
     xlsRow(['Vacancy', '5.0%']),
     xlsRow(['Expense Ratio', '38.0%']),
     xlsRow(['']),
@@ -731,38 +841,42 @@ async function exportExcel(id) {
   ];
 
   const cashFlowRows = [
-    xlsRow(['Year', 'NOI', 'Debt Service', 'Cash Flow Before Tax', 'Exit Value', 'Loan Payoff', 'Net Sale Proceeds']),
+    xlsTitleRow('Cash Flow', s.addr),
+    xlsHeaderRow(['Year', 'NOI', 'Debt Service', 'Cash Flow Before Tax', 'Exit Value', 'Loan Payoff', 'Net Sale Proceeds']),
   ];
   for (let year = 1; year <= 5; year++) {
     const yearNoi = Math.round(noi * Math.pow(1.025, year - 1));
     const sale = year === 5 ? Math.round(yearNoi / exitCap) : '';
     const payoff = year === 5 ? Math.round(loan) : '';
     const proceeds = year === 5 ? Math.round((sale || 0) - loan) : '';
-    cashFlowRows.push(xlsRow([[year, 'Number'], [yearNoi, 'Number'], [Math.round(debtService), 'Number'], [Math.round(yearNoi - debtService), 'Number'], [sale, sale === '' ? 'String' : 'Number'], [payoff, payoff === '' ? 'String' : 'Number'], [proceeds, proceeds === '' ? 'String' : 'Number']]));
+    cashFlowRows.push(xlsRow([cellNumber(year), cellMoney(yearNoi), cellMoney(Math.round(debtService)), cellMoney(Math.round(yearNoi - debtService)), sale === '' ? '' : cellMoney(sale), payoff === '' ? '' : cellMoney(payoff), proceeds === '' ? '' : cellMoney(proceeds)]));
   }
 
   const sensitivityRows = [
-    xlsRow(['Scenario', 'Rent Change', 'Exit Cap Change', 'Cost Change', 'Estimated Impact']),
+    xlsTitleRow('Sensitivity', s.addr),
+    xlsHeaderRow(['Scenario', 'Rent Change', 'Exit Cap Change', 'Cost Change', 'Estimated Impact']),
     xlsRow(['Bear', '-10%', '+50 bps', '+8%', 'Lower rents, wider exit cap, higher construction cost']),
     xlsRow(['Base', '0%', '0 bps', '0%', 'Current underwriting assumptions']),
     xlsRow(['Bull', '+8%', '-40 bps', '-5%', 'Higher rents, tighter exit cap, value engineering']),
     xlsRow(['']),
     xlsRow(['Risk', 'Impact', 'Mitigation']),
-    xlsRow(['Rent miss 5%', [-Math.round(noi * 0.05 * 5), 'Number'], 'Validate achievable rents with local comps']),
-    xlsRow(['Cap expansion 50 bps', [-Math.round(noi / 0.005), 'Number'], 'Use conservative exit cap and stress test']),
-    xlsRow(['Cost overrun 10%', [-Math.round(tc * 0.10), 'Number'], 'GC pricing, contingency, value engineering']),
+    xlsRow(['Rent miss 5%', cellMoneyRed(-Math.round(noi * 0.05 * 5)), 'Validate achievable rents with local comps']),
+    xlsRow(['Cap expansion 50 bps', cellMoneyRed(-Math.round(noi / 0.005)), 'Use conservative exit cap and stress test']),
+    xlsRow(['Cost overrun 10%', cellMoneyRed(-Math.round(tc * 0.10)), 'GC pricing, contingency, value engineering']),
   ];
 
   const workbook = '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
     '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
-    xlsSheet('Summary', summaryRows) +
-    xlsSheet('Underwriting', underwritingRows) +
-    xlsSheet('Rent Roll', rentRows) +
-    xlsSheet('Rent Comps', rentCompPropertyRows(rentComps, s, submarket)) +
-    xlsSheet('Sales Comps', salesCompRows(comps)) +
-    xlsSheet('Construction Costs', constructionCostRows(s, tc, land)) +
-    xlsSheet('Cash Flow', cashFlowRows) +
-    xlsSheet('Sensitivity', sensitivityRows) +
+    xlsStyles() +
+    xlsSheet('Summary', summaryRows, [220, 220, 120, 120, 220]) +
+    xlsSheet('Pencil Check', pencilCheckRows(s, { tc, land, noi, exitValue, netProfit, exitCap, hardCosts, hardPerSf, totalPerSf, totalPerUnit }), [190, 150, 130, 300]) +
+    xlsSheet('Underwriting', underwritingRows, [190, 130, 120, 120, 280]) +
+    xlsSheet('Rent Roll', rentRows, [160, 120, 100, 120, 130, 130]) +
+    xlsSheet('Rent Comps', rentCompPropertyRows(rentComps, s, submarket), [260, 80, 90, 70, 70, 120, 90, 90, 90, 100, 260, 100, 120, 220]) +
+    xlsSheet('Sales Comps', salesCompRows(comps), [220, 80, 130, 100, 120, 70, 90, 90, 90, 110, 100, 120, 120, 130, 130, 100, 260]) +
+    xlsSheet('Construction Costs', constructionCostRows(s, tc, land), [190, 130, 110, 110, 110, 280]) +
+    xlsSheet('Cash Flow', cashFlowRows, [80, 130, 130, 150, 130, 130, 150]) +
+    xlsSheet('Sensitivity', sensitivityRows, [150, 130, 130, 130, 280]) +
     '</Workbook>';
 
   const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
@@ -787,6 +901,17 @@ function exportPDF(id) {
   const capoc    = s.capOnCost || 0;
   const spread   = Math.round((s.devSpreadPct || 0) * 1000) / 10;
   const today    = new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'});
+  const pdfTotalSF = (s.units || 0) * (s.usf || 800);
+  const pdfHardCosts = Math.round(s.hardCosts ?? Math.max(0, (tc - land) * 0.58));
+  const pdfSoftCosts = Math.round(s.softCosts ?? Math.max(0, (tc - land) * 0.24));
+  const pdfCarryCost = Math.round(s.carryCost ?? Math.max(0, (tc - land) * 0.18));
+  const pdfHardPerSf = pdfTotalSF ? Math.round(pdfHardCosts / pdfTotalSF) : 0;
+  const pdfHardPerUnit = s.units ? Math.round(pdfHardCosts / s.units) : 0;
+  const pdfSoftPerSf = pdfTotalSF ? Math.round(pdfSoftCosts / pdfTotalSF) : 0;
+  const pdfCarryPerSf = pdfTotalSF ? Math.round(pdfCarryCost / pdfTotalSF) : 0;
+  const pdfTotalPerSf = pdfTotalSF ? Math.round(tc / pdfTotalSF) : 0;
+  const pdfTotalPerUnit = s.units ? Math.round(tc / s.units) : 0;
+  const pdfSoftPctHard = pdfHardCosts ? Math.round((pdfSoftCosts / pdfHardCosts) * 1000) / 10 : 0;
 
   win.document.write(`<!DOCTYPE html>
 <html>
@@ -880,7 +1005,7 @@ function exportPDF(id) {
   <strong>Investment Summary:</strong> This analysis presents a ${s.units}-unit ${s.type || 'multifamily'} development opportunity located at ${s.addr} in ${s.hood || 'Los Angeles'}, CA. 
   The subject property is zoned ${s.zone || 'R3'} with a ${(s.lot||5000).toLocaleString()} SF lot. 
   ${s.rti ? 'The project holds Ready-to-Issue (RTI) approval, eliminating entitlement risk and enabling immediate construction commencement upon permit issuance.' : 'The project is currently in the entitlement pipeline.'}
-  Based on RSMeans 2024 construction cost data and CoStar Q3 2024 market cap rates, the projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtM(Math.round(tc/s.units))}/unit), 
+  Based on RSMeans 2024 construction cost data and CoStar Q3 2024 market cap rates, the projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF), 
   with a stabilized exit value of <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding a net development profit of <strong>${fmtD(prof)}</strong>.
 </div>
 
@@ -1004,11 +1129,24 @@ function exportPDF(id) {
     <td style="font-weight:700;font-size:13px;color:#c49a3c;border:none;text-align:right">${fmtD(tc)}</td>
   </tr>
   <tr>
-    <td style="color:rgba(255,255,255,0.7);font-size:9px;border:none">Per Unit</td>
-    <td style="color:rgba(255,255,255,0.7);font-size:9px;border:none;text-align:right">${fmtD(Math.round(tc/s.units))}/unit &nbsp;|&nbsp; ${fmtD(Math.round(tc/((s.units*(s.usf||800)))))}/SF</td>
+    <td style="color:rgba(255,255,255,0.7);font-size:9px;border:none">Total Basis Metrics</td>
+    <td style="color:rgba(255,255,255,0.7);font-size:9px;border:none;text-align:right">${fmtD(pdfTotalPerUnit)}/unit &nbsp;|&nbsp; ${fmtD(pdfTotalPerSf)}/SF &nbsp;|&nbsp; Hard ${fmtD(pdfHardPerSf)}/SF</td>
   </tr>
 </table>
 
+<h3>Construction Cost Validation Metrics</h3>
+<table>
+  <tr><th>Metric</th><th>Amount</th><th>Use</th></tr>
+  <tr><td>Total Building SF</td><td>${pdfTotalSF.toLocaleString()} SF</td><td>Denominator for cost per foot</td></tr>
+  <tr><td>Hard Construction Budget</td><td>${fmtD(pdfHardCosts)}</td><td>Direct construction budget</td></tr>
+  <tr><td>Hard Cost / SF</td><td>${fmtD(pdfHardPerSf)}/SF</td><td>Primary construction-cost benchmark</td></tr>
+  <tr><td>Hard Cost / Unit</td><td>${fmtD(pdfHardPerUnit)}/unit</td><td>Comparable unit-count benchmark</td></tr>
+  <tr><td>Soft Cost / SF</td><td>${fmtD(pdfSoftPerSf)}/SF</td><td>Permits, A&E, legal, contingency, fees</td></tr>
+  <tr><td>Carry Cost / SF</td><td>${fmtD(pdfCarryPerSf)}/SF</td><td>Interest, loan fees, taxes during construction</td></tr>
+  <tr><td>Total Cost / SF</td><td>${fmtD(pdfTotalPerSf)}/SF</td><td>All-in basis including land, soft costs, carry</td></tr>
+  <tr><td>Total Cost / Unit</td><td>${fmtD(pdfTotalPerUnit)}/unit</td><td>All-in delivered unit basis</td></tr>
+  <tr><td>Soft Costs / Hard Costs</td><td>${pdfSoftPctHard}%</td><td>Soft-cost reasonableness check</td></tr>
+</table>
 <!-- INCOME APPROACH -->
 <div class="page-break"></div>
 <h2>V. Income Approach — Stabilized Pro Forma</h2>
