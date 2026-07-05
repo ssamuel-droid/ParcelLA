@@ -642,7 +642,8 @@ async function exportExcel(id) {
     xlsSheet('Sensitivity', sensitivityRows) +
     '</Workbook>';
 
-  downloadTextFile('ParceLLA_' + safeFileName(s.addr) + '_Underwriting.xls', workbook);
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
+  downloadTextFile('ParceLLA_' + safeFileName(s.addr) + '_' + stamp + '_Underwriting.xls', workbook);
 }
 function exportPDF(id) {
   if (!id) return;

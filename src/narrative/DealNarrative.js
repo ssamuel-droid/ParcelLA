@@ -7,7 +7,7 @@
  *   - What a senior analyst would flag
  *   - Comparable context
  *
- * Uses Claude claude-sonnet-4-6 via the Anthropic API.
+ * Uses Claude claude-sonnet-5 via the Anthropic API.
  * Cached in Supabase so each site only generates once (until assumptions change).
  */
 
@@ -75,7 +75,7 @@ Maximum 200 words. No preamble — start directly with the analysis.`;
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model:      'claude-sonnet-4-6',
+      model:      'claude-sonnet-5',
       max_tokens:  400,
       messages:   [{ role: 'user', content: prompt }],
     }),

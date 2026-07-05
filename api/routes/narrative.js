@@ -18,17 +18,82 @@ function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 }
 
+function modelFromSupabaseSite(s) {
+  return {
+    noi:           s.noi          || 0,
+    totalCost:     s.total_cost   || 0,
+    exitValue:     s.exit_value   || 0,
+    exitProceeds:  s.net_profit   || 0,
+    netProfit:     s.net_profit   || 0,
+    leveragedIRR:  s.irr_v        || 0,
+    capRateOnCost: (s.cap_on_cost   || 0) / 100,
+    devSpreadPct:  (s.dev_spread_pct || 0) / 100,
+    marketCapRate: s.entry_cap_rate || 0.0500,
+    price:         s.price        || 0,
+    hardCosts:     (s.total_cost  || 0) * 0.55,
+    softCosts:     (s.total_cost  || 0) * 0.22,
+    carryCost:     (s.total_cost  || 0) * 0.12,
+    loanAmount:    (s.total_cost  || 0) * 0.65,
+    equity:        (s.total_cost  || 0) * 0.35,
+    equityMultiple: (s.total_cost || 0) > 0
+      ? ((s.exit_value || 0) / ((s.total_cost || 1) * 0.35)) : 0,
+  };
+}
+
+function mapSupabaseSite(s) {
+  return {
+    id:           s.id,
+    addr:         s.address ?? s.addr,
+    hood:         s.neighborhood ?? s.hood ?? 'Koreatown',
+    type:         s.project_type ?? s.type ?? 'Multifamily',
+    zone:         s.zoning ?? s.zone ?? 'R3',
+    lot:          s.lot_sf ?? s.lot ?? 5000,
+    units:        s.units ?? 4,
+    usf:          s.avg_unit_sf ?? s.usf ?? 800,
+    rti:          s.rti ?? false,
+    isComp:       s.is_comp ?? false,
+    price:        s.price ?? null,
+    demo:         s.has_demo ?? false,
+    ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
+    _precomputed: true,
+    _m: modelFromSupabaseSite(s),
+  };
+}
+
+async function findNarrativeSite(siteId) {
+  const sampleSite = SITES.find(s => s.id === siteId);
+  if (sampleSite) {
+    const normalized = normalizeSite(sampleSite);
+    return { site: sampleSite, model: runModel(normalized) };
+  }
+
+  if (!process.env.SUPABASE_URL) return { site: null, model: null };
+
+  const { data, error } = await sb()
+    .from('sites')
+    .select('*')
+    .eq('id', siteId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return { site: null, model: null };
+
+  const site = mapSupabaseSite(data);
+  return { site, model: site._m };
+}
+
 // ── NARRATIVE ─────────────────────────────────────────────────────────────────
 export const narrativeRouter = Router();
 
 narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
   try {
     const siteId = +req.params.siteId;
-    const site   = SITES.find(s => s.id === siteId);
+    const { overrides = {} } = req.body;
+    const { site, model: baseModel } = await findNarrativeSite(siteId);
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
-    const { overrides = {} } = req.body;
-    const model = runModel(normalizeSite(site), overrides);
+    const model = Object.keys(overrides).length && !site._precomputed
+      ? runModel(normalizeSite(site), overrides)
+      : baseModel;
 
     // Hash model assumptions for cache key
     const hash = `${model.price}|${model.hardCosts}|${model.marketCapRate}|${overrides.sc ?? 18}`;
@@ -96,7 +161,7 @@ Be direct, specific with numbers, opinionated. No hedging language. No bullet po
         'x-api-key': process.env.ANTHROPIC_API_KEY ?? '',
       },
       body: JSON.stringify({
-        model:      'claude-sonnet-4-6',
+        model:      'claude-sonnet-5',
         max_tokens:  450,
         messages:   [{ role: 'user', content: prompt }],
       }),
