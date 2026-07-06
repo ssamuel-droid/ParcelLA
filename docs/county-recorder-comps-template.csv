@@ -1,0 +1,2 @@
+apn,recorder_document_number,recording_date,document_type,address,city,zip,neighborhood,buyer,seller,transfer_tax,sale_price,units,building_sf,year_built,property_type,lat,lng,notes
+1234-001-002,20240123456,2024-08-15,Grant Deed,123 Example Ave,Los Angeles,90026,Silver Lake,Buyer LLC,Seller LLC,4620,,10,8200,1962,Apartment,34.0839,-118.2703,Example row - delete before import

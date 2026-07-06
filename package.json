@@ -14,7 +14,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "dev:frontend": "vite",
-    "dev:api": "NODE_ENV=development node --watch api/server.js"
+    "dev:api": "NODE_ENV=development node --watch api/server.js",
+    "import:county-comps": "node scripts/import-county-comps.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",

@@ -91,6 +91,12 @@ function mapSoldComp(d, siteLat, siteLng) {
     buyer:        d.buyer,
     seller:       d.seller,
     source:       d.source,
+    apn:          d.apn,
+    recorderDocumentNumber: d.recorder_document_number,
+    documentType: d.document_type,
+    transferTax:  d.transfer_tax,
+    priceConfidence: d.sale_price_confidence,
+    salePriceMethod: d.sale_price_method,
     notes:        d.notes,
   };
 }
@@ -197,6 +203,57 @@ function rentSummary(rows) {
   return latest;
 }
 
+function saleTime(row) {
+  const t = row?.sale_date ? new Date(row.sale_date).getTime() : 0;
+  return Number.isFinite(t) ? t : 0;
+}
+
+function rankSoldComps(rows, siteLat, siteLng) {
+  const hasSite = siteLat !== null && siteLng !== null;
+  return [...(rows ?? [])].sort((a, b) => {
+    if (hasSite) {
+      const ad = distanceMiles(siteLat, siteLng, a.lat, a.lng);
+      const bd = distanceMiles(siteLat, siteLng, b.lat, b.lng);
+      if (ad !== null && bd !== null && ad !== bd) return ad - bd;
+      if (ad !== null && bd === null) return -1;
+      if (ad === null && bd !== null) return 1;
+    }
+    return saleTime(b) - saleTime(a);
+  });
+}
+
+function soldCompStats(rows) {
+  const caps  = rows.filter(d => d.cap_rate).map(d => +d.cap_rate);
+  const ppus  = rows.filter(d => d.price_per_unit).map(d => +d.price_per_unit);
+  const ppsfs = rows.filter(d => d.price_per_sf).map(d => +d.price_per_sf);
+  const sort  = arr => [...arr].sort((a, b) => a - b);
+  const median = arr => {
+    const s = sort(arr);
+    return s[Math.floor(s.length / 2)];
+  };
+  const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+
+  return {
+    capRate: {
+      avg:    caps.length ? Math.round(avg(caps) * 10000) / 10000 : null,
+      median: caps.length ? Math.round(median(caps) * 10000) / 10000 : null,
+      min:    caps.length ? Math.round(Math.min(...caps) * 10000) / 10000 : null,
+      max:    caps.length ? Math.round(Math.max(...caps) * 10000) / 10000 : null,
+      count:  caps.length,
+    },
+    pricePerUnit: {
+      avg:    ppus.length ? Math.round(avg(ppus)) : null,
+      median: ppus.length ? Math.round(median(ppus)) : null,
+      min:    ppus.length ? Math.min(...ppus) : null,
+      max:    ppus.length ? Math.max(...ppus) : null,
+    },
+    pricePerSf: {
+      avg:    ppsfs.length ? Math.round(avg(ppsfs)) : null,
+      median: ppsfs.length ? Math.round(median(ppsfs)) : null,
+    },
+  };
+}
+
 // GET /api/comps
 router.get('/', async (req, res, next) => {
   try {
@@ -220,44 +277,72 @@ router.get('/submarket/:hood', async (req, res, next) => {
     const siteLat = asNumber(req.query.siteLat);
     const siteLng = asNumber(req.query.siteLng);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 25);
-    const { data, error } = await sb()
+    const exactCutoff = new Date(Date.now() - 730 * 86400000).toISOString().split('T')[0];
+    const fallbackCutoff = new Date(Date.now() - 1825 * 86400000).toISOString().split('T')[0];
+    const client = sb();
+
+    let matchType = 'exact_neighborhood_24_months';
+    let matchLabel = 'exact neighborhood, last 24 months';
+    let { data, error } = await client
       .from('sold_comps')
       .select('*')
       .eq('neighborhood', hood)
-      .gte('sale_date', new Date(Date.now() - 730 * 86400000).toISOString().split('T')[0])
+      .gte('sale_date', exactCutoff)
       .order('sale_date', { ascending: false });
 
     if (error) throw error;
-    if (!data?.length) return res.json({ hood, comps: 0, message: 'No recent comps', recentComps: [] });
 
-    const caps    = data.filter(d => d.cap_rate).map(d => +d.cap_rate);
-    const ppus    = data.filter(d => d.price_per_unit).map(d => +d.price_per_unit);
-    const ppsfs   = data.filter(d => d.price_per_sf).map(d => +d.price_per_sf);
-    const sort    = arr => [...arr].sort((a,b) => a-b);
-    const median  = arr => { const s = sort(arr); return s[Math.floor(s.length/2)]; };
-    const avg     = arr => arr.reduce((a,b) => a+b, 0) / arr.length;
+    if (!data?.length) {
+      const fallback = await client
+        .from('sold_comps')
+        .select('*')
+        .gte('sale_date', fallbackCutoff)
+        .order('sale_date', { ascending: false })
+        .limit(100);
+      if (fallback.error) throw fallback.error;
+      data = fallback.data ?? [];
+      matchType = siteLat !== null && siteLng !== null ? 'nearest_available_60_months' : 'latest_citywide_60_months';
+      matchLabel = siteLat !== null && siteLng !== null ? 'nearest available comps, last 60 months' : 'latest citywide comps, last 60 months';
+    }
+
+    if (!data?.length) {
+      const fallback = await client
+        .from('sold_comps')
+        .select('*')
+        .order('sale_date', { ascending: false })
+        .limit(100);
+      if (fallback.error) throw fallback.error;
+      data = fallback.data ?? [];
+      matchType = siteLat !== null && siteLng !== null ? 'nearest_available_all_dates' : 'latest_citywide_all_dates';
+      matchLabel = siteLat !== null && siteLng !== null ? 'nearest available comps, all dates' : 'latest citywide comps, all dates';
+    }
+
+    if (!data?.length) {
+      return res.json({
+        hood,
+        comps: 0,
+        matchType: 'none',
+        matchLabel: 'no stored sales comps',
+        fallback: false,
+        message: 'No stored sold comps are available yet.',
+        recentComps: [],
+      });
+    }
+
+    const ranked = rankSoldComps(data, siteLat, siteLng);
+    const stats = soldCompStats(ranked);
 
     res.json({
       hood,
-      comps: data.length,
-      capRate: {
-        avg:    caps.length ? Math.round(avg(caps) * 10000) / 10000 : null,
-        median: caps.length ? Math.round(median(caps) * 10000) / 10000 : null,
-        min:    caps.length ? Math.round(Math.min(...caps) * 10000) / 10000 : null,
-        max:    caps.length ? Math.round(Math.max(...caps) * 10000) / 10000 : null,
-        count:  caps.length,
-      },
-      pricePerUnit: {
-        avg:    ppus.length ? Math.round(avg(ppus)) : null,
-        median: ppus.length ? Math.round(median(ppus)) : null,
-        min:    ppus.length ? Math.min(...ppus) : null,
-        max:    ppus.length ? Math.max(...ppus) : null,
-      },
-      pricePerSf: {
-        avg:    ppsfs.length ? Math.round(avg(ppsfs)) : null,
-        median: ppsfs.length ? Math.round(median(ppsfs)) : null,
-      },
-      recentComps: data.slice(0, limit).map(d => mapSoldComp(d, siteLat, siteLng)),
+      comps: ranked.length,
+      matchType,
+      matchLabel,
+      fallback: matchType !== 'exact_neighborhood_24_months',
+      message: matchType === 'exact_neighborhood_24_months'
+        ? 'Exact neighborhood comps found.'
+        : 'No exact recent neighborhood comps were stored, so the report is using ' + matchLabel + '.',
+      ...stats,
+      recentComps: ranked.slice(0, limit).map(d => mapSoldComp(d, siteLat, siteLng)),
     });
   } catch (err) { next(err); }
 });
@@ -270,10 +355,13 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
     const siteLng = asNumber(req.query.siteLng);
     const bedrooms = req.query.bedrooms;
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 25);
+    const client = sb();
 
     const liveComps = await fetchRentcastListings({ hood, siteLat, siteLng, bedrooms, limit });
 
-    const { data, error } = await sb()
+    let matchType = 'exact_neighborhood_benchmarks';
+    let matchLabel = 'exact neighborhood saved rent benchmarks';
+    let { data, error } = await client
       .from('rent_comps')
       .select('*')
       .eq('neighborhood', hood)
@@ -281,16 +369,39 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
       .limit(50);
     if (error) throw error;
 
+    if (!data?.length) {
+      const fallback = await client
+        .from('rent_comps')
+        .select('*')
+        .order('period', { ascending: false })
+        .limit(50);
+      if (fallback.error) throw fallback.error;
+      data = fallback.data ?? [];
+      matchType = 'latest_saved_la_benchmarks';
+      matchLabel = 'latest saved LA rent benchmarks';
+    }
+
     const storedComps = (data ?? []).map(d => mapStoredRentComp(d, siteLat, siteLng));
     const propertyComps = [...liveComps, ...storedComps.filter(c => c.address)].slice(0, limit);
+    const hasRentcast = Boolean(process.env.RENTCAST_API_KEY);
 
     res.json({
       hood,
       source: liveComps.length ? 'rentcast' : 'database',
+      matchType,
+      matchLabel,
       comps: propertyComps.length,
       recentComps: propertyComps,
       marketRents: rentSummary(storedComps),
       benchmarkRows: storedComps.filter(c => !c.address).slice(0, 12),
+      message: propertyComps.length
+        ? 'Property-level rent comps found.'
+        : 'No property-level rent comps were returned; benchmark rents are shown instead.',
+      limiter: propertyComps.length
+        ? ''
+        : hasRentcast
+          ? 'RentCast did not return nearby active apartment listings, and the saved rent table has no property addresses for this area.'
+          : 'RENTCAST_API_KEY is not configured, so the app can only use saved benchmark rents unless property-level comps are added.'
     });
   } catch (err) { next(err); }
 });

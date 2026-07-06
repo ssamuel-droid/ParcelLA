@@ -26,6 +26,7 @@ Pre-underwriting search engine for LA development sites. Every listing is automa
 - 7-factor demand scoring (renter concentration, income/rent, pop density, rent growth, transit, jobs, supply)
 - AI deal narrative — Claude analyzes each site: why it pencils, main risk, what others miss
 - Sold comps database (10 seeded LA transactions, cap rate validation)
+- County recorder comp imports for APN/document-number public-record sales
 - Submarket cap rate view (aggregated from sold comps)
 - LA Open Data integration: LADBS permits, RTI status, zoning, RSO
 - Census ACS: median income, renter %, population density by tract
@@ -92,5 +93,18 @@ POST /api/stripe/checkout
 ## Database setup
 Run `supabase/schema.sql` in Supabase SQL editor. Seeds 27 sites, 40 rent comps, 10 sold comps.
 
+## County recorder comp imports
+Use `docs/county-recorder-comps-template.csv` as the template, then preview with:
+
+```bash
+npm run import:county-comps -- path/to/comps.csv --dry-run
+```
+
+After running the Supabase migration and confirming the preview, import with:
+
+```bash
+npm run import:county-comps -- path/to/comps.csv --commit
+```
+
 ## Stack
-Node.js 18 · Express · Supabase (PostgreSQL + PostGIS) · Puppeteer · Stripe · Resend · Mapbox · Claude API
+Node.js 18 | Express | Supabase (PostgreSQL + PostGIS) | Puppeteer | Stripe | Resend | Mapbox | Claude API

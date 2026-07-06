@@ -354,7 +354,7 @@ function renderDetail(s) {
   setTimeout(async () => {
     const compsEl = g('comps-' + s.id);
     if (!compsEl) return;
-    const comps = await loadComps(s.hood);
+    const comps = await loadComps(s);
     if (!comps || comps.comps === 0) {
       compsEl.innerHTML = '<span style="color:#aaa;font-size:10px">No recent sold comps in this submarket</span>';
       return;
@@ -416,7 +416,7 @@ function renderDetail(s) {
       <tr><td>Soft costs / hard costs</td><td>${softPctHard}%</td></tr>
       <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/unit</td></tr>
     </table>
-    <div style="font-size:9px;color:#999;line-height:1.35;margin:5px 0 8px">The Excel Construction Costs tab includes these budget checks plus % of total cost.</div>
+    <div style="font-size:9px;color:#999;line-height:1.35;margin:5px 0 8px">The Excel Construction Costs tab includes detailed hard and soft cost line items.</div>
     <div class="sh">Valuation</div>
     <table class="ct">
       <tr><td>NOI (stabilized)</td><td>${fmtD(s.noi||0)}</td></tr>
@@ -608,8 +608,14 @@ function rentRowsFromSubmarket(s, submarket) {
 function rentCompPropertyRows(rentComps, s, submarket) {
   const rows = [
     xlsTitleRow('Rent Comps', s.addr),
-    xlsHeaderRow(['Property / Address', 'Distance mi', 'Unit Type', 'Beds', 'Baths', 'Monthly Rent', 'Unit SF', 'Rent / SF', 'Year Built', 'Property Units', 'Amenities / Notes', 'Source', 'Period / Listed', 'URL']),
   ];
+  if (rentComps?.source || rentComps?.matchLabel || rentComps?.message || rentComps?.limiter) {
+    rows.push(xlsRow(['Comp Source', rentComps?.source || '', rentComps?.matchLabel || '']));
+    if (rentComps?.limiter) rows.push(xlsRow(['Limiter', [rentComps.limiter, 'String', 'note']]));
+    rows.push(xlsRow(['']));
+  }
+  rows.push(xlsHeaderRow(['Property / Address', 'Distance mi', 'Unit Type', 'Beds', 'Baths', 'Monthly Rent', 'Unit SF', 'Rent / SF', 'Year Built', 'Property Units', 'Amenities / Notes', 'Source', 'Period / Listed', 'URL']));
+
   const list = rentComps?.recentComps || [];
   if (list.length) {
     list.forEach(c => rows.push(xlsRow([
@@ -629,7 +635,7 @@ function rentCompPropertyRows(rentComps, s, submarket) {
       c.url || '',
     ])));
   } else {
-    rows.push(xlsRow(['No property-level rent comps returned. Market rent benchmarks are shown below.'], 'note'));
+    rows.push(xlsRow([rentComps?.message || 'No property-level rent comps returned. Market rent benchmarks are shown below.'], 'note'));
   }
 
   rows.push(xlsRow(['']));
@@ -649,8 +655,12 @@ function rentCompPropertyRows(rentComps, s, submarket) {
 function salesCompRows(comps) {
   const rows = [
     xlsTitleRow('Sales Comps', comps?.hood || ''),
-    xlsHeaderRow(['Address', 'Distance mi', 'Neighborhood', 'Sale Date', 'Sale Price', 'Units', 'Avg Unit SF', 'Year Built', 'Cap Rate %', 'Price / Unit', 'Price / SF', 'NOI', 'Project Type', 'Buyer', 'Seller', 'Source', 'Amenities / Notes']),
   ];
+  if (comps?.matchLabel) {
+    rows.push(xlsRow(['Match Used', comps.matchLabel, comps.message || ''], comps?.fallback ? 'note' : ''));
+    rows.push(xlsRow(['']));
+  }
+  rows.push(xlsHeaderRow(['Address', 'Distance mi', 'Neighborhood', 'Sale Date', 'Sale Price', 'Price Method', 'Confidence', 'Units', 'Avg Unit SF', 'Year Built', 'Cap Rate %', 'Price / Unit', 'Price / SF', 'NOI', 'Project Type', 'Buyer', 'Seller', 'Source', 'APN', 'Recorder Doc #', 'Transfer Tax', 'Amenities / Notes']));
   const list = comps?.recentComps || [];
   if (!list.length) {
     rows.push(xlsRow(['No recent sold comps returned for this submarket'], 'note'));
@@ -661,6 +671,8 @@ function salesCompRows(comps) {
       c.neighborhood || '',
       fmtCompDate(c.saleDate),
       cellMoney(c.salePrice),
+      c.salePriceMethod || '',
+      c.priceConfidence || '',
       cellNumber(c.units),
       cellNumber(c.avgUnitSf),
       cellNumber(c.yearBuilt),
@@ -672,6 +684,9 @@ function salesCompRows(comps) {
       c.buyer || '',
       c.seller || '',
       c.source || '',
+      c.apn || '',
+      c.recorderDocumentNumber || '',
+      cellMoney(c.transferTax),
       [c.amenities || c.notes || '', 'String', 'note'],
     ])));
   }
@@ -686,6 +701,100 @@ function salesCompRows(comps) {
   return rows;
 }
 
+function costPct(amount, total) {
+  return total ? Math.round((amount / total) * 1000) / 10 : 0;
+}
+
+function costPerSf(amount, totalSF) {
+  return totalSF ? Math.round(amount / totalSF) : 0;
+}
+
+function costPerUnit(amount, units) {
+  return units ? Math.round(amount / units) : 0;
+}
+
+function allocateCostSchedule(total, items) {
+  const active = items.filter(item => item.weight > 0);
+  const weightTotal = active.reduce((sum, item) => sum + item.weight, 0) || 1;
+  let used = 0;
+  return active.map((item, index) => {
+    const amount = index === active.length - 1
+      ? Math.max(0, Math.round(total - used))
+      : Math.round(total * item.weight / weightTotal);
+    used += amount;
+    return { ...item, amount, pct: costPct(amount, total) };
+  });
+}
+
+function hardCostLineItems(s) {
+  const units = s.units || 0;
+  const mixedUse = s.type === 'Mixed-Use';
+  const condo = s.type === 'Condo/TH';
+  return [
+    { name: 'Sitework / demolition', weight: s.demo ? 5 : 3, note: s.demo ? 'Demo, clearing, haul-off, erosion control' : 'Site prep, grading, utility potholing' },
+    { name: 'Foundation / concrete', weight: 8, note: 'Footings, slab, podium/concrete allowances' },
+    { name: 'Framing / structure', weight: condo ? 14 : 13, note: 'Wood/steel framing, sheathing, structural hardware' },
+    { name: 'Exterior envelope', weight: 7, note: 'Stucco/siding, waterproofing, facade assemblies' },
+    { name: 'Roofing / waterproofing', weight: 3, note: 'Roof membrane, drainage, flashing' },
+    { name: 'Windows / exterior doors', weight: 4, note: 'Windows, storefront if applicable, exterior doors' },
+    { name: 'Plumbing', weight: 8, note: 'Rough plumbing, fixtures, water heaters, sewer tie-in' },
+    { name: 'Electrical', weight: 8, note: 'Service, panels, rough electrical, lighting, low voltage' },
+    { name: 'HVAC', weight: 7, note: 'Heating/cooling systems, ducting or mini-splits, ventilation' },
+    { name: 'Fire / life safety', weight: units >= 5 ? 3 : 1, note: 'Sprinklers, alarms, emergency lighting, code systems' },
+    { name: 'Elevator / vertical transport', weight: units >= 20 ? 4 : 0, note: 'Elevator allowance for larger multifamily projects' },
+    { name: 'Insulation / drywall', weight: 6, note: 'Batt/rigid insulation, drywall, taping, acoustic treatment' },
+    { name: 'Interior finishes', weight: 12, note: 'Flooring, paint, tile, counters, unit finishes' },
+    { name: 'Cabinets / appliances', weight: 4, note: 'Kitchen/bath cabinets and appliance packages' },
+    { name: 'Common areas / amenities', weight: units >= 10 ? 3 : 1, note: 'Lobby, corridors, mail, trash, amenity spaces' },
+    { name: 'Commercial shell / TI allowance', weight: mixedUse ? 4 : 0, note: 'Ground-floor retail or commercial shell allowance' },
+    { name: 'Landscaping / site improvements', weight: 3, note: 'Hardscape, planting, fencing, lighting, parking' },
+    { name: 'GC general conditions / OH&P', weight: 7, note: 'Supervision, temporary facilities, insurance, contractor OH/profit' },
+    { name: 'Hard-cost contingency', weight: 5, note: 'Design development and construction contingency' },
+  ];
+}
+
+function softCostLineItems() {
+  return [
+    { name: 'Architecture / design', weight: 13, note: 'Architectural design, drawings, entitlement support' },
+    { name: 'Engineering consultants', weight: 8, note: 'Structural, MEP, civil, soils, survey consultants' },
+    { name: 'Permits / plan check', weight: 9, note: 'LADBS plan check, permits, inspection fees' },
+    { name: 'Impact / school / utility fees', weight: 10, note: 'School fees, utility connection, sewer/water fees' },
+    { name: 'Legal / title / escrow', weight: 5, note: 'Closing, title, legal, entity, transaction counsel' },
+    { name: 'Insurance / bonds', weight: 4, note: 'Builder risk, GL, bonds and other project insurance' },
+    { name: 'Taxes during construction', weight: 7, note: 'Property taxes and assessments during hold period' },
+    { name: 'Construction management', weight: 8, note: 'Owner rep, PM, inspections, third-party reports' },
+    { name: 'Lender / appraisal / third party', weight: 5, note: 'Appraisal, environmental, lender diligence, closing fees' },
+    { name: 'Developer fee', weight: 15, note: 'Sponsor/developer fee allowance' },
+    { name: 'Marketing / lease-up', weight: 5, note: 'Pre-leasing, signage, photography, concessions allowance' },
+    { name: 'Soft-cost contingency', weight: 11, note: 'Soft cost contingency and unallocated reserves' },
+  ];
+}
+
+function carryCostLineItems() {
+  return [
+    { name: 'Construction interest reserve', weight: 55, note: 'Interest reserve during construction and stabilization' },
+    { name: 'Loan origination / exit fees', weight: 15, note: 'Origination, extension, exit and admin fees' },
+    { name: 'Property tax carry', weight: 15, note: 'Taxes not already carried in soft costs' },
+    { name: 'Operating / lease-up carry', weight: 10, note: 'Pre-stabilization operating shortfall' },
+    { name: 'Financing contingency', weight: 5, note: 'Rate, timing and draw schedule contingency' },
+  ];
+}
+
+function pushCostSchedule(rows, title, total, schedule, totalSF, units) {
+  rows.push(xlsRow(['']));
+  rows.push(xlsSectionRow(title));
+  rows.push(xlsHeaderRow(['Line Item', '%', 'Cost', '$ / SF', '$ / Unit', 'Validation / Notes']));
+  schedule.forEach(item => rows.push(xlsRow([
+    item.name,
+    cellPct(item.pct),
+    cellMoney(item.amount),
+    totalSF ? cellMoney(costPerSf(item.amount, totalSF)) : '',
+    units ? cellMoney(costPerUnit(item.amount, units)) : '',
+    [item.note || '', 'String', 'note'],
+  ])));
+  rows.push(xlsRow([title + ' Total', cellPct(100), cellMoney(total), totalSF ? cellMoney(costPerSf(total, totalSF)) : '', units ? cellMoney(costPerUnit(total, units)) : '', 'Subtotal'], 'section'));
+}
+
 function constructionCostRows(s, tc, land) {
   const units = s.units || 0;
   const avgUnitSf = s.usf || 800;
@@ -695,36 +804,51 @@ function constructionCostRows(s, tc, land) {
   const carryCost = Math.round(s.carryCost ?? Math.max(0, (tc - land) * 0.18));
   const loan = Math.round(s.loanAmount ?? tc * 0.65);
   const equity = Math.round(s.equity ?? tc * 0.35);
-  const hardPerSf = totalSF ? Math.round(hardCosts / totalSF) : 0;
-  const hardPerUnit = units ? Math.round(hardCosts / units) : 0;
-  const totalPerSf = totalSF ? Math.round(tc / totalSF) : 0;
-  const totalPerUnit = units ? Math.round(tc / units) : 0;
+  const hardPerSf = costPerSf(hardCosts, totalSF);
+  const hardPerUnit = costPerUnit(hardCosts, units);
+  const softPerSf = costPerSf(softCosts, totalSF);
+  const softPerUnit = costPerUnit(softCosts, units);
+  const carryPerSf = costPerSf(carryCost, totalSF);
+  const carryPerUnit = costPerUnit(carryCost, units);
+  const totalPerSf = costPerSf(tc, totalSF);
+  const totalPerUnit = costPerUnit(tc, units);
   const softPctHard = hardCosts ? Math.round((softCosts / hardCosts) * 1000) / 10 : 0;
-  return [
+  const hardSchedule = allocateCostSchedule(hardCosts, hardCostLineItems(s));
+  const softSchedule = allocateCostSchedule(softCosts, softCostLineItems());
+  const carrySchedule = allocateCostSchedule(carryCost, carryCostLineItems());
+  const rows = [
     xlsTitleRow('Construction Cost Validation', s.addr),
     xlsRow(['Project Type', s.type || '']),
     xlsRow(['Units', cellNumber(units)]),
     xlsRow(['Avg Unit SF', cellNumber(avgUnitSf)]),
     xlsRow(['Total Net Rentable SF', cellNumber(totalSF)]),
+    xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current budget, not a contractor bid. Replace with GC pricing when available.', 'String', 'note']]),
     xlsRow(['']),
-    xlsHeaderRow(['Line Item', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
-    xlsRow(['Land Cost', cellMoney(Math.round(land)), totalSF ? cellMoney(Math.round(land / totalSF)) : '', units ? cellMoney(Math.round(land / units)) : '', tc ? cellPct(Math.round(land / tc * 1000) / 10) : '', 'Purchase price or imputed land basis']),
-    xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), tc ? cellPct(Math.round(hardCosts / tc * 1000) / 10) : '', 'RSMeans-style LA benchmark by project type']),
-    xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(Math.round(softCosts / totalSF)) : '', units ? cellMoney(Math.round(softCosts / units)) : '', tc ? cellPct(Math.round(softCosts / tc * 1000) / 10) : '', 'Permits, A&E, legal, contingency, developer fee']),
-    xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(Math.round(carryCost / totalSF)) : '', units ? cellMoney(Math.round(carryCost / units)) : '', tc ? cellPct(Math.round(carryCost / tc * 1000) / 10) : '', 'Construction interest, loan fees, tax carry']),
+    xlsHeaderRow(['Budget Category', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
+    xlsRow(['Land Cost', cellMoney(Math.round(land)), totalSF ? cellMoney(costPerSf(land, totalSF)) : '', units ? cellMoney(costPerUnit(land, units)) : '', tc ? cellPct(costPct(land, tc)) : '', 'Purchase price or imputed land basis']),
+    xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), tc ? cellPct(costPct(hardCosts, tc)) : '', 'Detailed schedule below: HVAC, framing, plumbing, electrical, etc.']),
+    xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(softPerSf) : '', units ? cellMoney(softPerUnit) : '', tc ? cellPct(costPct(softCosts, tc)) : '', 'A&E, permits, fees, legal, developer fee, contingency']),
+    xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(carryPerSf) : '', units ? cellMoney(carryPerUnit) : '', tc ? cellPct(costPct(carryCost, tc)) : '', 'Interest reserve, loan fees, taxes and lease-up carry']),
     xlsRow(['Total All-In Cost', cellMoney(Math.round(tc)), cellMoney(totalPerSf), cellMoney(totalPerUnit), cellPct(100), 'Total underwriting basis'], 'section'),
-    xlsRow(['']),
-    xlsSectionRow('Financing Metrics'),
-    xlsRow(['Construction Loan', cellMoney(loan), totalSF ? cellMoney(Math.round(loan / totalSF)) : '', units ? cellMoney(Math.round(loan / units)) : '', tc ? cellPct(Math.round(loan / tc * 1000) / 10) : '', 'Assumes 65% loan-to-cost unless model overrides']),
-    xlsRow(['Equity Required', cellMoney(equity), totalSF ? cellMoney(Math.round(equity / totalSF)) : '', units ? cellMoney(Math.round(equity / units)) : '', tc ? cellPct(Math.round(equity / tc * 1000) / 10) : '', 'Borrower cash / sponsor equity']),
-    xlsRow(['']),
-    xlsSectionRow('Benchmark Checks'),
-    xlsRow(['Hard Cost / SF', cellMoney(hardPerSf), '', '', '', 'Primary construction-cost reasonableness check']),
-    xlsRow(['Hard Cost / Unit', cellMoney(hardPerUnit), '', '', '', 'Useful for comparing similar unit-count projects']),
-    xlsRow(['Soft Costs / Hard Costs %', cellPct(softPctHard), '', '', '', 'Soft costs commonly underwritten as % of hard costs']),
-    xlsRow(['Total Cost / SF', cellMoney(totalPerSf), '', '', '', 'All-in basis including land, soft costs, carry']),
-    xlsRow(['Total Cost / Unit', cellMoney(totalPerUnit), '', '', '', 'All-in basis per delivered unit']),
   ];
+
+  pushCostSchedule(rows, 'Hard Cost Schedule', hardCosts, hardSchedule, totalSF, units);
+  pushCostSchedule(rows, 'Soft Cost Schedule', softCosts, softSchedule, totalSF, units);
+  pushCostSchedule(rows, 'Financing / Carry Schedule', carryCost, carrySchedule, totalSF, units);
+
+  rows.push(xlsRow(['']));
+  rows.push(xlsSectionRow('Financing Metrics'));
+  rows.push(xlsRow(['Construction Loan', cellMoney(loan), totalSF ? cellMoney(costPerSf(loan, totalSF)) : '', units ? cellMoney(costPerUnit(loan, units)) : '', tc ? cellPct(costPct(loan, tc)) : '', 'Assumes 65% loan-to-cost unless model overrides']));
+  rows.push(xlsRow(['Equity Required', cellMoney(equity), totalSF ? cellMoney(costPerSf(equity, totalSF)) : '', units ? cellMoney(costPerUnit(equity, units)) : '', tc ? cellPct(costPct(equity, tc)) : '', 'Borrower cash / sponsor equity']));
+  rows.push(xlsRow(['']));
+  rows.push(xlsSectionRow('Benchmark Checks'));
+  rows.push(xlsRow(['Hard Cost / SF', cellMoney(hardPerSf), '', '', '', 'Primary construction-cost reasonableness check']));
+  rows.push(xlsRow(['Hard Cost / Unit', cellMoney(hardPerUnit), '', '', '', 'Useful for comparing similar unit-count projects']));
+  rows.push(xlsRow(['Soft Cost / SF', cellMoney(softPerSf), '', '', '', 'Soft-cost basis check']));
+  rows.push(xlsRow(['Soft Costs / Hard Costs %', cellPct(softPctHard), '', '', '', 'Soft costs commonly underwritten as a % of hard costs']));
+  rows.push(xlsRow(['Total Cost / SF', cellMoney(totalPerSf), '', '', '', 'All-in basis including land, soft costs, carry']));
+  rows.push(xlsRow(['Total Cost / Unit', cellMoney(totalPerUnit), '', '', '', 'All-in basis per delivered unit']));
+  return rows;
 }
 
 function pencilCheckRows(s, m) {
@@ -873,8 +997,8 @@ async function exportExcel(id) {
     xlsSheet('Underwriting', underwritingRows, [190, 130, 120, 120, 280]) +
     xlsSheet('Rent Roll', rentRows, [160, 120, 100, 120, 130, 130]) +
     xlsSheet('Rent Comps', rentCompPropertyRows(rentComps, s, submarket), [260, 80, 90, 70, 70, 120, 90, 90, 90, 100, 260, 100, 120, 220]) +
-    xlsSheet('Sales Comps', salesCompRows(comps), [220, 80, 130, 100, 120, 70, 90, 90, 90, 110, 100, 120, 120, 130, 130, 100, 260]) +
-    xlsSheet('Construction Costs', constructionCostRows(s, tc, land), [190, 130, 110, 110, 110, 280]) +
+    xlsSheet('Sales Comps', salesCompRows(comps), [220, 80, 130, 100, 120, 115, 85, 70, 90, 90, 90, 110, 100, 120, 120, 130, 130, 100, 120, 130, 100, 260]) +
+    xlsSheet('Construction Costs', constructionCostRows(s, tc, land), [240, 100, 130, 110, 110, 320]) +
     xlsSheet('Cash Flow', cashFlowRows, [80, 130, 130, 150, 130, 130, 150]) +
     xlsSheet('Sensitivity', sensitivityRows, [150, 130, 130, 130, 280]) +
     '</Workbook>';

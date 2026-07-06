@@ -206,10 +206,19 @@ CREATE TABLE sold_comps (
   seller          TEXT,
   source          TEXT DEFAULT 'manual',
   notes           TEXT,
+  apn             TEXT,
+  recorder_document_number TEXT,
+  document_type   TEXT,
+  transfer_tax    NUMERIC,
+  sale_price_confidence TEXT,
+  sale_price_method TEXT,
+  raw_record      JSONB,
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX sold_comps_hood_idx  ON sold_comps(neighborhood);
 CREATE INDEX sold_comps_date_idx  ON sold_comps(sale_date DESC);
+CREATE UNIQUE INDEX sold_comps_recorder_document_number_uidx ON sold_comps(recorder_document_number);
+CREATE INDEX sold_comps_apn_idx ON sold_comps(apn);
 CREATE INDEX sold_comps_type_idx  ON sold_comps(project_type);
 CREATE INDEX sold_comps_geom_idx  ON sold_comps USING GIST(geom);
 
