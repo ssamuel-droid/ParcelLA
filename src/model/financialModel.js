@@ -60,6 +60,11 @@ export function calcHardCosts(projectType, totalSF, overridePerSF = null) {
  */
 export function runModel(site, overrides = {}) {
   const cfg = { ...DEFAULTS, ...overrides };
+  if (overrides.hcpsf != null && overrides.hardCostPerSF == null) cfg.hardCostPerSF = +overrides.hcpsf;
+  if (overrides.sc != null && overrides.softPct == null) cfg.softPct = +overrides.sc / 100;
+  if (overrides.rate != null && overrides.interestRate == null) cfg.interestRate = +overrides.rate;
+  if (overrides.months != null && overrides.constructionMo == null) cfg.constructionMo = +overrides.months;
+  if (overrides.ltc != null) cfg.ltc = +overrides.ltc;
   const { hood, type, price, units, avgUnitSF, hasDemo, unitMix } = site;
 
   const R   = RENTS[hood] ?? RENTS['Koreatown'];  // fallback to Koreatown if hood not found
@@ -68,7 +73,8 @@ export function runModel(site, overrides = {}) {
   const totalSF = units * avgUnitSF;
 
   // ── COSTS ──────────────────────────────────────────────────────────────────
-  const hardCosts    = calcHardCosts(type, totalSF, overrides.hardCostPerSF);
+  const hardCostOverride = cfg.hardCostPerSF != null ? +cfg.hardCostPerSF : null;
+  const hardCosts    = calcHardCosts(type, totalSF, hardCostOverride);
   const softCosts    = hardCosts * cfg.softPct;
   const demolition   = hasDemo ? cfg.demolitionCost : 0;
   // Size loan on pre-carry cost basis (standard construction loan sizing)

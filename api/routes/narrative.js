@@ -19,9 +19,21 @@ function sb() {
 }
 
 function modelFromSupabaseSite(s) {
+  const totalCost = s.total_cost || 0;
+  const price = s.price || 0;
+  const interestCarryPct = 0.65 * 0.065 * 1.5; // 65% LTC, 6.5%, 18 months
+  const preCarryCost = totalCost > 0 ? totalCost / (1 + interestCarryPct) : 0;
+  const verticalBudget = Math.max(0, preCarryCost - price);
+  const hardFallback = verticalBudget / 1.18; // soft costs assumed at 18% of hard costs
+  const softFallback = hardFallback * 0.18;
+  const carryFallback = Math.max(0, totalCost - preCarryCost);
+  const hardCosts = s.hard_costs ?? s.hardCosts ?? hardFallback;
+  const softCosts = s.soft_costs ?? s.softCosts ?? softFallback;
+  const carryCost = s.carry_cost ?? s.carryCost ?? carryFallback;
+
   return {
     noi:           s.noi          || 0,
-    totalCost:     s.total_cost   || 0,
+    totalCost,
     exitValue:     s.exit_value   || 0,
     exitProceeds:  s.net_profit   || 0,
     netProfit:     s.net_profit   || 0,
@@ -29,14 +41,13 @@ function modelFromSupabaseSite(s) {
     capRateOnCost: (s.cap_on_cost   || 0) / 100,
     devSpreadPct:  (s.dev_spread_pct || 0) / 100,
     marketCapRate: s.entry_cap_rate || 0.0500,
-    price:         s.price        || 0,
-    hardCosts:     (s.total_cost  || 0) * 0.55,
-    softCosts:     (s.total_cost  || 0) * 0.22,
-    carryCost:     (s.total_cost  || 0) * 0.12,
-    loanAmount:    (s.total_cost  || 0) * 0.65,
-    equity:        (s.total_cost  || 0) * 0.35,
-    equityMultiple: (s.total_cost || 0) > 0
-      ? ((s.exit_value || 0) / ((s.total_cost || 1) * 0.35)) : 0,
+    price,
+    hardCosts,
+    softCosts,
+    carryCost,
+    loanAmount:    totalCost * 0.65,
+    equity:        totalCost * 0.35,
+    equityMultiple: totalCost > 0 ? ((s.exit_value || 0) / (totalCost * 0.35)) : 0,
   };
 }
 

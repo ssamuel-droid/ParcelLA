@@ -63,80 +63,39 @@ const g = id => document.getElementById(id);
 
 document.getElementById('app').innerHTML = `<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Inter',system-ui,sans-serif;background:#f4f4f4;color:#1a1a1a;height:100vh;overflow:hidden}
-.nav{background:#0f1f3d;padding:0 20px;height:52px;display:flex;align-items:center;gap:12px;position:fixed;top:0;left:0;right:0;z-index:100}
-.logo{font-size:16px;font-weight:700;color:#fff;letter-spacing:-0.5px;flex-shrink:0}.logo span{color:#c49a3c}
-.ntag{font-size:10px;color:rgba(255,255,255,0.4);letter-spacing:0.5px}
-.nav-r{margin-left:auto;display:flex;align-items:center;gap:6px}
-.adot{width:7px;height:7px;border-radius:50%;background:#ef9f27}.adot.ok{background:#1d9e75}
-.albl{font-size:10px;color:rgba(255,255,255,0.55)}
-.layout{display:flex;height:calc(100vh - 52px);margin-top:52px;width:100%;min-width:0}
-.sb{width:210px;background:#fff;border-right:1px solid #e8e8e8;display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
-.sb-body{overflow-y:auto;flex:1;padding:14px}
-.sb h4{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:#bbb;margin:12px 0 6px}.sb h4:first-child{margin-top:0}
-.cb{display:flex;align-items:center;gap:5px;font-size:11px;color:#555;margin-bottom:4px;cursor:pointer}
-.cb input{accent-color:#0f1f3d;width:12px;height:12px}
-.sbs{width:100%;padding:5px 7px;border:1px solid #e8e8e8;border-radius:5px;font-size:11px;margin-bottom:5px;background:#fafafa}
-.sb2{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:5px}
-.sb2 input{width:100%;padding:5px 7px;border:1px solid #e8e8e8;border-radius:5px;font-size:11px;background:#fafafa;text-align:right}
-.sbf{padding:10px 14px;border-top:1px solid #e8e8e8}
-.bp{width:100%;padding:8px;background:#0f1f3d;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin-bottom:4px}
-.br{width:100%;padding:6px;background:transparent;color:#aaa;border:1px solid #e8e8e8;border-radius:6px;font-size:11px;cursor:pointer}
-.main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
-.mfb{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:10px 14px;background:#fff;border-bottom:1px solid #e8e8e8;flex-shrink:0}
-.mf{background:#fafafa;border:1px solid #e8e8e8;border-radius:7px;padding:7px 9px}
-.mfl{font-size:8px;color:#bbb;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:4px}
-.mfr{display:flex;align-items:center;gap:3px}
-.mfr input{flex:1;font-size:11px;padding:3px 4px;border:1px solid #e8e8e8;border-radius:4px;background:#fff;text-align:right;min-width:0}
-.mfr span{font-size:9px;color:#bbb;flex-shrink:0}
-.tb{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:#fff;border-bottom:1px solid #e8e8e8;flex-shrink:0}
-.tbl{font-size:12px;font-weight:600;color:#333}
-.ss{font-size:11px;padding:5px 8px;border:1px solid #e8e8e8;border-radius:5px;background:#fff}
-.list{flex:1;overflow-y:auto;padding:12px 14px}
-.card{background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:13px 15px;margin-bottom:8px;cursor:pointer;transition:border-color 0.1s,box-shadow 0.1s;min-width:0}
-.card:hover{border-color:#c49a3c;box-shadow:0 2px 8px rgba(0,0,0,0.06)}.card.sel{border-color:#0f1f3d;border-width:2px}
-.ch{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px}
-.ca{font-size:13px;font-weight:600;overflow-wrap:anywhere}.cp{font-size:12px;font-weight:600;color:#0f1f3d;text-align:right;white-space:nowrap}
-.cm{font-size:10px;color:#aaa;margin-bottom:6px}
-.bdgs{display:flex;gap:3px;flex-wrap:wrap;margin-bottom:7px}
-.bdg{font-size:8px;padding:2px 6px;border-radius:100px;font-weight:600}
-.b1{background:#e1f5ee;color:#085041}.b2{background:#e6f1fb;color:#0c447c}.b3{background:#f5f0e8;color:#666}.b4{background:#faeeda;color:#854f0b}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:7px}
-.kp{background:#f8f8f8;border-radius:5px;padding:5px 7px}
-.kpl{font-size:8px;color:#aaa;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:2px}.kpv{font-size:12px;font-weight:600}
-.pb{display:flex;align-items:center;gap:7px}
-.pbl{font-size:10px;color:#aaa;min-width:62px}.pbt{flex:1;height:5px;background:#f0f0f0;border-radius:3px;overflow:hidden}
-.pbf{height:100%;border-radius:3px}.pbv{font-size:10px;font-weight:600;min-width:58px;text-align:right}
-.empty{text-align:center;padding:60px 20px;color:#aaa;font-size:12px}
-.sw{text-align:center;padding:60px;color:#aaa;font-size:12px}
-.spin{width:28px;height:28px;border:3px solid #f0f0f0;border-top-color:#0f1f3d;border-radius:50%;animation:sp 0.8s linear infinite;margin:0 auto 10px}
-@keyframes sp{to{transform:rotate(360deg)}}
-.detail{position:fixed;right:0;top:52px;width:min(390px,100vw);max-width:100vw;height:calc(100vh - 52px);background:#fff;border-left:1px solid #e8e8e8;overflow-y:auto;overflow-x:hidden;transform:translateX(100%);transition:transform 0.2s;z-index:50;box-shadow:-4px 0 24px rgba(0,0,0,0.1)}
-.detail.open{transform:translateX(0)}
-.dh{padding:10px 12px;border-bottom:1px solid #e8e8e8;display:flex;align-items:center;justify-content:space-between;gap:8px;position:sticky;top:0;background:#fff;z-index:2}
-.dht{font-size:12px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dha{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0;max-width:176px}
-.da{padding:4px 8px;font-size:9px;font-weight:600;border:1px solid #e8e8e8;border-radius:4px;cursor:pointer;background:#fff;color:#555;white-space:nowrap}
-.da.p{background:#0f1f3d;color:#fff;border-color:#0f1f3d}
-.dhx{background:none;border:none;font-size:18px;cursor:pointer;color:#aaa;padding:0 2px;flex-shrink:0}
-.db{padding:14px;max-width:100%;overflow-x:hidden}
-.sh{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.7px;color:#bbb;margin:12px 0 7px}.sh:first-child{margin-top:0}
-.ig{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px}
-.ic{background:#f8f8f8;border-radius:6px;padding:6px 8px;min-width:0}.icl{font-size:8px;color:#aaa;margin-bottom:2px}.icv{font-size:11px;font-weight:600;overflow-wrap:anywhere}
-.mbg{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:5px}
-.mb{background:#f8f8f8;border-radius:6px;padding:8px 10px;border-left:3px solid #ddd}
-.mbl{font-size:8px;color:#aaa;margin-bottom:2px}.mbv{font-size:15px;font-weight:700}.mbs{font-size:8px;color:#aaa;margin-top:2px}
-.ct{width:100%;font-size:11px;border-collapse:collapse;table-layout:fixed}
-.ct td{padding:4px 0;border-bottom:0.5px solid #f0f0f0;overflow-wrap:anywhere}.ct td:last-child{text-align:right;font-weight:600}
-.ct tr.tot td{font-weight:700;border-top:1px solid #ddd;border-bottom:none;padding-top:6px}
-.wfr{margin-bottom:4px}.wfl{display:flex;justify-content:space-between;font-size:9px;color:#666;margin-bottom:2px}
-.wft{height:9px;background:#f0f0f0;border-radius:2px;overflow:hidden}.wff{height:100%;border-radius:2px}
-.nb{background:#fffbf0;border:1px solid #f0e0b0;border-left:3px solid #c49a3c;border-radius:7px;padding:11px 13px;font-size:11px;line-height:1.7;color:#444;margin-top:6px}
-.gb{padding:7px 12px;background:#c49a3c;color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;margin-top:7px}
-.ab{width:100%;max-width:100%;padding:9px;border:none;border-radius:7px;font-size:12px;line-height:1.25;font-weight:600;cursor:pointer;margin-top:6px;white-space:normal;overflow-wrap:anywhere}
-.ap{background:#0f1f3d;color:#fff}.as{background:transparent;color:#0f1f3d;border:1px solid #0f1f3d}
-@media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}}
-@media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:52px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:12px}.kpis,.ig,.mbg{grid-template-columns:1fr}}
+:root{--navy:#0f1f3d;--navy2:#172b52;--gold:#b98b2f;--green:#1d9e75;--red:#d94b4b;--amber:#ef9f27;--blue:#378add;--ink:#1b2533;--muted:#6f7b8c;--line:#dfe5ec;--panel:#ffffff;--soft:#f3f6f9;--soft2:#e9eef4}
+body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink);height:100vh;overflow:hidden}
+.nav{background:linear-gradient(90deg,var(--navy),#172b52);padding:0 16px;height:48px;display:flex;align-items:center;gap:12px;position:fixed;top:0;left:0;right:0;z-index:100;box-shadow:0 1px 8px rgba(15,31,61,0.18)}
+.logo{font-size:16px;font-weight:800;color:#fff;letter-spacing:0;flex-shrink:0}.logo span{color:var(--gold)}
+.ntag{font-size:10px;color:rgba(255,255,255,0.62);letter-spacing:0;text-transform:uppercase}.nav-r{margin-left:auto;display:flex;align-items:center;gap:7px}
+.adot{width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 3px rgba(239,159,39,0.18)}.adot.ok{background:var(--green);box-shadow:0 0 0 3px rgba(29,158,117,0.18)}.albl{font-size:10px;color:rgba(255,255,255,0.7)}
+.layout{display:flex;height:calc(100vh - 48px);margin-top:48px}
+.sb{width:230px;background:#fbfcfd;border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.sb-body{overflow-y:auto;flex:1;padding:10px 12px}.sb h4{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0;color:#8a96a8;margin:11px 0 5px}.sb h4:first-child{margin-top:0}
+.cb{display:flex;align-items:center;gap:6px;font-size:11px;color:#3f4a5a;margin-bottom:3px;cursor:pointer;line-height:1.25}.cb input{accent-color:var(--navy);width:12px;height:12px}
+.sbs{width:100%;padding:5px 7px;border:1px solid var(--line);border-radius:6px;font-size:11px;margin-bottom:5px;background:#fff;color:var(--ink)}
+.sb2{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:5px}.sb2 input{width:100%;padding:5px 7px;border:1px solid var(--line);border-radius:6px;font-size:11px;background:#fff;text-align:right;color:var(--ink)}
+.sbf{padding:9px 12px;border-top:1px solid var(--line);background:#fff}.bp{width:100%;padding:8px;background:var(--navy);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;margin-bottom:5px}.bp:hover{background:var(--navy2)}
+.br{width:100%;padding:6px;background:#fff;color:#687485;border:1px solid var(--line);border-radius:6px;font-size:11px;cursor:pointer}.br:hover{border-color:#b8c2cf;color:var(--ink)}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}.mfb{display:grid;grid-template-columns:repeat(5,minmax(118px,1fr));gap:6px;padding:8px 10px;background:#f8fafc;border-bottom:1px solid var(--line);flex-shrink:0}
+.mf{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 8px}.mf.active{border-color:var(--gold);box-shadow:inset 0 0 0 1px rgba(185,139,47,.25);background:#fffdf7}.mfl{font-size:8px;color:#778397;text-transform:uppercase;letter-spacing:0;margin-bottom:4px;font-weight:800}.mfr{display:flex;align-items:center;gap:4px}.mfr input{flex:1;font-size:11px;padding:3px 4px;border:1px solid var(--line);border-radius:5px;background:#fff;text-align:right;min-width:0}.mfr span{font-size:9px;color:#8994a5;flex-shrink:0}.mfa{padding:4px 6px;border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:5px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.mfa.clear{border-color:var(--line);background:#fff;color:#687485}.override-note{font-size:10px;color:#7f8a9a;font-weight:700;margin-left:8px}
+.tb{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:#fff;border-bottom:1px solid var(--line);flex-shrink:0}.tbl{font-size:12px;font-weight:800;color:#243044}.ss{font-size:11px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+.list{flex:1;overflow-y:auto;padding:8px 10px}.card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:border-color 0.12s,box-shadow 0.12s,transform 0.12s;min-width:0}
+.card:hover{border-color:var(--gold);box-shadow:0 2px 10px rgba(20,32,52,0.07);transform:translateY(-1px)}.card.sel{border-color:var(--navy);box-shadow:inset 3px 0 0 var(--navy),0 2px 10px rgba(15,31,61,0.08)}
+.ch{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;gap:12px}.ca{font-size:13px;font-weight:800;overflow-wrap:anywhere}.cp{font-size:12px;font-weight:800;color:var(--navy);text-align:right;white-space:nowrap}.cm{font-size:10px;color:#768295;margin-top:2px;margin-bottom:5px;line-height:1.25}
+.bdgs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}.bdg{font-size:8px;padding:2px 6px;border-radius:999px;font-weight:800}.b1{background:#e1f5ee;color:#085041}.b2{background:#e6f1fb;color:#0c447c}.b3{background:#edf1f5;color:#536071}.b4{background:#faeeda;color:#854f0b}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:6px}.kp{background:#f6f8fa;border:1px solid #edf1f4;border-radius:6px;padding:4px 6px}.kpl{font-size:8px;color:#7f8a9a;text-transform:uppercase;letter-spacing:0;margin-bottom:1px;font-weight:800}.kpv{font-size:12px;font-weight:800;white-space:nowrap}
+.pb{display:flex;align-items:center;gap:7px}.pbl{font-size:10px;color:#7f8a9a;min-width:62px}.pbt{flex:1;height:5px;background:#edf1f5;border-radius:3px;overflow:hidden}.pbf{height:100%;border-radius:3px}.pbv{font-size:10px;font-weight:800;min-width:58px;text-align:right;white-space:nowrap}
+.empty{text-align:center;padding:34px 16px;color:#7f8a9a;font-size:12px}.sw{text-align:center;padding:34px;color:#7f8a9a;font-size:12px}.spin{width:26px;height:26px;border:3px solid #e7edf4;border-top-color:var(--navy);border-radius:50%;animation:sp 0.8s linear infinite;margin:0 auto 9px}@keyframes sp{to{transform:rotate(360deg)}}
+.detail{position:fixed;right:0;top:48px;width:min(560px,46vw);max-width:100vw;height:calc(100vh - 48px);background:#fff;border-left:1px solid var(--line);overflow-y:auto;overflow-x:hidden;transform:translateX(100%);transition:transform 0.2s;z-index:50;box-shadow:-10px 0 30px rgba(15,31,61,0.14)}.detail.open{transform:translateX(0)}
+.dh{padding:9px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#fff;z-index:2}.dht{font-size:12px;font-weight:800;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px}.dha{display:flex;gap:5px;flex-shrink:0}.da{padding:5px 8px;font-size:9px;font-weight:800;border:1px solid var(--line);border-radius:5px;cursor:pointer;background:#fff;color:#536071}.da.p{background:var(--navy);color:#fff;border-color:var(--navy)}.dhx{background:none;border:none;font-size:18px;cursor:pointer;color:#8792a2;padding:0 2px;flex-shrink:0}
+.db{padding:10px 12px}.sh{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0;color:#8390a2;margin:10px 0 5px}.sh:first-child{margin-top:0}.ig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:6px}.ic{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:6px 8px}.icl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.icv{font-size:11px;font-weight:800;overflow-wrap:anywhere}
+.mbg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:5px}.mb{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:7px 8px;border-left:3px solid #ddd}.mbl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.mbv{font-size:15px;font-weight:900}.mbs{font-size:8px;color:#7f8a9a;margin-top:1px;line-height:1.15}
+.ct{width:100%;font-size:11px;border-collapse:collapse}.ct td{padding:5px 0;border-bottom:0.5px solid #edf1f4}.ct td:last-child{text-align:right;font-weight:800}.ct tr.tot td{font-weight:900;border-top:1px solid #d8dee7;border-bottom:none;padding-top:6px}.wfr{margin-bottom:5px}.wfl{display:flex;justify-content:space-between;font-size:9px;color:#4d5969;margin-bottom:2px}.wft{height:8px;background:#edf1f5;border-radius:3px;overflow:hidden}.wff{height:100%;border-radius:3px}
+.nb{background:#fffbf0;border:1px solid #f0e0b0;border-left:3px solid var(--gold);border-radius:7px;padding:9px 11px;font-size:11px;line-height:1.55;color:#3f4a5a;margin-top:6px}.gb{padding:7px 12px;background:var(--gold);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-top:5px}.ab{width:100%;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:800;cursor:pointer;margin-top:6px}.ap{background:var(--navy);color:#fff}.as{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+@media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}}
+@media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg{grid-template-columns:1fr}}
 </style>
 <nav class="nav">
   <div class="logo">PARCEL<span>LA</span></div>
@@ -185,6 +144,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#f4f4f4;color:#1a1a1a;h
       <div class="mf"><div class="mfl">Min IRR</div><div class="mfr"><input type="number" id="mf-i" placeholder="0" step="1"><span>%</span></div></div>
       <div class="mf"><div class="mfl">Min dev spread</div><div class="mfr"><input type="number" id="mf-s" placeholder="0" step="1"><span>%</span></div></div>
       <div class="mf"><div class="mfl">Min cap on cost</div><div class="mfr"><input type="number" id="mf-c" placeholder="0" step="0.25"><span>%</span></div></div>
+      <div class="mf" id="hc-box"><div class="mfl">Your hard cost / SF</div><div class="mfr"><span>$</span><input type="number" id="mf-hc" placeholder="RSMeans" step="5"><button class="mfa" onclick="applyHardCostOverride()">Run</button></div></div>
     </div>
     <div class="tb">
       <span class="tbl" id="rct">Loading sites...</span>
@@ -220,13 +180,22 @@ async function boot() {
   await loadSites();
 }
 
+function currentHardCostOverride() {
+  const val = Number(g('mf-hc')?.value || 0);
+  return val > 0 ? Math.round(val) : 0;
+}
+
 async function loadSites() {
   g('list').innerHTML = '<div class="sw"><div class="spin"></div>Underwriting sites...</div>';
   try {
-    const r = await fetch(API + '/api/sites?limit=2000&sort=profit');
+    const hcpsf = currentHardCostOverride();
+    const qs = new URLSearchParams({ limit: '2000', sort: 'profit' });
+    if (hcpsf) qs.set('hcpsf', String(hcpsf));
+    const r = await fetch(API + '/api/sites?' + qs.toString());
     if (!r.ok) throw new Error('API ' + r.status);
     const data = await r.json();
     allSites = data.results || [];
+    updateHardCostOverrideUI();
     console.log('[ParceLLA] Loaded', allSites.length, 'sites, first:', JSON.stringify(allSites[0]?.addr));
     console.log('[ParceLLA] Sample site type:', allSites[0]?.type, 'rti:', allSites[0]?.rti, 'isComp:', allSites[0]?.isComp);
     applyFilters();
@@ -276,8 +245,32 @@ function applyFilters() {
     return (b.netProfit||0)-(a.netProfit||0);
   });
 
-  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + ' — pre-underwritten';
+  const hcpsf = currentHardCostOverride();
+  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + (hcpsf ? ' - re-underwritten at $' + hcpsf.toLocaleString() + '/SF hard cost' : ' - pre-underwritten');
   renderCards();
+}
+
+async function applyHardCostOverride() {
+  const input = g('mf-hc');
+  const val = Number(input?.value || 0);
+  if (val && (val < 100 || val > 1000)) {
+    alert('Enter a hard cost between $100 and $1,000 per SF.');
+    input.focus();
+    return;
+  }
+  await loadSites();
+}
+
+async function clearHardCostOverride() {
+  const input = g('mf-hc');
+  if (input) input.value = '';
+  await loadSites();
+}
+
+function updateHardCostOverrideUI() {
+  const hcpsf = currentHardCostOverride();
+  const box = g('hc-box');
+  if (box) box.classList.toggle('active', !!hcpsf);
 }
 
 function renderCards() {
@@ -289,14 +282,19 @@ function renderCards() {
     const pc = prof>1e6?'#1d9e75':prof>0?'#ef9f27':'#e24b4a';
     const pp = Math.max(0,Math.round(prof/maxP*100));
     const spd = Math.round((s.devSpreadPct||0)*1000)/10;
+    const hcpsf = currentHardCostOverride();
+    const ask = s.askPrice || s.price || 0;
+    const landBasis = s.landCost || ask || 0;
+    const priceMain = s.isComp ? 'Off-market' : (ask ? fmtM(ask) : 'Price n/a');
+    const priceSub = s.isComp ? 'imputed land ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
       <div class="ch">
         <div><div class="ca">${s.addr}</div><div class="cm">${s.hood} &middot; ${s.zone} &middot; ${(s.lot||0).toLocaleString()} SF &middot; ${s.units} units</div></div>
-        <div><div class="cp">${s.isComp?'Off-market':fmtM(s.askPrice)}</div><div style="font-size:10px;color:#aaa;text-align:right">land ${fmtM(s.landCost||s.askPrice)}</div></div>
+        <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div></div>
       </div>
       <div class="bdgs">
         ${s.rti?'<span class="bdg b1">✓ RTI</span>':s.isComp?'<span class="bdg b4">Off-market</span>':'<span class="bdg b2">For sale</span>'}
-        <span class="bdg b3">${s.type}</span>${s.isComp?'<span class="bdg b4">land imputed</span>':''}
+        <span class="bdg b3">${s.type}</span>${s.isComp?'<span class="bdg b4">land imputed</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${pc}">${fmtM(prof)}</div></div>
@@ -333,8 +331,12 @@ function renderDetail(s) {
   const irr=s.irrV||0, prof=s.netProfit||0, tc=s.totalCost||0;
   const pc=prof>0?'#1d9e75':'#e24b4a', ic=irrC(irr);
   const spd=Math.round((s.devSpreadPct||0)*1000)/10;
-  const land=s.landCost||s.askPrice||0;
+  const ask=s.askPrice||s.price||0;
+  const land=s.landCost||ask||0;
+  const landLabel=s.isComp?'Imputed land value':'Asking price';
+  const landNote=s.isComp?'Estimated from comparable land basis':'Used as land basis in underwriting';
   const totalSF=(s.units||0)*(s.usf||800);
+  const hardCostOverride=currentHardCostOverride();
   const hardCosts=Math.round(s.hardCosts ?? Math.max(0,(tc-land)*0.58));
   const softCosts=Math.round(s.softCosts ?? Math.max(0,(tc-land)*0.24));
   const carryCost=Math.round(s.carryCost ?? Math.max(0,(tc-land)*0.18));
@@ -386,7 +388,7 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">Zoning</div><div class="icv">${s.zone}</div></div>
       <div class="ic"><div class="icl">Status</div><div class="icv">${s.rti?'✓ RTI':s.isComp?'Off-market':'For sale'}</div></div>
       <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${s.units} / ${s.usf} SF</div></div>
-      <div class="ic"><div class="icl">Land cost</div><div class="icv">${fmtD(land)}${s.isComp?' <span style="font-size:8px;color:#ef9f27">(est)</span>':''}</div></div>
+      <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${land?fmtD(land):'Not provided'} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
     <div class="sh">Street View</div>
@@ -411,7 +413,7 @@ function renderDetail(s) {
     <table class="ct">
       <tr><td>Total building SF</td><td>${totalSF.toLocaleString()} SF</td></tr>
       <tr><td>Hard construction</td><td>${fmtD(hardCosts)}</td></tr>
-      <tr><td>Hard cost / SF</td><td>${fmtD(hardPerSf)}/SF</td></tr>
+      <tr><td>Hard cost / SF</td><td>${fmtD(hardPerSf)}/SF${hardCostOverride?' <span style="color:#b98b2f;font-size:9px">custom input</span>':''}</td></tr>
       <tr><td>Hard cost / unit</td><td>${fmtD(hardPerUnit)}/unit</td></tr>
       <tr><td>Soft costs / hard costs</td><td>${softPctHard}%</td></tr>
       <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/unit</td></tr>
@@ -822,10 +824,10 @@ function constructionCostRows(s, tc, land) {
     xlsRow(['Units', cellNumber(units)]),
     xlsRow(['Avg Unit SF', cellNumber(avgUnitSf)]),
     xlsRow(['Total Net Rentable SF', cellNumber(totalSF)]),
-    xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current budget, not a contractor bid. Replace with GC pricing when available.', 'String', 'note']]),
+    xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current budget, not a contractor bid. Replace with GC pricing when available.' + (currentHardCostOverride() ? ' User hard-cost override applied across all deals: $' + currentHardCostOverride().toLocaleString() + '/SF.' : ''), 'String', 'note']]),
     xlsRow(['']),
     xlsHeaderRow(['Budget Category', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
-    xlsRow(['Land Cost', cellMoney(Math.round(land)), totalSF ? cellMoney(costPerSf(land, totalSF)) : '', units ? cellMoney(costPerUnit(land, units)) : '', tc ? cellPct(costPct(land, tc)) : '', 'Purchase price or imputed land basis']),
+    xlsRow([s.isComp ? 'Imputed Land Value' : 'Asking Price / Land Basis', cellMoney(Math.round(land)), totalSF ? cellMoney(costPerSf(land, totalSF)) : '', units ? cellMoney(costPerUnit(land, units)) : '', tc ? cellPct(costPct(land, tc)) : '', s.isComp ? 'Estimated off-market land basis' : 'For-sale asking price used as land basis']),
     xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), tc ? cellPct(costPct(hardCosts, tc)) : '', 'Detailed schedule below: HVAC, framing, plumbing, electrical, etc.']),
     xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(softPerSf) : '', units ? cellMoney(softPerUnit) : '', tc ? cellPct(costPct(softCosts, tc)) : '', 'A&E, permits, fees, legal, developer fee, contingency']),
     xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(carryPerSf) : '', units ? cellMoney(carryPerUnit) : '', tc ? cellPct(costPct(carryCost, tc)) : '', 'Interest reserve, loan fees, taxes and lease-up carry']),
@@ -1217,7 +1219,7 @@ function exportPDF(id) {
   <div>
     <table>
       <tr><th colspan="2">LAND & ACQUISITION</th></tr>
-      <tr><td>Purchase Price / Land Cost</td><td>${fmtD(land)}${s.isComp?' (imputed)':''}</td></tr>
+      <tr><td>${s.isComp?'Imputed Land Value':'Asking Price / Land Basis'}</td><td>${fmtD(land)}${s.isComp?' (estimated)':''}</td></tr>
       <tr><td>Title, Escrow & Legal (est.)</td><td>${fmtD(land*0.015+25000)}</td></tr>
       <tr class="tot"><td>Land Subtotal</td><td>${fmtD(land*1.015+25000)}</td></tr>
 
@@ -1504,8 +1506,8 @@ function exportPDF(id) {
 function resetFilters() {
   ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-sf'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
   ['f-hood','f-zone'].forEach(id=>{const el=g(id);if(el)el.value='';});
-  ['f-umin','f-umax','f-pmin','f-pmax','mf-p','mf-i','mf-s','mf-c'].forEach(id=>{const el=g(id);if(el)el.value='';});
-  applyFilters();
+  ['f-umin','f-umax','f-pmin','f-pmax','mf-p','mf-i','mf-s','mf-c','mf-hc'].forEach(id=>{const el=g(id);if(el)el.value='';});
+  loadSites();
 }
 
 function handleShareLink() {

@@ -73,7 +73,7 @@ const DEFAULT_GLOBALS = {
 function buildOverrides(query) {
   const ov = {};
   if (query.exitCap)  ov.exitCap  = +query.exitCap;
-  if (query.hcpsf)    ov.hcpsf    = +query.hcpsf;
+  if (query.hcpsf) { ov.hcpsf = +query.hcpsf; ov.hardCostPerSF = +query.hcpsf; }
   if (query.sc)       ov.sc       = +query.sc;
   if (query.ppu)      ov.ppu      = +query.ppu;
   if (query.psf)      ov.psf      = +query.psf;
@@ -82,9 +82,21 @@ function buildOverrides(query) {
 }
 
 function modelFromSupabaseSite(s) {
+  const totalCost = s.total_cost || 0;
+  const price = s.price || 0;
+  const interestCarryPct = 0.65 * 0.065 * 1.5; // 65% LTC, 6.5%, 18 months
+  const preCarryCost = totalCost > 0 ? totalCost / (1 + interestCarryPct) : 0;
+  const verticalBudget = Math.max(0, preCarryCost - price);
+  const hardFallback = verticalBudget / 1.18; // soft costs assumed at 18% of hard costs
+  const softFallback = hardFallback * 0.18;
+  const carryFallback = Math.max(0, totalCost - preCarryCost);
+  const hardCosts = s.hard_costs ?? s.hardCosts ?? hardFallback;
+  const softCosts = s.soft_costs ?? s.softCosts ?? softFallback;
+  const carryCost = s.carry_cost ?? s.carryCost ?? carryFallback;
+
   return {
     noi:           s.noi          || 0,
-    totalCost:     s.total_cost   || 0,
+    totalCost,
     exitValue:     s.exit_value   || 0,
     exitProceeds:  s.net_profit   || 0,
     netProfit:     s.net_profit   || 0,
@@ -92,14 +104,13 @@ function modelFromSupabaseSite(s) {
     capRateOnCost: (s.cap_on_cost   || 0) / 100,
     devSpreadPct:  (s.dev_spread_pct || 0) / 100,
     marketCapRate: 0.0500,
-    price:         s.price        || 0,
-    hardCosts:     (s.total_cost  || 0) * 0.55,
-    softCosts:     (s.total_cost  || 0) * 0.22,
-    carryCost:     (s.total_cost  || 0) * 0.12,
-    loanAmount:    (s.total_cost  || 0) * 0.65,
-    equity:        (s.total_cost  || 0) * 0.35,
-    equityMultiple: (s.total_cost || 0) > 0
-      ? ((s.exit_value || 0) / ((s.total_cost || 1) * 0.35)) : 0,
+    price,
+    hardCosts,
+    softCosts,
+    carryCost,
+    loanAmount:    totalCost * 0.65,
+    equity:        totalCost * 0.35,
+    equityMultiple: totalCost > 0 ? ((s.exit_value || 0) / (totalCost * 0.35)) : 0,
   };
 }
 
@@ -172,10 +183,11 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       }
     }
 
-    // Use pre-computed model results if available, otherwise run model
+    // Use stored model results unless a user override requires fresh underwriting.
+    const hasModelOverrides = Object.keys(overrides).length > 0;
     const modelled = sites.map(s => ({
       ...s,
-      _m: s._precomputed ? s._m : runModel(normalizeSite(s), overrides),
+      _m: s._precomputed && !hasModelOverrides ? s._m : runModel(normalizeSite(s), overrides),
     }));
 
     // Filter
@@ -233,7 +245,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         isComp:       s.isComp ?? s.is_comp ?? false,
         lat:          s.lat,
         lng:          s.lng,
-        askPrice:     s.price  ?? s.askPrice,
+        askPrice:     s.price ?? s.askPrice ?? s._m.price ?? null,
         // Pre-underwritten metrics
         totalCost:    s._m.totalCost,
         hardCosts:    s._m.hardCosts,
@@ -247,7 +259,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         irrV:         s._m.leveragedIRR,
         capOnCost:    Math.round(s._m.capRateOnCost * 10000) / 100,
         devSpreadPct: s._m.devSpreadPct,
-        landCost:     s._m.price ?? s.price,
+        landCost:     s._m.price ?? s.price ?? s.askPrice ?? null,
         noi:          s._m.noi,
         entryCap:     s._m.marketCapRate,
         exitCap:      s._m.marketCapRate + 0.0025,
@@ -284,8 +296,9 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
       if (error) throw error;
       if (data) {
         site = mapSupabaseSite(data);
-        model = site._m;
-        scenarios = { base: model };
+        const hasModelOverrides = Object.keys(overrides).length > 0;
+        model = hasModelOverrides ? runModel(normalizeSite(site), overrides) : site._m;
+        scenarios = hasModelOverrides ? runScenarios(normalizeSite(site), overrides) : { base: model };
       }
     }
 
