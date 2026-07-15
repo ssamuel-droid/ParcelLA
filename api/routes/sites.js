@@ -183,11 +183,11 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       }
     }
 
-    // Use stored model results unless a user override requires fresh underwriting.
-    const hasModelOverrides = Object.keys(overrides).length > 0;
+    // Re-run the current model for dashboard rows so valuation, income statement,
+    // and user hard-cost overrides are consistent with the latest app logic.
     const modelled = sites.map(s => ({
       ...s,
-      _m: s._precomputed && !hasModelOverrides ? s._m : runModel(normalizeSite(s), overrides),
+      _m: runModel(normalizeSite(s), overrides),
     }));
 
     // Filter
@@ -205,7 +205,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       if (minPrice && !s.isComp && (s.price ?? 0) < +minPrice) return false;
       if (maxPrice && !s.isComp && (s.price ?? Infinity) > +maxPrice) return false;
       if (minIRR   && m.leveragedIRR    < +minIRR)           return false;
-      if (minProfit && m.exitProceeds < +minProfit)      return false;
+      if (minProfit && m.netProfit < +minProfit)         return false;
       if (minSpread && m.devSpreadPct < +minSpread)   return false;
       if (minCapoc  && m.capRateOnCost < +minCapoc)       return false;
       return true;
@@ -253,22 +253,26 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         carryCost:    s._m.carryCost,
         loanAmount:   s._m.loanAmount,
         equity:       s._m.equity,
+        grossPotentialRent: s._m.grossPotentialRent,
+        vacancyLoss:        s._m.vacancyLoss,
+        otherIncome:        s._m.otherIncome,
+        effectiveGrossIncome: s._m.effectiveGrossIncome,
+        operatingExpenses:  s._m.operatingExpenses,
+        expenseDetail:      s._m.expenseDetail,
         noi:          s._m.noi,
+        year5Noi:     s._m.year5Noi,
         exitValue:    s._m.exitValue,
         netProfit:    s._m.netProfit,
         irrV:         s._m.leveragedIRR,
         capOnCost:    Math.round(s._m.capRateOnCost * 10000) / 100,
         devSpreadPct: s._m.devSpreadPct,
         landCost:     s._m.price ?? s.price ?? s.askPrice ?? null,
-        noi:          s._m.noi,
         entryCap:     s._m.marketCapRate,
-        exitCap:      s._m.marketCapRate + 0.0025,
+        exitCap:      s._m.exitCapRate ?? (s._m.marketCapRate + 0.0025),
+        debtService:  s._m.debtService,
+        cfbt:         s._m.cfbt,
         coc:          s._m.cocReturn,
         eqMult:       s._m.equityMultiple,
-        coc:          s._m.coc,
-        eqMult:       s._m.eqMult,
-        entryCap:     s._m.entryCap,
-        exitCap:      s._m.exitCap,
       })),
     });
   } catch (err) { next(err); }
@@ -296,9 +300,8 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
       if (error) throw error;
       if (data) {
         site = mapSupabaseSite(data);
-        const hasModelOverrides = Object.keys(overrides).length > 0;
-        model = hasModelOverrides ? runModel(normalizeSite(site), overrides) : site._m;
-        scenarios = hasModelOverrides ? runScenarios(normalizeSite(site), overrides) : { base: model };
+        model = runModel(normalizeSite(site), overrides);
+        scenarios = runScenarios(normalizeSite(site), overrides);
       }
     }
 

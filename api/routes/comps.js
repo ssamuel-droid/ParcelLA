@@ -203,6 +203,31 @@ function rentSummary(rows) {
   return latest;
 }
 
+function periodTime(value) {
+  if (!value) return 0;
+  const t = new Date(String(value).slice(0, 10)).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function isRecentPeriod(value, days) {
+  const t = periodTime(value);
+  if (!t) return false;
+  return t >= Date.now() - days * 86400000;
+}
+
+function rankRentComps(rows) {
+  return [...(rows ?? [])].sort((a, b) => {
+    if (a.source === 'rentcast' && b.source !== 'rentcast') return -1;
+    if (a.source !== 'rentcast' && b.source === 'rentcast') return 1;
+    const ad = asNumber(a.distanceMiles);
+    const bd = asNumber(b.distanceMiles);
+    if (ad !== null && bd !== null && ad !== bd) return ad - bd;
+    if (ad !== null && bd === null) return -1;
+    if (ad === null && bd !== null) return 1;
+    return periodTime(b.period) - periodTime(a.period);
+  });
+}
+
 function saleTime(row) {
   const t = row?.sale_date ? new Date(row.sale_date).getTime() : 0;
   return Number.isFinite(t) ? t : 0;
@@ -355,6 +380,7 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
     const siteLng = asNumber(req.query.siteLng);
     const bedrooms = req.query.bedrooms;
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 12, 1), 25);
+    const recencyDays = Math.min(Math.max(parseInt(req.query.recencyDays, 10) || 365, 90), 730);
     const client = sb();
 
     const liveComps = await fetchRentcastListings({ hood, siteLat, siteLng, bedrooms, limit });
@@ -382,26 +408,45 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
     }
 
     const storedComps = (data ?? []).map(d => mapStoredRentComp(d, siteLat, siteLng));
-    const propertyComps = [...liveComps, ...storedComps.filter(c => c.address)].slice(0, limit);
+    const recentStoredPropertyComps = storedComps
+      .filter(c => c.address && isRecentPeriod(c.period, recencyDays));
+    const staleSavedPropertyCount = storedComps
+      .filter(c => c.address && !isRecentPeriod(c.period, recencyDays)).length;
+    const propertyComps = rankRentComps([...liveComps, ...recentStoredPropertyComps]).slice(0, limit);
     const hasRentcast = Boolean(process.env.RENTCAST_API_KEY);
+    const source = liveComps.length
+      ? 'rentcast active listings'
+      : propertyComps.length
+        ? 'recent saved database'
+        : 'market benchmark only';
+    const returnedMatchLabel = liveComps.length
+      ? 'active apartment listings plus saved recent comps'
+      : propertyComps.length
+        ? `saved rent comps, last ${Math.round(recencyDays / 30)} months`
+        : matchLabel;
+    const limiter = propertyComps.length
+      ? staleSavedPropertyCount
+        ? `${staleSavedPropertyCount} older saved rent comp(s) were hidden because they are outside the ${recencyDays}-day recency window.`
+        : ''
+      : hasRentcast
+        ? 'RentCast did not return nearby active apartment listings, and saved property-level rent comps are older than the recency window.'
+        : 'RENTCAST_API_KEY is not configured, so the app can only use saved benchmark rents unless recent property-level comps are added.';
 
     res.json({
       hood,
-      source: liveComps.length ? 'rentcast' : 'database',
+      source,
       matchType,
-      matchLabel,
+      matchLabel: returnedMatchLabel,
+      recencyDays,
+      staleSavedPropertyCount,
       comps: propertyComps.length,
       recentComps: propertyComps,
       marketRents: rentSummary(storedComps),
       benchmarkRows: storedComps.filter(c => !c.address).slice(0, 12),
       message: propertyComps.length
-        ? 'Property-level rent comps found.'
-        : 'No property-level rent comps were returned; benchmark rents are shown instead.',
-      limiter: propertyComps.length
-        ? ''
-        : hasRentcast
-          ? 'RentCast did not return nearby active apartment listings, and the saved rent table has no property addresses for this area.'
-          : 'RENTCAST_API_KEY is not configured, so the app can only use saved benchmark rents unless property-level comps are added.'
+        ? 'Active or recent property-level rent comps found.'
+        : 'No recent property-level rent comps were returned; benchmark rents are shown instead.',
+      limiter,
     });
   } catch (err) { next(err); }
 });

@@ -8,7 +8,7 @@ import { RENTS, CAP_RATES, RSMEANS, SCALE_DISCOUNTS } from '../data/submarkets.j
 const DEFAULTS = {
   softPct:       0.18,   // % of hard costs
   vacancyRate:   0.05,   // 5% vacancy
-  opexRatio:     0.38,   // 38% operating expense ratio (LA multifamily benchmark)
+  opexRatio:     0.35,   // 35% operating expense ratio for new/stabilized LA multifamily
   ltc:           0.65,   // loan-to-cost
   interestRate:  0.065,  // 6.5% construction loan
   constructionMo: 18,    // months
@@ -18,7 +18,8 @@ const DEFAULTS = {
   lpSplit:       0.80,   // LP share of excess above pref
   gpSplit:       0.20,   // GP promote
   demolitionCost: 45000, // flat rate if demo required
-  exitCapSpread:  0.0050, // 50bps cap rate expansion at exit (development premium)
+  exitCapSpread:  0.0025, // 25bps cap rate expansion at exit
+  otherIncomePerUnit: 600, // parking/laundry/storage and miscellaneous annual income
 };
 
 /**
@@ -100,14 +101,25 @@ export function runModel(site, overrides = {}) {
     (unitMix.three  ?? 0) * R.three
   );
   const grossPotentialRent  = blendedRent * 12 * units;
-  const effectiveGrossIncome = grossPotentialRent * (1 - cfg.vacancyRate);
+  const vacancyLoss         = grossPotentialRent * cfg.vacancyRate;
+  const otherIncome         = (cfg.otherIncomePerUnit ?? 0) * units;
+  const effectiveGrossIncome = grossPotentialRent - vacancyLoss + otherIncome;
   const operatingExpenses   = effectiveGrossIncome * cfg.opexRatio;
   const noi                 = effectiveGrossIncome - operatingExpenses;
+  const expenseDetail = {
+    propertyTaxes:       operatingExpenses * 0.22,
+    insurance:           operatingExpenses * 0.08,
+    utilities:           operatingExpenses * 0.08,
+    repairsMaintenance:  operatingExpenses * 0.12,
+    payrollAdmin:        operatingExpenses * 0.16,
+    managementFee:       operatingExpenses * 0.08,
+    marketingTurnover:   operatingExpenses * 0.06,
+    replacementReserves: operatingExpenses * 0.08,
+    otherOperating:      operatingExpenses * 0.12,
+  };
 
   // ── VALUATION ──────────────────────────────────────────────────────────────
   const stabilizedValue = noi / cap;
-  const devSpread       = stabilizedValue - totalCost;
-  const devSpreadPct    = devSpread / totalCost;
   const capRateOnCost   = noi / totalCost;
 
   // ── CASH FLOW ──────────────────────────────────────────────────────────────
@@ -120,16 +132,22 @@ export function runModel(site, overrides = {}) {
   const cocReturn   = cfbt / equity;
 
   // ── HOLD PERIOD & EXIT ─────────────────────────────────────────────────────
-  const exitCapRate  = cap + (cfg.exitCapSpread ?? 0.0050);
-  const exitValue    = noi / exitCapRate;
+  const exitCapRate  = cap + (cfg.exitCapSpread ?? 0.0025);
+  const year5Noi     = noi * Math.pow(1 + cfg.appreciationRate, Math.max(0, cfg.holdYears - 1));
+  const exitValue    = year5Noi / exitCapRate;
+  const devSpread    = exitValue - totalCost;
+  const devSpreadPct = devSpread / totalCost;
   // Loan balance at exit (I/O — principal unchanged)
   const exitProceeds = exitValue - loanAmount;
 
   // Annual cash flows (levered)
   // IRR cashflows: equity in at start, CFBT each year, equity + net profit at exit
   const cashflows = [-equity];
-  for (let y = 1; y < cfg.holdYears; y++) cashflows.push(cfbt);
-  cashflows.push(cfbt + exitProceeds);  // exitProceeds = exit - loan (equity return)
+  for (let y = 1; y < cfg.holdYears; y++) {
+    const yearNoi = noi * Math.pow(1 + cfg.appreciationRate, y - 1);
+    cashflows.push(yearNoi - debtService);
+  }
+  cashflows.push((year5Noi - debtService) + exitProceeds);  // exitProceeds = exit - loan (equity return)
 
   const leveragedIRR  = calcIRR(cashflows) * 100;
   const equityMultiple = exitProceeds / equity;
@@ -164,10 +182,10 @@ export function runModel(site, overrides = {}) {
     loanAmount, equity,
 
     // income
-    blendedRent, grossPotentialRent, effectiveGrossIncome, operatingExpenses, noi,
+    blendedRent, grossPotentialRent, vacancyLoss, otherIncome, effectiveGrossIncome, operatingExpenses, expenseDetail, noi, year5Noi,
 
     // valuation
-    stabilizedValue, devSpread, devSpreadPct, capRateOnCost, marketCapRate: cap,
+    stabilizedValue, devSpread, devSpreadPct, capRateOnCost, marketCapRate: cap, exitCapRate,
 
     // cash flow
     debtService, cfbt, cocReturn,

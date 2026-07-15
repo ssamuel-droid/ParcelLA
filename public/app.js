@@ -113,7 +113,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-mf" checked> Multifamily</label>
       <label class="cb"><input type="checkbox" id="f-mx" checked> Mixed-use</label>
       <label class="cb"><input type="checkbox" id="f-cn" checked> Condo / TH</label>
-      <label class="cb"><input type="checkbox" id="f-sf" checked> SFR + ADU</label>
+      <label class="cb"><input type="checkbox" id="f-sf"> SFR + ADU</label>
       <h4>Neighborhood</h4>
       <select id="f-hood" class="sbs">
         <option value="">All neighborhoods</option>
@@ -327,6 +327,53 @@ function closeDetail() {
   renderCards();
 }
 
+function incomeStatementForSite(s) {
+  const noi = Math.round(s.noi || 0);
+  const opexRatio = 0.35;
+  const grossPotentialRent = Math.round(s.grossPotentialRent || (noi ? noi / (1 - opexRatio) / 0.95 : 0));
+  const vacancyLoss = Math.round(s.vacancyLoss ?? grossPotentialRent * 0.05);
+  const otherIncome = Math.round(s.otherIncome ?? (s.units || 0) * 600);
+  const effectiveGrossIncome = Math.round(s.effectiveGrossIncome || (grossPotentialRent - vacancyLoss + otherIncome));
+  const operatingExpenses = Math.round(s.operatingExpenses || Math.max(0, effectiveGrossIncome - noi));
+  const expenseDetail = s.expenseDetail || {
+    propertyTaxes: operatingExpenses * 0.22,
+    insurance: operatingExpenses * 0.08,
+    utilities: operatingExpenses * 0.08,
+    repairsMaintenance: operatingExpenses * 0.12,
+    payrollAdmin: operatingExpenses * 0.16,
+    managementFee: operatingExpenses * 0.08,
+    marketingTurnover: operatingExpenses * 0.06,
+    replacementReserves: operatingExpenses * 0.08,
+    otherOperating: operatingExpenses * 0.12,
+  };
+  return {
+    grossPotentialRent,
+    vacancyLoss,
+    otherIncome,
+    effectiveGrossIncome,
+    operatingExpenses,
+    expenseDetail,
+    noi,
+    debtService: Math.round(s.debtService ?? (s.loanAmount || (s.totalCost || 0) * 0.65) * 0.065),
+    cfbt: Math.round(s.cfbt ?? (noi - ((s.loanAmount || (s.totalCost || 0) * 0.65) * 0.065))),
+  };
+}
+
+function expenseRowsHTML(expenseDetail = {}) {
+  const rows = [
+    ['Property taxes', expenseDetail.propertyTaxes],
+    ['Insurance', expenseDetail.insurance],
+    ['Utilities', expenseDetail.utilities],
+    ['Repairs & maintenance', expenseDetail.repairsMaintenance],
+    ['Payroll / admin', expenseDetail.payrollAdmin],
+    ['Management fee', expenseDetail.managementFee],
+    ['Marketing / turnover', expenseDetail.marketingTurnover],
+    ['Replacement reserves', expenseDetail.replacementReserves],
+    ['Other operating', expenseDetail.otherOperating],
+  ];
+  return rows.map(([label, value]) => `<tr><td>${label}</td><td>${fmtD(value || 0)}</td></tr>`).join('');
+}
+
 function renderDetail(s) {
   const irr=s.irrV||0, prof=s.netProfit||0, tc=s.totalCost||0;
   const pc=prof>0?'#1d9e75':'#e24b4a', ic=irrC(irr);
@@ -345,6 +392,10 @@ function renderDetail(s) {
   const totalPerSf=totalSF?Math.round(tc/totalSF):0;
   const totalPerUnit=s.units?Math.round(tc/s.units):0;
   const softPctHard=hardCosts?Math.round((softCosts/hardCosts)*1000)/10:0;
+  const hardCostRead = hardPerUnit >= 400000
+    ? 'High hard cost per unit is being driven by unit size/count. Compare hard cost per SF first; per-unit cost is only reliable against similar unit sizes.'
+    : 'Hard cost per SF is the primary construction benchmark. Per-unit cost is a secondary check and rises quickly for larger units.';
+  const income = incomeStatementForSite(s);
   const bars=[
     [land,'#0f1f3d','Land'+(s.isComp?' (imputed)':'')],
     [hardCosts,'#378add','Hard costs'],
@@ -418,14 +469,27 @@ function renderDetail(s) {
       <tr><td>Soft costs / hard costs</td><td>${softPctHard}%</td></tr>
       <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/unit</td></tr>
     </table>
-    <div style="font-size:9px;color:#999;line-height:1.35;margin:5px 0 8px">The Excel Construction Costs tab includes detailed hard and soft cost line items.</div>
+    <div style="font-size:9px;color:#6f7b8c;line-height:1.35;margin:5px 0 8px">${hardCostRead} The Excel Construction Costs tab includes detailed hard and soft cost line items.</div>
     <div class="sh">Valuation</div>
     <table class="ct">
       <tr><td>NOI (stabilized)</td><td>${fmtD(s.noi||0)}</td></tr>
       <tr><td>Exit cap rate</td><td>${(((s.entryCap||0.045)+0.0025)*100).toFixed(2)}%</td></tr>
+      <tr><td>Year 5 NOI</td><td>${fmtD(s.year5Noi || (s.noi||0)*Math.pow(1.03,4))}</td></tr>
       <tr><td>Exit value</td><td>${fmtD(s.exitValue||0)}</td></tr>
       <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">−${fmtD(tc)}</td></tr>
       <tr class="tot"><td style="color:${pc}">Net profit</td><td style="color:${pc};font-size:14px">${fmtD(prof)}</td></tr>
+    </table>
+    <div class="sh">Income statement</div>
+    <table class="ct">
+      <tr><td>Gross potential rent</td><td>${fmtD(income.grossPotentialRent)}</td></tr>
+      <tr><td>Vacancy loss (5%)</td><td style="color:#e24b4a">-${fmtD(income.vacancyLoss)}</td></tr>
+      <tr><td>Other income</td><td>${fmtD(income.otherIncome)}</td></tr>
+      <tr class="tot"><td>Effective gross income</td><td>${fmtD(income.effectiveGrossIncome)}</td></tr>
+      ${expenseRowsHTML(income.expenseDetail)}
+      <tr><td style="color:#e24b4a">Total operating expenses</td><td style="color:#e24b4a">-${fmtD(income.operatingExpenses)}</td></tr>
+      <tr class="tot"><td>Net operating income</td><td>${fmtD(income.noi)}</td></tr>
+      <tr><td>Debt service</td><td style="color:#e24b4a">-${fmtD(income.debtService)}</td></tr>
+      <tr class="tot"><td>Cash flow before tax</td><td>${fmtD(income.cfbt)}</td></tr>
     </table>
     <div class="sh">Sold comps — ${s.hood}</div>
     <div id="comps-${s.id}" style="font-size:10px;color:#aaa">Loading comps...</div>
@@ -437,9 +501,11 @@ function renderDetail(s) {
     <button class="ab ap" onclick="exportPDF(${s.id})">↓ Download PDF deal memo</button>`;
 }
 
-async function loadComps(hood) {
+async function loadComps(siteOrHood) {
   try {
-    const r = await fetch(API + '/api/comps/submarket/' + encodeURIComponent(hood));
+    const hood = typeof siteOrHood === 'object' ? siteOrHood.hood : siteOrHood;
+    const qs = typeof siteOrHood === 'object' ? compQueryForSite(siteOrHood, 6) : '';
+    const r = await fetch(API + '/api/comps/submarket/' + encodeURIComponent(hood) + qs);
     if (!r.ok) return null;
     return await r.json();
   } catch (e) { return null; }
@@ -571,6 +637,7 @@ async function fetchJSON(path) {
 
 function compQueryForSite(s, limit = 12) {
   const p = new URLSearchParams({ limit: String(limit) });
+  p.set('recencyDays', '365');
   if (s?.lat && s?.lng) {
     p.set('siteLat', s.lat);
     p.set('siteLng', s.lng);
@@ -613,6 +680,7 @@ function rentCompPropertyRows(rentComps, s, submarket) {
   ];
   if (rentComps?.source || rentComps?.matchLabel || rentComps?.message || rentComps?.limiter) {
     rows.push(xlsRow(['Comp Source', rentComps?.source || '', rentComps?.matchLabel || '']));
+    rows.push(xlsRow(['Recency Window', rentComps?.recencyDays ? String(rentComps.recencyDays) + ' days' : '365 days', rentComps?.staleSavedPropertyCount ? String(rentComps.staleSavedPropertyCount) + ' older saved comp(s) hidden' : '']));
     if (rentComps?.limiter) rows.push(xlsRow(['Limiter', [rentComps.limiter, 'String', 'note']]));
     rows.push(xlsRow(['']));
   }
@@ -651,6 +719,32 @@ function rentCompPropertyRows(rentComps, s, submarket) {
     rows.push(xlsHeaderRow(['Bedroom Type', 'Monthly Rent', 'Source', 'Period']));
     benchmarkRows.forEach(c => rows.push(xlsRow([c.bedroomType || '', cellMoney(c.monthlyRent), c.source || '', fmtCompDate(c.period)])));
   }
+  return rows;
+}
+
+function incomeStatementRows(s, income = incomeStatementForSite(s)) {
+  const e = income.expenseDetail || {};
+  const rows = [
+    xlsTitleRow('Income Statement', s.addr),
+    xlsHeaderRow(['Line Item', 'Annual Amount', '$ / Unit', '% of EGI', 'Notes']),
+    xlsRow(['Gross Potential Rent', cellMoney(income.grossPotentialRent), s.units ? cellMoney(Math.round(income.grossPotentialRent / s.units)) : '', '', 'Scheduled market rent before vacancy']),
+    xlsRow(['Vacancy Loss', cellMoneyRed(income.vacancyLoss), s.units ? cellMoneyRed(Math.round(income.vacancyLoss / s.units)) : '', income.grossPotentialRent ? cellPct(Math.round((income.vacancyLoss / income.grossPotentialRent) * 1000) / 10) : '', 'Modeled vacancy and credit loss']),
+    xlsRow(['Other Income', cellMoney(income.otherIncome), s.units ? cellMoney(Math.round(income.otherIncome / s.units)) : '', '', 'Parking, laundry, storage, fees and other ancillary income']),
+    xlsRow(['Effective Gross Income', cellMoney(income.effectiveGrossIncome), s.units ? cellMoney(Math.round(income.effectiveGrossIncome / s.units)) : '', cellPct(100), 'Gross rent less vacancy plus other income'], 'section'),
+    xlsRow(['Property Taxes', cellMoneyRed(e.propertyTaxes || 0), s.units ? cellMoneyRed(Math.round((e.propertyTaxes || 0) / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round(((e.propertyTaxes || 0) / income.effectiveGrossIncome) * 1000) / 10) : '', 'Operating expense allocation']),
+    xlsRow(['Insurance', cellMoneyRed(e.insurance || 0), s.units ? cellMoneyRed(Math.round((e.insurance || 0) / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round(((e.insurance || 0) / income.effectiveGrossIncome) * 1000) / 10) : '', 'Operating expense allocation']),
+    xlsRow(['Utilities', cellMoneyRed(e.utilities || 0), s.units ? cellMoneyRed(Math.round((e.utilities || 0) / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round(((e.utilities || 0) / income.effectiveGrossIncome) * 1000) / 10) : '', 'Common utilities and reimbursable leakage']),
+    xlsRow(['Repairs & Maintenance', cellMoneyRed(e.repairsMaintenance || 0), s.units ? cellMoneyRed(Math.round((e.repairsMaintenance || 0) / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round(((e.repairsMaintenance || 0) / income.effectiveGrossIncome) * 1000) / 10) : '', 'Stabilized maintenance allowance']),
+    xlsRow(['Payroll / Admin', cellMoneyRed(e.payrollAdmin || 0), s.units ? cellMoneyRed(Math.round((e.payrollAdmin || 0) / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round(((e.payrollAdmin || 0) / income.effectiveGrossIncome) * 1000) / 10) : '', 'Onsite/admin expense allocation']),
+    xlsRow(['Management Fee', cellMoneyRed(e.managementFee || 0), s.units ? cellMoneyRed(Math.round((e.managementFee || 0) / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round(((e.managementFee || 0) / income.effectiveGrossIncome) * 1000) / 10) : '', 'Third-party management allowance']),
+    xlsRow(['Marketing / Turnover', cellMoneyRed(e.marketingTurnover || 0), s.units ? cellMoneyRed(Math.round((e.marketingTurnover || 0) / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round(((e.marketingTurnover || 0) / income.effectiveGrossIncome) * 1000) / 10) : '', 'Leasing, turns and concessions']),
+    xlsRow(['Replacement Reserves', cellMoneyRed(e.replacementReserves || 0), s.units ? cellMoneyRed(Math.round((e.replacementReserves || 0) / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round(((e.replacementReserves || 0) / income.effectiveGrossIncome) * 1000) / 10) : '', 'Capital reserve allowance']),
+    xlsRow(['Other Operating', cellMoneyRed(e.otherOperating || 0), s.units ? cellMoneyRed(Math.round((e.otherOperating || 0) / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round(((e.otherOperating || 0) / income.effectiveGrossIncome) * 1000) / 10) : '', 'Remaining operating expense allocation']),
+    xlsRow(['Total Operating Expenses', cellMoneyRed(income.operatingExpenses), s.units ? cellMoneyRed(Math.round(income.operatingExpenses / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round((income.operatingExpenses / income.effectiveGrossIncome) * 1000) / 10) : '', 'Total opex ratio'], 'section'),
+    xlsRow(['Net Operating Income', cellMoney(income.noi), s.units ? cellMoney(Math.round(income.noi / s.units)) : '', income.effectiveGrossIncome ? cellPct(Math.round((income.noi / income.effectiveGrossIncome) * 1000) / 10) : '', 'NOI before debt service'], 'section'),
+    xlsRow(['Debt Service', cellMoneyRed(income.debtService), s.units ? cellMoneyRed(Math.round(income.debtService / s.units)) : '', '', 'Interest-only debt service assumption']),
+    xlsRow(['Cash Flow Before Tax', income.cfbt >= 0 ? cellMoney(income.cfbt) : cellMoneyRed(Math.abs(income.cfbt)), s.units ? (income.cfbt >= 0 ? cellMoney(Math.round(income.cfbt / s.units)) : cellMoneyRed(Math.abs(Math.round(income.cfbt / s.units)))) : '', '', 'NOI less debt service'], 'section'),
+  ];
   return rows;
 }
 
@@ -845,7 +939,7 @@ function constructionCostRows(s, tc, land) {
   rows.push(xlsRow(['']));
   rows.push(xlsSectionRow('Benchmark Checks'));
   rows.push(xlsRow(['Hard Cost / SF', cellMoney(hardPerSf), '', '', '', 'Primary construction-cost reasonableness check']));
-  rows.push(xlsRow(['Hard Cost / Unit', cellMoney(hardPerUnit), '', '', '', 'Useful for comparing similar unit-count projects']));
+  rows.push(xlsRow(['Hard Cost / Unit', cellMoney(hardPerUnit), '', '', '', hardPerUnit >= 400000 ? 'High because this deal has large units or few units; compare $/SF first.' : 'Useful only when comparing similar unit sizes']));
   rows.push(xlsRow(['Soft Cost / SF', cellMoney(softPerSf), '', '', '', 'Soft-cost basis check']));
   rows.push(xlsRow(['Soft Costs / Hard Costs %', cellPct(softPctHard), '', '', '', 'Soft costs commonly underwritten as a % of hard costs']));
   rows.push(xlsRow(['Total Cost / SF', cellMoney(totalPerSf), '', '', '', 'All-in basis including land, soft costs, carry']));
@@ -912,6 +1006,7 @@ async function exportExcel(id) {
   const hardPerUnit = s.units ? Math.round(hardCosts / s.units) : 0;
   const totalPerSf = totalSF ? Math.round(tc / totalSF) : 0;
   const totalPerUnit = s.units ? Math.round(tc / s.units) : 0;
+  const income = incomeStatementForSite(s);
 
   const summaryRows = [
     xlsTitleRow('ParceLLA Comprehensive Underwriting', s.addr),
@@ -945,9 +1040,10 @@ async function exportExcel(id) {
     xlsRow(['Loan Amount', cellMoney(Math.round(loan)), totalSF ? cellMoney(Math.round(loan / totalSF)) : '', s.units ? cellMoney(Math.round(loan / s.units)) : '', '65% LTC assumption unless overridden']),
     xlsRow(['Equity Required', cellMoney(Math.round(equity)), totalSF ? cellMoney(Math.round(equity / totalSF)) : '', s.units ? cellMoney(Math.round(equity / s.units)) : '', 'Sponsor equity requirement']),
     xlsRow(['NOI', cellMoney(Math.round(noi)), totalSF ? cellMoney(Math.round(noi / totalSF)) : '', s.units ? cellMoney(Math.round(noi / s.units)) : '', 'Stabilized annual NOI']),
+    xlsRow(['Year 5 NOI', cellMoney(Math.round(s.year5Noi || noi * Math.pow(1.03, 4))), totalSF ? cellMoney(Math.round((s.year5Noi || noi * Math.pow(1.03, 4)) / totalSF)) : '', s.units ? cellMoney(Math.round((s.year5Noi || noi * Math.pow(1.03, 4)) / s.units)) : '', 'Year-5 NOI used for exit valuation']),
     xlsRow(['Entry Cap Rate %', cellPct(Math.round(entryCap * 10000) / 100), '', '', 'Market cap rate input']),
     xlsRow(['Exit Cap Rate %', cellPct(Math.round(exitCap * 10000) / 100), '', '', 'Exit cap assumption']),
-    xlsRow(['Exit Value', cellMoney(Math.round(exitValue)), totalSF ? cellMoney(Math.round(exitValue / totalSF)) : '', s.units ? cellMoney(Math.round(exitValue / s.units)) : '', 'NOI divided by exit cap']),
+    xlsRow(['Exit Value', cellMoney(Math.round(exitValue)), totalSF ? cellMoney(Math.round(exitValue / totalSF)) : '', s.units ? cellMoney(Math.round(exitValue / s.units)) : '', 'Year-5 NOI divided by exit cap']),
     xlsRow(['Net Profit', cellMoneySigned(Math.round(netProfit)), totalSF ? cellMoneySigned(Math.round(netProfit / totalSF)) : '', s.units ? cellMoneySigned(Math.round(netProfit / s.units)) : '', 'Exit value less total all-in cost']),
     xlsRow(['IRR %', cellPct(Math.round(irr * 10) / 10), '', '', 'Levered 5-year IRR']),
     xlsRow(['Cap On Cost %', cellPct(s.capOnCost || 0), '', '', 'NOI / total cost']),
@@ -961,7 +1057,7 @@ async function exportExcel(id) {
     xlsRow(['Implied Monthly Gross Rent', cellMoney(rentMonthly)]),
     xlsRow(['Implied Annual Gross Rent', cellMoney(rentMonthly * 12)]),
     xlsRow(['Vacancy', '5.0%']),
-    xlsRow(['Expense Ratio', '38.0%']),
+    xlsRow(['Expense Ratio', '35.0%']),
     xlsRow(['']),
     ...rentRowsFromSubmarket(s, submarket),
   ];
@@ -971,7 +1067,7 @@ async function exportExcel(id) {
     xlsHeaderRow(['Year', 'NOI', 'Debt Service', 'Cash Flow Before Tax', 'Exit Value', 'Loan Payoff', 'Net Sale Proceeds']),
   ];
   for (let year = 1; year <= 5; year++) {
-    const yearNoi = Math.round(noi * Math.pow(1.025, year - 1));
+    const yearNoi = Math.round(noi * Math.pow(1.03, year - 1));
     const sale = year === 5 ? Math.round(yearNoi / exitCap) : '';
     const payoff = year === 5 ? Math.round(loan) : '';
     const proceeds = year === 5 ? Math.round((sale || 0) - loan) : '';
@@ -997,6 +1093,7 @@ async function exportExcel(id) {
     xlsSheet('Summary', summaryRows, [220, 220, 120, 120, 220]) +
     xlsSheet('Pencil Check', pencilCheckRows(s, { tc, land, noi, exitValue, netProfit, exitCap, hardCosts, hardPerSf, totalPerSf, totalPerUnit }), [190, 150, 130, 300]) +
     xlsSheet('Underwriting', underwritingRows, [190, 130, 120, 120, 280]) +
+    xlsSheet('Income Statement', incomeStatementRows(s, income), [220, 130, 120, 110, 260]) +
     xlsSheet('Rent Roll', rentRows, [160, 120, 100, 120, 130, 130]) +
     xlsSheet('Rent Comps', rentCompPropertyRows(rentComps, s, submarket), [260, 80, 90, 70, 70, 120, 90, 90, 90, 100, 260, 100, 120, 220]) +
     xlsSheet('Sales Comps', salesCompRows(comps), [220, 80, 130, 100, 120, 115, 85, 70, 90, 90, 90, 110, 100, 120, 120, 130, 130, 100, 120, 130, 100, 260]) +
@@ -1023,7 +1120,7 @@ function exportPDF(id) {
   const noi  = s.noi || 0;
   const exitV = s.exitValue || 0;
   const entryCap = s.entryCap || 0.0475;
-  const exitCap  = entryCap + 0.005;
+  const exitCap  = s.exitCap || entryCap + 0.0025;
   const capoc    = s.capOnCost || 0;
   const spread   = Math.round((s.devSpreadPct || 0) * 1000) / 10;
   const today    = new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'});
@@ -1038,6 +1135,7 @@ function exportPDF(id) {
   const pdfTotalPerSf = pdfTotalSF ? Math.round(tc / pdfTotalSF) : 0;
   const pdfTotalPerUnit = s.units ? Math.round(tc / s.units) : 0;
   const pdfSoftPctHard = pdfHardCosts ? Math.round((pdfSoftCosts / pdfHardCosts) * 1000) / 10 : 0;
+  const pdfIncome = incomeStatementForSite(s);
 
   win.document.write(`<!DOCTYPE html>
 <html>
@@ -1223,11 +1321,12 @@ function exportPDF(id) {
       <tr><td>Title, Escrow & Legal (est.)</td><td>${fmtD(land*0.015+25000)}</td></tr>
       <tr class="tot"><td>Land Subtotal</td><td>${fmtD(land*1.015+25000)}</td></tr>
 
-      <tr><th colspan="2" style="padding-top:10px">HARD COSTS (RSMeans 2024)</th></tr>
-      <tr><td>Direct Construction ($${s.type==='Condo/TH'?340:s.type==='Mixed-Use'?320:s.type==='SFR+ADU'?275:285}/SF)</td><td>${fmtD((s.units*(s.usf||800))*(s.type==='Condo/TH'?340:s.type==='Mixed-Use'?320:s.type==='SFR+ADU'?275:285))}</td></tr>
-      <tr><td>Site Work & Demo</td><td>${fmtD(s.demo?45000:15000)}</td></tr>
-      <tr><td>Contingency (10%)</td><td>${fmtD((s.units*(s.usf||800))*(s.type==='Condo/TH'?340:s.type==='Mixed-Use'?320:285)*0.10)}</td></tr>
-      <tr class="tot"><td>Hard Cost Subtotal</td><td>${fmtD((s.units*(s.usf||800))*(s.type==='Condo/TH'?340:s.type==='Mixed-Use'?320:285)*1.10+45000)}</td></tr>
+      <tr><th colspan="2" style="padding-top:10px">HARD COSTS</th></tr>
+      <tr><td>Hard Construction Budget</td><td>${fmtD(pdfHardCosts)}</td></tr>
+      <tr><td>Hard Cost / SF</td><td>${fmtD(pdfHardPerSf)}/SF</td></tr>
+      <tr><td>Hard Cost / Unit</td><td>${fmtD(pdfHardPerUnit)}/unit</td></tr>
+      <tr><td>Budget Read</td><td>Use $/SF first; $/unit rises with larger units</td></tr>
+      <tr class="tot"><td>Hard Cost Subtotal</td><td>${fmtD(pdfHardCosts)}</td></tr>
     </table>
   </div>
   <div>
@@ -1290,12 +1389,23 @@ function exportPDF(id) {
 
     <h3>Operating Statement</h3>
     <table>
-      <tr><td>Gross Potential Rent</td><td>${fmtD(Math.round(noi/0.57))}</td></tr>
-      <tr><td>Less: Vacancy (5%)</td><td style="color:#e24b4a">(${fmtD(Math.round(noi/0.57*0.05))})</td></tr>
-      <tr><td>Plus: Other Income</td><td>${fmtD(s.units*600)}</td></tr>
-      <tr class="tot"><td>Effective Gross Income</td><td>${fmtD(Math.round(noi/0.57*0.95+s.units*600))}</td></tr>
-      <tr><td>Operating Expenses (38%)</td><td style="color:#e24b4a">(${fmtD(Math.round(noi/0.62*0.38))})</td></tr>
-      <tr class="tot" style="background:#e8f5ee"><td style="color:#1d9e75;font-weight:700">NET OPERATING INCOME</td><td style="color:#1d9e75;font-weight:700;font-size:12px">${fmtD(noi)}</td></tr>
+      <tr><td>Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
+      <tr><td>Less: Vacancy (5%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.vacancyLoss)})</td></tr>
+      <tr><td>Plus: Other Income</td><td>${fmtD(pdfIncome.otherIncome)}</td></tr>
+      <tr class="tot"><td>Effective Gross Income</td><td>${fmtD(pdfIncome.effectiveGrossIncome)}</td></tr>
+      <tr><td>Property Taxes</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.propertyTaxes || 0)})</td></tr>
+      <tr><td>Insurance</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.insurance || 0)})</td></tr>
+      <tr><td>Utilities</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.utilities || 0)})</td></tr>
+      <tr><td>Repairs & Maintenance</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.repairsMaintenance || 0)})</td></tr>
+      <tr><td>Payroll / Admin</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.payrollAdmin || 0)})</td></tr>
+      <tr><td>Management Fee</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.managementFee || 0)})</td></tr>
+      <tr><td>Marketing / Turnover</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.marketingTurnover || 0)})</td></tr>
+      <tr><td>Replacement Reserves</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.replacementReserves || 0)})</td></tr>
+      <tr><td>Other Operating</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.otherOperating || 0)})</td></tr>
+      <tr><td>Total Operating Expenses (35%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.operatingExpenses)})</td></tr>
+      <tr class="tot" style="background:#e8f5ee"><td style="color:#1d9e75;font-weight:700">NET OPERATING INCOME</td><td style="color:#1d9e75;font-weight:700;font-size:12px">${fmtD(pdfIncome.noi)}</td></tr>
+      <tr><td>Debt Service</td><td style="color:#e24b4a">(${fmtD(pdfIncome.debtService)})</td></tr>
+      <tr class="tot"><td>Cash Flow Before Tax</td><td>${fmtD(pdfIncome.cfbt)}</td></tr>
     </table>
   </div>
   <div>
@@ -1305,7 +1415,7 @@ function exportPDF(id) {
       <tr><td>Entry Cap Rate</td><td>${(entryCap*100).toFixed(2)}%</td></tr>
       <tr><td>Stabilized Value (entry cap)</td><td>${fmtD(noi/entryCap)}</td></tr>
       <tr><td>&nbsp;</td><td>&nbsp;</td></tr>
-      <tr><td>Exit Cap Rate (entry + 50bps)</td><td>${(exitCap*100).toFixed(2)}%</td></tr>
+      <tr><td>Exit Cap Rate (entry + 25bps)</td><td>${(exitCap*100).toFixed(2)}%</td></tr>
       <tr><td>Exit Value</td><td>${fmtD(exitV)}</td></tr>
       <tr><td>Less: Construction Loan</td><td style="color:#e24b4a">(${fmtD(tc*0.65)})</td></tr>
       <tr><td>Exit Proceeds to Equity</td><td>${fmtD(exitV-tc*0.65)}</td></tr>
@@ -1350,9 +1460,9 @@ function exportPDF(id) {
     <th style="text-align:right">Year 5</th>
   </tr>
   <tr>
-    <td>NOI (2.5% annual growth)</td>
+    <td>NOI (3.0% annual growth)</td>
     <td style="text-align:right;color:#999">—</td>
-    ${[1,2,3,4,5].map(yr => `<td style="text-align:right">${fmtD(Math.round(noi*Math.pow(1.025,yr-1)))}</td>`).join('')}
+    ${[1,2,3,4,5].map(yr => `<td style="text-align:right">${fmtD(Math.round(noi*Math.pow(1.03,yr-1)))}</td>`).join('')}
   </tr>
   <tr>
     <td>Debt Service (I/O @ 6.5%)</td>
@@ -1363,7 +1473,7 @@ function exportPDF(id) {
     <td>CFBT</td>
     <td style="text-align:right;color:#999">—</td>
     ${[1,2,3,4,5].map(yr => {
-      const cfbt = Math.round(noi*Math.pow(1.025,yr-1) - tc*0.65*0.065);
+      const cfbt = Math.round(noi*Math.pow(1.03,yr-1) - tc*0.65*0.065);
       return `<td style="text-align:right;color:${cfbt>0?'#1d9e75':'#e24b4a'}">${cfbt>0?fmtD(cfbt):`(${fmtD(Math.abs(cfbt))})`}</td>`;
     }).join('')}
   </tr>
@@ -1383,7 +1493,7 @@ function exportPDF(id) {
     <td style="color:white">EQUITY CASHFLOWS</td>
     <td style="text-align:right;color:#c49a3c">(${fmtD(Math.round(tc*0.35))})</td>
     ${[1,2,3,4,5].map((yr, i) => {
-      const cfbt = Math.round(noi*Math.pow(1.025,yr-1) - tc*0.65*0.065);
+      const cfbt = Math.round(noi*Math.pow(1.03,yr-1) - tc*0.65*0.065);
       const exit = yr===5 ? exitV - Math.round(tc*0.65) : 0;
       const total = cfbt + exit;
       return `<td style="text-align:right;color:#c49a3c">${fmtD(total)}</td>`;
@@ -1424,7 +1534,7 @@ function exportPDF(id) {
       <tr><th>Risk Factor</th><th>Impact</th><th>Mitigation</th></tr>
       <tr><td>Cost overrun (10%)</td><td class="red">−${fmtM(tc*0.10)} profit</td><td>10% contingency included</td></tr>
       <tr><td>Rent miss (5%)</td><td class="red">−${fmtM(noi*0.05*5)} NPV</td><td>Conservative rent assumptions</td></tr>
-      <tr><td>Cap rate expansion (+50bps)</td><td class="red">−${fmtM(noi/0.005)}</td><td>Exit cap already +50bps over entry</td></tr>
+      <tr><td>Cap rate expansion (+50bps)</td><td class="red">−${fmtM(noi/0.005)}</td><td>Exit cap already +25bps over entry</td></tr>
       <tr><td>Construction delay (6 mo)</td><td class="amber">+${fmtM(tc*0.65*0.065*0.5)} carry</td><td>${s.rti ? 'RTI eliminates entitlement delay' : 'Depends on plan check timeline'}</td></tr>
       <tr><td>Interest rate spike (+1%)</td><td class="amber">+${fmtM(tc*0.65*0.01*1.5)} carry</td><td>Rate cap recommended</td></tr>
     </table>
@@ -1504,7 +1614,8 @@ function exportPDF(id) {
 }
 
 function resetFilters() {
-  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-sf'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
+  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
+  const sf=g('f-sf'); if(sf)sf.checked=false;
   ['f-hood','f-zone'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-umin','f-umax','f-pmin','f-pmax','mf-p','mf-i','mf-s','mf-c','mf-hc'].forEach(id=>{const el=g(id);if(el)el.value='';});
   loadSites();

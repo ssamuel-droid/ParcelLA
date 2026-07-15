@@ -187,7 +187,10 @@ function uw(p) {
   const cap = CAPS[h]||0.0525;
   const hc = HC[t]||285;
   const blend = R.s*0.25+R.o*0.50+R.t*0.20+R.th*0.05;
-  const noi = blend*12*u*0.95*0.62;
+  const grossRent = blend*12*u;
+  const otherIncome = u*600;
+  const egi = grossRent*0.95 + otherIncome;
+  const noi = egi*0.65;
   const hard = hc*800*u;
   const soft = hard*0.18;
   const land = p.valuation>hard ? p.valuation : hard*0.45;
@@ -195,7 +198,8 @@ function uw(p) {
   const loan = pre*0.65;
   const carry = loan*0.065*1.5;
   const total = pre+carry;
-  const exit = noi/(cap+0.005);
+  const year5Noi = noi*Math.pow(1.03,4);
+  const exit = year5Noi/(cap+0.0025);
   const profit = exit-total;
   const eq = total-loan;
   const ds = loan*0.065;

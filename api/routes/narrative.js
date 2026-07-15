@@ -89,7 +89,7 @@ async function findNarrativeSite(siteId) {
   if (!data) return { site: null, model: null };
 
   const site = mapSupabaseSite(data);
-  return { site, model: site._m };
+  return { site, model: runModel(normalizeSite(site)) };
 }
 
 // ── NARRATIVE ─────────────────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
     const { site, model: baseModel } = await findNarrativeSite(siteId);
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
-    const model = Object.keys(overrides).length && !site._precomputed
+    const model = Object.keys(overrides).length
       ? runModel(normalizeSite(site), overrides)
       : baseModel;
 
