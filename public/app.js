@@ -31,9 +31,22 @@ async function fetchHousingPermits() {
   }
 }
 
+function fullAddress(addr) {
+  return `${addr}, Los Angeles, CA`;
+}
+
+function addressQuery(addr) {
+  return encodeURIComponent(fullAddress(addr));
+}
+
 // Street View thumbnail for any address
-function streetViewURL(lat, lng, w=400, h=200) {
-  return `https://maps.googleapis.com/maps/api/streetview?size=${w}x${h}&location=${lat},${lng}&fov=90&heading=0&pitch=5&key=${GMAPS_KEY}`;
+function streetViewURL(addr, w=640, h=220) {
+  return `https://maps.googleapis.com/maps/api/streetview?size=${w}x${h}&location=${addressQuery(addr)}&fov=90&heading=0&pitch=5&key=${GMAPS_KEY}`;
+}
+
+function staticMapURL(addr, maptype='roadmap', w=640, h=220) {
+  const q = addressQuery(addr);
+  return `https://maps.googleapis.com/maps/api/staticmap?size=${w}x${h}&scale=2&zoom=17&maptype=${maptype}&center=${q}&markers=color:0x0f1f3d%7C${q}&key=${GMAPS_KEY}`;
 }
 
 // Neighborhood center coordinates for Street View
@@ -52,14 +65,109 @@ const HOOD_COORDS = {
 
 // Google Maps search link for an address
 function mapsLink(addr) {
-  return `https://www.google.com/maps/search/${encodeURIComponent(addr + ', Los Angeles, CA')}`;
+  return `https://www.google.com/maps/search/?api=1&query=${addressQuery(addr)}`;
+}
+
+function directionsLink(addr) {
+  return `https://www.google.com/maps/dir/?api=1&destination=${addressQuery(addr)}`;
+}
+
+function streetViewLink(addr) {
+  return `https://www.google.com/maps/search/?api=1&query=${addressQuery(addr)}&layer=c`;
+}
+
+function officialResearchLink(addr, source) {
+  return `https://www.google.com/search?q=${encodeURIComponent(fullAddress(addr) + ' ' + source)}`;
+}
+
+function nearbySearchLink(addr, query) {
+  return `https://www.google.com/maps/search/${encodeURIComponent(query + ' near ' + fullAddress(addr))}`;
+}
+
+function mapPreviewForMode(s, mode) {
+  if (mode === 'satellite') return staticMapURL(s.addr, 'satellite');
+  if (mode === 'terrain') return staticMapURL(s.addr, 'terrain');
+  if (mode === 'street') return streetViewURL(s.addr);
+  return staticMapURL(s.addr, 'roadmap');
+}
+
+function mapOpenLinkForMode(s, mode) {
+  if (mode === 'street') return streetViewLink(s.addr);
+  return mapsLink(s.addr);
+}
+
+function mapModeLabel(mode) {
+  return { roadmap:'Map', satellite:'Satellite', terrain:'Terrain', street:'Street View' }[mode] || 'Map';
+}
+
+function setMapMode(id, mode) {
+  const s = allSites.find(x => x.id === id);
+  if (!s) return;
+  const img = g('map-img-' + id);
+  const link = g('map-link-' + id);
+  const label = g('map-label-' + id);
+  if (img) img.src = mapPreviewForMode(s, mode);
+  if (link) link.href = mapOpenLinkForMode(s, mode);
+  if (label) label.textContent = mapModeLabel(mode) + ' - ' + s.addr;
+  document.querySelectorAll('#map-tabs-' + id + ' .mapbtn').forEach(btn => {
+    btn.classList.toggle('on', btn.dataset.mode === mode);
+  });
+}
+
+function renderMapPanel(s) {
+  const modes = ['roadmap', 'satellite', 'terrain', 'street'];
+  const links = [
+    ['Google Maps', mapsLink(s.addr)],
+    ['Directions', directionsLink(s.addr)],
+    ['ZIMAS zoning', officialResearchLink(s.addr, 'ZIMAS zoning')],
+    ['LADBS permits', officialResearchLink(s.addr, 'LADBS permits PCIS')],
+    ['Rent comps nearby', nearbySearchLink(s.addr, 'apartments for rent')],
+    ['Sales comps nearby', nearbySearchLink(s.addr, 'multifamily sale comps')],
+  ];
+  return `
+    <div class="maptabs" id="map-tabs-${s.id}">
+      ${modes.map((mode, i) => `<button class="mapbtn${i===0?' on':''}" data-mode="${mode}" onclick="setMapMode(${s.id}, '${mode}')">${mapModeLabel(mode)}</button>`).join('')}
+    </div>
+    <a id="map-link-${s.id}" href="${mapsLink(s.addr)}" target="_blank" rel="noopener" class="mapcard">
+      <img id="map-img-${s.id}" src="${staticMapURL(s.addr, 'roadmap')}" alt="Map of ${s.addr}" onerror="this.parentElement.innerHTML='<div style=\\'height:82px;display:flex;align-items:center;justify-content:center;background:#f8f8f8;font-size:11px;color:#aaa\\'>Map preview unavailable</div>'">
+      <div id="map-label-${s.id}" class="mapcap">Map - ${s.addr}</div>
+    </a>
+    <div class="maplinks">
+      ${links.map(([label, href]) => `<a href="${href}" target="_blank" rel="noopener">${label}</a>`).join('')}
+    </div>`;
 }
 const fmtM = n => n >= 1e6 ? '$'+(Math.round(n/1e5)/10)+'M' : n >= 1e3 ? '$'+Math.round(n/1e3)+'K' : '$'+Math.round(n||0);
 const fmtD = n => '$'+Math.round(n||0).toLocaleString();
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
-let allSites = [], filtered = [], openId = null;
+let allSites = [], filtered = [], openId = null, activeView = 'list', watchlist = loadWatchlist();
 const g = id => document.getElementById(id);
+const LA_MAP_BOUNDS = { minLat: 33.92, maxLat: 34.18, minLng: -118.48, maxLng: -118.16 };
+const MAP_TRANSIT_NODES = [
+  { name:'Union Station', lat:34.0560, lng:-118.2365 },
+  { name:'7th/Metro', lat:34.0483, lng:-118.2589 },
+  { name:'Wilshire/Vermont', lat:34.0625, lng:-118.2922 },
+  { name:'Expo/Western', lat:34.0271, lng:-118.3089 },
+  { name:'Culver City', lat:34.0109, lng:-118.3896 },
+  { name:'Hollywood/Highland', lat:34.1019, lng:-118.3397 },
+];
+const mapLayers = { forSale:true, rti:true, offMarket:true, watchlist:true, transit:true };
+const FRONTEND_HARD_COST_PSF = {'Multifamily':285,'Mixed-Use':320,'Condo/TH':340,'SFR+ADU':275};
+const FRONTEND_CAP_RATES = {
+  'Silver Lake':0.0475,'Echo Park':0.0500,'Highland Park':0.0525,'Los Feliz':0.0475,
+  'Koreatown':0.0525,'Mid-Wilshire':0.0500,'Culver City':0.0475,'Mar Vista':0.0500,
+  'West Adams':0.0525,'Boyle Heights':0.0575,'Hollywood':0.0500,'North Hollywood':0.0525,
+  'Northridge':0.0550,'Van Nuys':0.0550,'Reseda':0.0575,'Panorama City':0.0600
+};
+const CONSTRUCTION_PLANS = {
+  auto:     { label:'Auto by type', hardCost:null, softPct:0.18, months:18, rentPremium:0,    note:'Uses the project-type base cost.' },
+  value:    { label:'Value engineered', hardCost:255, softPct:0.16, months:16, rentPremium:-0.02, note:'Simpler spec, tighter soft costs, and a modest rent haircut.' },
+  typev:    { label:'Type V wood frame', hardCost:285, softPct:0.18, months:18, rentPremium:0,    note:'Baseline 3-5 story wood-frame multifamily.' },
+  modular:  { label:'Modular / prefab', hardCost:265, softPct:0.17, months:14, rentPremium:0,    note:'Lower field time with prefab/modular execution.' },
+  podium:   { label:'Type III podium', hardCost:340, softPct:0.22, months:22, rentPremium:0.03, note:'Podium or mixed-use structure with more common-area load.' },
+  luxury:   { label:'Luxury finish', hardCost:380, softPct:0.23, months:22, rentPremium:0.08, note:'Higher finishes, amenities, and achievable rent premium.' },
+  concrete: { label:'Concrete / steel', hardCost:450, softPct:0.25, months:28, rentPremium:0.06, note:'Heavy structure/high-rise plan; use only when the site requires it.' },
+};
 
 document.getElementById('app').innerHTML = `<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -77,7 +185,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .sb2{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:5px}.sb2 input{width:100%;padding:5px 7px;border:1px solid var(--line);border-radius:6px;font-size:11px;background:#fff;text-align:right;color:var(--ink)}
 .sbf{padding:9px 12px;border-top:1px solid var(--line);background:#fff}.bp{width:100%;padding:8px;background:var(--navy);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;margin-bottom:5px}.bp:hover{background:var(--navy2)}
 .br{width:100%;padding:6px;background:#fff;color:#687485;border:1px solid var(--line);border-radius:6px;font-size:11px;cursor:pointer}.br:hover{border-color:#b8c2cf;color:var(--ink)}
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}.mfb{display:grid;grid-template-columns:repeat(5,minmax(118px,1fr));gap:6px;padding:8px 10px;background:#f8fafc;border-bottom:1px solid var(--line);flex-shrink:0}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}.mfb{display:grid;grid-template-columns:repeat(6,minmax(118px,1fr));gap:6px;padding:8px 10px;background:#f8fafc;border-bottom:1px solid var(--line);flex-shrink:0}
 .mf{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 8px}.mf.active{border-color:var(--gold);box-shadow:inset 0 0 0 1px rgba(185,139,47,.25);background:#fffdf7}.mfl{font-size:8px;color:#778397;text-transform:uppercase;letter-spacing:0;margin-bottom:4px;font-weight:800}.mfr{display:flex;align-items:center;gap:4px}.mfr input{flex:1;font-size:11px;padding:3px 4px;border:1px solid var(--line);border-radius:5px;background:#fff;text-align:right;min-width:0}.mfr span{font-size:9px;color:#8994a5;flex-shrink:0}.mfa{padding:4px 6px;border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:5px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.mfa.clear{border-color:var(--line);background:#fff;color:#687485}.override-note{font-size:10px;color:#7f8a9a;font-weight:700;margin-left:8px}
 .tb{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:#fff;border-bottom:1px solid var(--line);flex-shrink:0}.tbl{font-size:12px;font-weight:800;color:#243044}.ss{font-size:11px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
 .list{flex:1;overflow-y:auto;padding:8px 10px}.card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:border-color 0.12s,box-shadow 0.12s,transform 0.12s;min-width:0}
@@ -93,9 +201,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .mbg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:5px}.mb{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:7px 8px;border-left:3px solid #ddd}.mbl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.mbv{font-size:15px;font-weight:900}.mbs{font-size:8px;color:#7f8a9a;margin-top:1px;line-height:1.15}
 .ct{width:100%;font-size:11px;border-collapse:collapse}.ct td{padding:5px 0;border-bottom:0.5px solid #edf1f4}.ct td:last-child{text-align:right;font-weight:800}.ct tr.tot td{font-weight:900;border-top:1px solid #d8dee7;border-bottom:none;padding-top:6px}.wfr{margin-bottom:5px}.wfl{display:flex;justify-content:space-between;font-size:9px;color:#4d5969;margin-bottom:2px}.wft{height:8px;background:#edf1f5;border-radius:3px;overflow:hidden}.wff{height:100%;border-radius:3px}
 .nb{background:#fffbf0;border:1px solid #f0e0b0;border-left:3px solid var(--gold);border-radius:7px;padding:9px 11px;font-size:11px;line-height:1.55;color:#3f4a5a;margin-top:6px}.gb{padding:7px 12px;background:var(--gold);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-top:5px}.ab{width:100%;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:800;cursor:pointer;margin-top:6px}.ap{background:var(--navy);color:#fff}.as{background:#fff;color:var(--navy);border:1px solid var(--navy)}
-@media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}}
-@media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}}
-@media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg{grid-template-columns:1fr}}
+.maptabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:5px}.mapbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 4px;font-size:9px;font-weight:800;cursor:pointer}.mapbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.mapcard{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:5px;background:#fff;text-decoration:none}.mapcard img{width:100%;height:152px;object-fit:cover;display:block}.mapcap{padding:5px 8px;font-size:9px;color:#536071;background:#f8fafc;border-top:1px solid var(--line)}.maplinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:6px}.maplinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}.maplinks a:hover{border-color:var(--gold);background:#fffdf7}
+.viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:cover;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:3;transform:translate(-50%,-50%) scale(1.25)}.pin:after{content:attr(data-label);position:absolute;left:18px;top:-4px;background:#fff;border:1px solid var(--line);border-radius:5px;padding:3px 5px;font-size:9px;font-weight:800;color:var(--ink);white-space:nowrap;display:none}.pin:hover:after{display:block}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}
+@media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}}
+@media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg,.maplinks,.sourcelinks{grid-template-columns:1fr}.viewtabs{width:100%;margin-left:0}.viewbtn{flex:1}}
 </style>
 <nav class="nav">
   <div class="logo">PARCEL<span>LA</span></div>
@@ -109,6 +219,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-fs" checked> For sale</label>
       <label class="cb"><input type="checkbox" id="f-rti" checked> RTI / Entitled</label>
       <label class="cb"><input type="checkbox" id="f-comp" checked> Off-market</label>
+      <label class="cb"><input type="checkbox" id="f-watch"> Watchlist only</label>
       <h4>Project type</h4>
       <label class="cb"><input type="checkbox" id="f-mf" checked> Multifamily</label>
       <label class="cb"><input type="checkbox" id="f-mx" checked> Mixed-use</label>
@@ -144,10 +255,15 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <div class="mf"><div class="mfl">Min IRR</div><div class="mfr"><input type="number" id="mf-i" placeholder="0" step="1"><span>%</span></div></div>
       <div class="mf"><div class="mfl">Min dev spread</div><div class="mfr"><input type="number" id="mf-s" placeholder="0" step="1"><span>%</span></div></div>
       <div class="mf"><div class="mfl">Min cap on cost</div><div class="mfr"><input type="number" id="mf-c" placeholder="0" step="0.25"><span>%</span></div></div>
+      <div class="mf" id="plan-box"><div class="mfl">Construction plan</div><select class="sbs" id="mf-plan" onchange="applyFilters()" style="margin:0;padding:3px 4px;font-size:10px"><option value="auto">Auto by type</option><option value="value">Value engineered</option><option value="typev">Type V wood frame</option><option value="modular">Modular / prefab</option><option value="podium">Type III podium</option><option value="luxury">Luxury finish</option><option value="concrete">Concrete / steel</option></select></div>
       <div class="mf" id="hc-box"><div class="mfl">Your hard cost / SF</div><div class="mfr"><span>$</span><input type="number" id="mf-hc" placeholder="RSMeans" step="5"><button class="mfa" onclick="applyHardCostOverride()">Run</button></div></div>
     </div>
     <div class="tb">
       <span class="tbl" id="rct">Loading sites...</span>
+      <div class="viewtabs">
+        <button class="viewbtn on" id="view-list" onclick="setView('list')">List</button>
+        <button class="viewbtn" id="view-map" onclick="setView('map')">Map</button>
+      </div>
       <select class="ss" id="srt" onchange="applyFilters()">
         <option value="profit">Net profit ↓</option><option value="irr">IRR ↓</option>
         <option value="spread">Dev spread ↓</option><option value="capoc">Cap on cost ↓</option>
@@ -185,6 +301,166 @@ function currentHardCostOverride() {
   return val > 0 ? Math.round(val) : 0;
 }
 
+function currentConstructionPlan() {
+  const key = g('mf-plan')?.value || 'auto';
+  return { key, ...(CONSTRUCTION_PLANS[key] || CONSTRUCTION_PLANS.auto) };
+}
+
+function signedPlanPct(value) {
+  const pct = Math.round((value || 0) * 1000) / 10;
+  return pct > 0 ? '+' + pct + '%' : pct + '%';
+}
+
+function planByKey(key) {
+  return { key, ...(CONSTRUCTION_PLANS[key] || CONSTRUCTION_PLANS.auto) };
+}
+
+function loadWatchlist() {
+  try { return JSON.parse(localStorage.getItem('parcella_watchlist') || '[]'); }
+  catch { return []; }
+}
+
+function saveWatchlist() {
+  localStorage.setItem('parcella_watchlist', JSON.stringify(watchlist));
+}
+
+function isWatched(id) {
+  return watchlist.includes(Number(id));
+}
+
+function toggleWatch(id, ev) {
+  if (ev) ev.stopPropagation();
+  id = Number(id);
+  watchlist = isWatched(id) ? watchlist.filter(x => x !== id) : [...watchlist, id];
+  saveWatchlist();
+  renderCards();
+  if (openId === id) renderDetail(allSites.find(x => x.id === id));
+}
+
+function cityMapURL(maptype='roadmap') {
+  return `https://maps.googleapis.com/maps/api/staticmap?size=960x620&scale=2&center=34.0522,-118.2851&zoom=10&maptype=${maptype}&key=${GMAPS_KEY}`;
+}
+
+function siteCoords(s) {
+  if (Number(s?.lat) && Number(s?.lng)) return { lat:Number(s.lat), lng:Number(s.lng) };
+  const base = HOOD_COORDS[s?.hood] || { lat:34.0522, lng:-118.2851 };
+  const n = Number(s?.id || 0);
+  return {
+    lat: base.lat + (((n * 7) % 11) - 5) * 0.0025,
+    lng: base.lng + (((n * 5) % 11) - 5) * 0.0035,
+  };
+}
+
+function mapPoint(lat, lng) {
+  const x = Math.max(3, Math.min(97, ((lng - LA_MAP_BOUNDS.minLng) / (LA_MAP_BOUNDS.maxLng - LA_MAP_BOUNDS.minLng)) * 100));
+  const y = Math.max(3, Math.min(97, (1 - ((lat - LA_MAP_BOUNDS.minLat) / (LA_MAP_BOUNDS.maxLat - LA_MAP_BOUNDS.minLat))) * 100));
+  return { x, y };
+}
+
+function siteMapPoint(s) {
+  const c = siteCoords(s);
+  return mapPoint(c.lat, c.lng);
+}
+
+function markerColorForSite(s, valuation) {
+  if (isWatched(s.id)) return '#b98b2f';
+  if ((valuation?.netProfit || 0) > 500000) return '#1d9e75';
+  if (s.rti) return '#378add';
+  if (s.isComp) return '#8994a5';
+  return '#ef9f27';
+}
+
+function visibleOnMapLayer(s) {
+  if (isWatched(s.id) && mapLayers.watchlist) return true;
+  if (s.isComp) return mapLayers.offMarket;
+  if (s.rti) return mapLayers.rti;
+  return mapLayers.forSale;
+}
+
+function toggleMapLayer(layer) {
+  mapLayers[layer] = !mapLayers[layer];
+  renderCards();
+}
+
+function scenarioForSite(s, key) {
+  const plan = planByKey(key);
+  const costs = costModelForSite(s, plan);
+  const income = incomeStatementForSite(s, costs, plan);
+  const valuation = valuationForSite(s, costs, income);
+  return { key, plan, costs, income, valuation };
+}
+
+function scenarioListForSite(s) {
+  return ['value','typev','modular','podium','luxury','concrete'].map(key => scenarioForSite(s, key));
+}
+
+function selectedScenarioKey() {
+  return currentConstructionPlan().key === 'auto' ? 'typev' : currentConstructionPlan().key;
+}
+
+function scenarioComparisonHTML(s) {
+  const selected = selectedScenarioKey();
+  return `<table class="ct scn">
+    <tr><td>Plan</td><td>Hard/SF</td><td>Total/unit</td><td>Net profit</td></tr>
+    ${scenarioListForSite(s).map(row => {
+      const pc = row.valuation.netProfit >= 0 ? '#1d9e75' : '#e24b4a';
+      return `<tr class="${row.key===selected?'selrow':''}">
+        <td>${row.plan.label}</td>
+        <td>${fmtD(row.costs.hardPerSf)}</td>
+        <td>${fmtD(row.costs.totalPerUnit)}</td>
+        <td style="color:${pc}">${fmtM(row.valuation.netProfit)}</td>
+      </tr>`;
+    }).join('')}
+  </table>`;
+}
+
+function pencilReadItems(s, costs, income, valuation) {
+  const items = [];
+  const marketCap = valuation.entryCap * 100;
+  const exitCap = valuation.exitCap * 100;
+  const spread = Math.round((valuation.devSpreadPct || 0) * 1000) / 10;
+  items.push({
+    status: valuation.netProfit >= 0 ? 'Pass' : 'Risk',
+    text: valuation.netProfit >= 0
+      ? `Creates ${fmtM(valuation.netProfit)} above all-in cost.`
+      : `Needs ${fmtM(Math.abs(valuation.netProfit))} of value improvement to break even.`,
+  });
+  items.push({
+    status: valuation.capOnCost >= marketCap ? 'Pass' : 'Risk',
+    text: `Cap on cost is ${valuation.capOnCost}% versus about ${marketCap.toFixed(2)}% market entry cap.`,
+  });
+  items.push({
+    status: spread >= 10 ? 'Pass' : spread >= 0 ? 'Watch' : 'Risk',
+    text: `Development spread is ${spread}%.`,
+  });
+  items.push({
+    status: costs.hardPerSf <= 325 ? 'Pass' : costs.hardPerSf <= 380 ? 'Watch' : 'Risk',
+    text: `Hard cost is ${fmtD(costs.hardPerSf)}/SF under the ${costs.planLabel} plan.`,
+  });
+  items.push({
+    status: income.noi > 0 ? 'Pass' : 'Risk',
+    text: `Stabilized NOI is ${fmtD(income.noi)} and exit cap is ${exitCap.toFixed(2)}%.`,
+  });
+  return items;
+}
+
+function pencilReadHTML(s, costs, income, valuation) {
+  return `<div class="readbox">
+    ${pencilReadItems(s, costs, income, valuation).map(item => `<div class="readitem ${item.status.toLowerCase()}"><span>${item.status}</span>${item.text}</div>`).join('')}
+  </div>`;
+}
+
+function sourceLinksHTML(s) {
+  const links = [
+    ['LA City Open Data', 'https://data.lacity.org/'],
+    ['ZIMAS zoning', officialResearchLink(s.addr, 'ZIMAS zoning')],
+    ['LADBS permits', officialResearchLink(s.addr, 'LADBS permits PCIS')],
+    ['Google Maps', mapsLink(s.addr)],
+    ['County recorder', officialResearchLink(s.addr, 'Los Angeles county recorder deed sale')],
+  ];
+  return `<div class="sourcelinks">${links.map(([label, href]) => `<a href="${href}" target="_blank" rel="noopener">${label}</a>`).join('')}</div>`;
+}
+
 async function loadSites() {
   g('list').innerHTML = '<div class="sw"><div class="spin"></div>Underwriting sites...</div>';
   try {
@@ -213,6 +489,7 @@ function applyFilters() {
   const mfs = +g('mf-s')?.value||0, mfc = +g('mf-c')?.value||0;
   const srt = g('srt')?.value||'profit';
   const ffs = g('f-fs')?.checked!==false, frti = g('f-rti')?.checked!==false, fcomp = g('f-comp')?.checked!==false;
+  const watchOnly = g('f-watch')?.checked === true;
   const types = [];
   if (g('f-mf')?.checked) types.push('Multifamily');
   if (g('f-mx')?.checked) types.push('Mixed-Use');
@@ -220,33 +497,46 @@ function applyFilters() {
   if (g('f-sf')?.checked) types.push('SFR+ADU');
 
   filtered = allSites.filter(s => {
+    const valuation = valuationForSite(s, costModelForSite(s));
     if (!ffs && !s.isComp && !s.rti && !s.forSale) return false;
     if (!frti && s.rti) return false;
     if (!fcomp && s.isComp) return false;
+    if (watchOnly && !isWatched(s.id)) return false;
     if (types.length && !types.includes(s.type)) return false;
     if (hood && s.hood !== hood) return false;
     if (zone && s.zone !== zone) return false;
     if (s.units < umin || s.units > umax) return false;
     if (!s.isComp && s.askPrice && (s.askPrice < pmin || s.askPrice > pmax)) return false;
-    if (mfp && (s.netProfit||0) < mfp) return false;
+    if (mfp && (valuation.netProfit||0) < mfp) return false;
     if (mfi && (s.irrV||0) < mfi) return false;
-    if (mfs && ((s.devSpreadPct||0)*100) < mfs) return false;
-    if (mfc && (s.capOnCost||0) < mfc) return false;
+    if (mfs && ((valuation.devSpreadPct||0)*100) < mfs) return false;
+    if (mfc && (valuation.capOnCost||0) < mfc) return false;
     return true;
   });
 
   filtered.sort((a,b) => {
     if (srt==='irr')     return (b.irrV||0)-(a.irrV||0);
-    if (srt==='spread')  return (b.devSpreadPct||0)-(a.devSpreadPct||0);
-    if (srt==='capoc')   return (b.capOnCost||0)-(a.capOnCost||0);
+    if (srt==='spread')  return (valuationForSite(b, costModelForSite(b)).devSpreadPct||0)-(valuationForSite(a, costModelForSite(a)).devSpreadPct||0);
+    if (srt==='capoc')   return (valuationForSite(b, costModelForSite(b)).capOnCost||0)-(valuationForSite(a, costModelForSite(a)).capOnCost||0);
     if (srt==='price-a') return (a.askPrice||0)-(b.askPrice||0);
     if (srt==='price-d') return (b.askPrice||0)-(a.askPrice||0);
     if (srt==='units')   return b.units-a.units;
-    return (b.netProfit||0)-(a.netProfit||0);
+    return (valuationForSite(b, costModelForSite(b)).netProfit||0)-(valuationForSite(a, costModelForSite(a)).netProfit||0);
   });
 
   const hcpsf = currentHardCostOverride();
-  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + (hcpsf ? ' - re-underwritten at $' + hcpsf.toLocaleString() + '/SF hard cost' : ' - pre-underwritten');
+  const plan = currentConstructionPlan();
+  const planText = plan.key === 'auto' ? '' : ' - ' + plan.label;
+  updateHardCostOverrideUI();
+  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + (hcpsf ? ' - re-underwritten at $' + hcpsf.toLocaleString() + '/SF hard cost' : planText || ' - pre-underwritten');
+  renderCards();
+}
+
+function setView(view) {
+  activeView = view === 'map' ? 'map' : 'list';
+  const listBtn = g('view-list'), mapBtn = g('view-map');
+  if (listBtn) listBtn.classList.toggle('on', activeView === 'list');
+  if (mapBtn) mapBtn.classList.toggle('on', activeView === 'map');
   renderCards();
 }
 
@@ -271,44 +561,99 @@ function updateHardCostOverrideUI() {
   const hcpsf = currentHardCostOverride();
   const box = g('hc-box');
   if (box) box.classList.toggle('active', !!hcpsf);
+  const planBox = g('plan-box');
+  if (planBox) planBox.classList.toggle('active', currentConstructionPlan().key !== 'auto');
 }
 
 function renderCards() {
   const el = g('list');
   if (!filtered.length) { el.innerHTML = '<div class="empty">No sites match your filters</div>'; return; }
-  const maxP = Math.max(...filtered.map(s => s.netProfit||0), 1);
+  if (activeView === 'map') { renderMapView(); return; }
+  const maxP = Math.max(...filtered.map(s => valuationForSite(s, costModelForSite(s)).netProfit || 0), 1);
   el.innerHTML = filtered.map(s => {
-    const irr=s.irrV||0, prof=s.netProfit||0;
+    const costs = costModelForSite(s);
+    const valuation = valuationForSite(s, costs);
+    const irr=s.irrV||0, prof=valuation.netProfit||0;
     const pc = prof>1e6?'#1d9e75':prof>0?'#ef9f27':'#e24b4a';
     const pp = Math.max(0,Math.round(prof/maxP*100));
-    const spd = Math.round((s.devSpreadPct||0)*1000)/10;
+    const spd = Math.round((valuation.devSpreadPct||0)*1000)/10;
     const hcpsf = currentHardCostOverride();
+    const plan = currentConstructionPlan();
     const ask = s.askPrice || s.price || 0;
     const landBasis = s.landCost || ask || 0;
     const priceMain = s.isComp ? 'Off-market' : (ask ? fmtM(ask) : 'Price n/a');
     const priceSub = s.isComp ? 'imputed land ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
+    const watched = isWatched(s.id);
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
       <div class="ch">
         <div><div class="ca">${s.addr}</div><div class="cm">${s.hood} &middot; ${s.zone} &middot; ${(s.lot||0).toLocaleString()} SF &middot; ${s.units} units</div></div>
-        <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div></div>
+        <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div><button class="watchbtn ${watched?'on':''}" onclick="toggleWatch(${s.id}, event)">${watched?'Saved':'Save'}</button></div>
       </div>
       <div class="bdgs">
         ${s.rti?'<span class="bdg b1">✓ RTI</span>':s.isComp?'<span class="bdg b4">Off-market</span>':'<span class="bdg b2">For sale</span>'}
-        <span class="bdg b3">${s.type}</span>${s.isComp?'<span class="bdg b4">land imputed</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
+        <span class="bdg b3">${s.type}</span>${s.isComp?'<span class="bdg b4">land imputed</span>':''}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${pc}">${fmtM(prof)}</div></div>
         <div class="kp"><div class="kpl">IRR</div><div class="kpv" style="color:${irrC(irr)}">${Math.round(irr*10)/10}%</div></div>
         <div class="kp"><div class="kpl">Dev spread</div><div class="kpv">${spd}%</div></div>
-        <div class="kp"><div class="kpl">Cap on cost</div><div class="kpv">${s.capOnCost||0}%</div></div>
+        <div class="kp"><div class="kpl">Cap on cost</div><div class="kpv">${valuation.capOnCost||0}%</div></div>
       </div>
       <div class="pb">
-        <span class="pbl">Exit ${fmtM(s.exitValue)}</span>
+        <span class="pbl">Exit ${fmtM(valuation.exitValue)}</span>
         <div class="pbt"><div class="pbf" style="width:${pp}%;background:${pc}"></div></div>
         <span class="pbv" style="color:${pc}">${fmtM(prof)}</span>
       </div>
     </div>`;
   }).join('');
+}
+
+function renderMapView() {
+  const el = g('list');
+  const visibleSites = filtered.filter(visibleOnMapLayer).slice(0, 250);
+  const pins = visibleSites.map(s => {
+    const valuation = valuationForSite(s, costModelForSite(s));
+    const pt = siteMapPoint(s);
+    const color = markerColorForSite(s, valuation);
+    const label = `${s.addr} - ${fmtM(valuation.netProfit)}`.replace(/"/g, '');
+    return `<button class="pin" data-label="${label}" onclick="openDetail(${s.id})" style="left:${pt.x}%;top:${pt.y}%;background:${color}"></button>`;
+  }).join('');
+  const transit = mapLayers.transit ? MAP_TRANSIT_NODES.map(node => {
+    const pt = mapPoint(node.lat, node.lng);
+    return `<span class="transitdot" title="${node.name}" style="left:${pt.x}%;top:${pt.y}%"></span>`;
+  }).join('') : '';
+  const topDeals = filtered.slice(0, 6).map(s => {
+    const valuation = valuationForSite(s, costModelForSite(s));
+    return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${s.addr}</b><span>${s.hood} - ${fmtM(valuation.netProfit)} - ${valuation.capOnCost||0}% cap on cost</span></div>`;
+  }).join('');
+  el.innerHTML = `<div class="mapview">
+    <div class="mapstage">
+      <img src="${cityMapURL('roadmap')}" alt="Los Angeles development map">
+      ${pins}${transit}
+      <div class="maplegend">
+        <span><i class="dot" style="background:#1d9e75"></i>Strong profit</span>
+        <span><i class="dot" style="background:#378add"></i>RTI / entitled</span>
+        <span><i class="dot" style="background:#ef9f27"></i>For sale</span>
+        <span><i class="dot" style="background:#b98b2f"></i>Watchlist</span>
+      </div>
+    </div>
+    <div class="mapside">
+      <div class="layerbox">
+        <h4>Map layers</h4>
+        ${[
+          ['forSale','For sale'],
+          ['rti','RTI / entitled'],
+          ['offMarket','Off-market'],
+          ['watchlist','Watchlist'],
+          ['transit','Transit / TOC'],
+        ].map(([key,label]) => `<button class="layerbtn ${mapLayers[key]?'on':''}" onclick="toggleMapLayer('${key}')"><span>${label}</span><span>${mapLayers[key]?'On':'Off'}</span></button>`).join('')}
+      </div>
+      <div class="topbox">
+        <h4>Top visible deals</h4>
+        ${topDeals || '<div class="empty" style="padding:10px">No visible deals</div>'}
+      </div>
+    </div>
+  </div>`;
 }
 
 function openDetail(id) {
@@ -327,15 +672,18 @@ function closeDetail() {
   renderCards();
 }
 
-function incomeStatementForSite(s) {
-  const noi = Math.round(s.noi || 0);
+function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan()) {
+  const planScenario = plan.key !== 'auto';
+  const storedNoi = Math.round(s.noi || 0);
   const opexRatio = 0.35;
-  const grossPotentialRent = Math.round(s.grossPotentialRent || (noi ? noi / (1 - opexRatio) / 0.95 : 0));
-  const vacancyLoss = Math.round(s.vacancyLoss ?? grossPotentialRent * 0.05);
+  const baseGrossPotentialRent = Math.round(s.grossPotentialRent || (storedNoi ? storedNoi / (1 - opexRatio) / 0.95 : 0));
+  const grossPotentialRent = Math.round(baseGrossPotentialRent * (1 + (plan.rentPremium || 0)));
+  const vacancyLoss = Math.round(planScenario ? grossPotentialRent * 0.05 : (s.vacancyLoss ?? grossPotentialRent * 0.05));
   const otherIncome = Math.round(s.otherIncome ?? (s.units || 0) * 600);
-  const effectiveGrossIncome = Math.round(s.effectiveGrossIncome || (grossPotentialRent - vacancyLoss + otherIncome));
-  const operatingExpenses = Math.round(s.operatingExpenses || Math.max(0, effectiveGrossIncome - noi));
-  const expenseDetail = s.expenseDetail || {
+  const effectiveGrossIncome = Math.round(planScenario ? grossPotentialRent - vacancyLoss + otherIncome : (s.effectiveGrossIncome || (grossPotentialRent - vacancyLoss + otherIncome)));
+  const operatingExpenses = Math.round(planScenario ? effectiveGrossIncome * opexRatio : (s.operatingExpenses || Math.max(0, effectiveGrossIncome - storedNoi)));
+  const noi = Math.round(planScenario || !storedNoi ? Math.max(0, effectiveGrossIncome - operatingExpenses) : storedNoi);
+  const expenseDetail = !planScenario && s.expenseDetail ? s.expenseDetail : {
     propertyTaxes: operatingExpenses * 0.22,
     insurance: operatingExpenses * 0.08,
     utilities: operatingExpenses * 0.08,
@@ -346,6 +694,9 @@ function incomeStatementForSite(s) {
     replacementReserves: operatingExpenses * 0.08,
     otherOperating: operatingExpenses * 0.12,
   };
+  const debtBase = costs?.totalCost || s.totalCost || 0;
+  const loanAmount = (planScenario || costs) ? debtBase * 0.65 : (s.loanAmount || debtBase * 0.65);
+  const debtService = Math.round((planScenario || costs) ? loanAmount * 0.065 : (s.debtService ?? loanAmount * 0.065));
   return {
     grossPotentialRent,
     vacancyLoss,
@@ -354,8 +705,8 @@ function incomeStatementForSite(s) {
     operatingExpenses,
     expenseDetail,
     noi,
-    debtService: Math.round(s.debtService ?? (s.loanAmount || (s.totalCost || 0) * 0.65) * 0.065),
-    cfbt: Math.round(s.cfbt ?? (noi - ((s.loanAmount || (s.totalCost || 0) * 0.65) * 0.065))),
+    debtService,
+    cfbt: Math.round((planScenario || costs) ? noi - debtService : (s.cfbt ?? (noi - debtService))),
   };
 }
 
@@ -374,28 +725,102 @@ function expenseRowsHTML(expenseDetail = {}) {
   return rows.map(([label, value]) => `<tr><td>${label}</td><td>${fmtD(value || 0)}</td></tr>`).join('');
 }
 
+function baseHardCostPerSf(type) {
+  return FRONTEND_HARD_COST_PSF[type] || 285;
+}
+
+function costModelForSite(s, plan = currentConstructionPlan()) {
+  const units = s.units || 0;
+  const avgUnitSf = s.usf || 800;
+  const totalSF = units * avgUnitSf;
+  const land = s.landCost || s.askPrice || s.price || 0;
+  const override = currentHardCostOverride();
+  const basePsf = override || plan.hardCost || baseHardCostPerSf(s.type);
+  let modeledHard = basePsf * totalSF;
+  if (totalSF > 100000) modeledHard *= 0.93;
+  else if (totalSF > 50000) modeledHard *= 0.95;
+  modeledHard = Math.round(modeledHard);
+
+  const storedHard = Math.round(s.hardCosts || 0);
+  const storedHardPsf = totalSF ? Math.round(storedHard / totalSF) : 0;
+  const modeledHardPsf = totalSF ? Math.round(modeledHard / totalSF) : 0;
+  const shouldRecast = override || plan.key !== 'auto' || !storedHard || storedHardPsf > modeledHardPsf * 1.2;
+
+  const hardCosts = shouldRecast ? modeledHard : storedHard;
+  const softPct = plan.softPct ?? 0.18;
+  const softCosts = shouldRecast ? Math.round(hardCosts * softPct) : Math.round(s.softCosts ?? Math.max(0, ((s.totalCost || 0) - land) * 0.24));
+  const preCarry = land + hardCosts + softCosts;
+  const carryYears = (plan.months || 18) / 12;
+  const carryCost = shouldRecast ? Math.round(preCarry * 0.65 * 0.065 * carryYears) : Math.round(s.carryCost ?? preCarry * 0.65 * 0.065 * carryYears);
+  const totalCost = shouldRecast ? preCarry + carryCost : Math.round(s.totalCost || preCarry + carryCost);
+
+  return {
+    land,
+    totalSF,
+    hardCosts,
+    softCosts,
+    carryCost,
+    totalCost,
+    hardPerSf: totalSF ? Math.round(hardCosts / totalSF) : 0,
+    hardPerUnit: units ? Math.round(hardCosts / units) : 0,
+    totalPerSf: totalSF ? Math.round(totalCost / totalSF) : 0,
+    totalPerUnit: units ? Math.round(totalCost / units) : 0,
+    basePsf,
+    planKey: plan.key,
+    planLabel: plan.label,
+    planNote: plan.note,
+    softPct,
+    months: plan.months || 18,
+    rentPremium: plan.rentPremium || 0,
+    storedHardPsf,
+    recast: !!shouldRecast,
+    source: override ? 'custom input' : plan.key !== 'auto' ? plan.label : shouldRecast ? 'current base assumption' : 'stored model',
+  };
+}
+
+function valuationForSite(s, costs = costModelForSite(s), income = incomeStatementForSite(s)) {
+  const entryCap = Number(s.entryCap) || FRONTEND_CAP_RATES[s.hood] || 0.0525;
+  const exitCap = Number(s.exitCap) || entryCap + 0.0025;
+  const noi = Math.round(income.noi || 0);
+  const year5Noi = Math.round(s.year5Noi || noi * Math.pow(1.03, 4));
+  const exitValue = exitCap ? Math.round(year5Noi / exitCap) : 0;
+  const netProfit = exitValue - costs.totalCost;
+  return {
+    entryCap,
+    exitCap,
+    noi,
+    year5Noi,
+    exitValue,
+    netProfit,
+    capOnCost: costs.totalCost ? Math.round((noi / costs.totalCost) * 10000) / 100 : 0,
+    devSpreadPct: costs.totalCost ? (exitValue - costs.totalCost) / costs.totalCost : 0,
+  };
+}
+
 function renderDetail(s) {
-  const irr=s.irrV||0, prof=s.netProfit||0, tc=s.totalCost||0;
+  const costs = costModelForSite(s);
+  const income = incomeStatementForSite(s, costs);
+  const valuation = valuationForSite(s, costs, income);
+  const irr=s.irrV||0, prof=valuation.netProfit||0, tc=costs.totalCost||0;
   const pc=prof>0?'#1d9e75':'#e24b4a', ic=irrC(irr);
-  const spd=Math.round((s.devSpreadPct||0)*1000)/10;
+  const spd=Math.round((valuation.devSpreadPct||0)*1000)/10;
   const ask=s.askPrice||s.price||0;
-  const land=s.landCost||ask||0;
+  const land=costs.land||ask||0;
   const landLabel=s.isComp?'Imputed land value':'Asking price';
   const landNote=s.isComp?'Estimated from comparable land basis':'Used as land basis in underwriting';
   const totalSF=(s.units||0)*(s.usf||800);
   const hardCostOverride=currentHardCostOverride();
-  const hardCosts=Math.round(s.hardCosts ?? Math.max(0,(tc-land)*0.58));
-  const softCosts=Math.round(s.softCosts ?? Math.max(0,(tc-land)*0.24));
-  const carryCost=Math.round(s.carryCost ?? Math.max(0,(tc-land)*0.18));
-  const hardPerSf=totalSF?Math.round(hardCosts/totalSF):0;
-  const hardPerUnit=s.units?Math.round(hardCosts/s.units):0;
-  const totalPerSf=totalSF?Math.round(tc/totalSF):0;
-  const totalPerUnit=s.units?Math.round(tc/s.units):0;
+  const hardCosts=costs.hardCosts;
+  const softCosts=costs.softCosts;
+  const carryCost=costs.carryCost;
+  const hardPerSf=costs.hardPerSf;
+  const hardPerUnit=costs.hardPerUnit;
+  const totalPerSf=costs.totalPerSf;
+  const totalPerUnit=costs.totalPerUnit;
   const softPctHard=hardCosts?Math.round((softCosts/hardCosts)*1000)/10:0;
   const hardCostRead = hardPerUnit >= 400000
     ? 'High hard cost per unit is being driven by unit size/count. Compare hard cost per SF first; per-unit cost is only reliable against similar unit sizes.'
     : 'Hard cost per SF is the primary construction benchmark. Per-unit cost is a secondary check and rises quickly for larger units.';
-  const income = incomeStatementForSite(s);
   const bars=[
     [land,'#0f1f3d','Land'+(s.isComp?' (imputed)':'')],
     [hardCosts,'#378add','Hard costs'],
@@ -442,40 +867,43 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${land?fmtD(land):'Not provided'} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
-    <div class="sh">Street View</div>
-    <a href="${mapsLink(s.addr)}" target="_blank" rel="noopener" style="display:block;border-radius:8px;overflow:hidden;border:1px solid #e8e8e8;margin-bottom:4px">
-      <img src="${streetViewURL(34.0522 + (s.id * 0.003), -118.2851 - (s.id * 0.002))}"
-        alt="Street view of ${s.addr}"
-        style="width:100%;height:140px;object-fit:cover;display:block"
-        onerror="this.parentElement.innerHTML='<div style=\'height:60px;display:flex;align-items:center;justify-content:center;background:#f8f8f8;font-size:11px;color:#aaa\'>Street View unavailable</div>'">
-      <div style="padding:5px 8px;font-size:9px;color:#666;background:#f8f8f8">📍 ${s.addr} · Click to open in Google Maps</div>
-    </a>
+    <button class="ab as" onclick="toggleWatch(${s.id}, event)">${isWatched(s.id)?'Remove from watchlist':'Save to watchlist'}</button>
+    <div class="sh">Map options</div>
+    ${renderMapPanel(s)}
     <div class="sh">Returns</div>
     <div class="mbg">
       <div class="mb" style="border-left-color:${pc}"><div class="mbl">Net profit</div><div class="mbv" style="color:${pc}">${fmtM(prof)}</div><div class="mbs">exit − all-in</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">IRR (5-yr)</div><div class="mbv" style="color:${ic}">${Math.round(irr*10)/10}%</div><div class="mbs">${irrL(irr)}</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">Cap on cost</div><div class="mbv">${s.capOnCost||0}%</div><div class="mbs">vs ${((s.entryCap||0.045)*100).toFixed(2)}% mkt</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">Cap on cost</div><div class="mbv">${valuation.capOnCost||0}%</div><div class="mbs">vs ${(valuation.entryCap*100).toFixed(2)}% mkt</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">Dev spread</div><div class="mbv">${spd}%</div><div class="mbs">${fmtM(prof)} above cost</div></div>
     </div>
     <div class="sh">Cost waterfall</div>
     ${bars.map(([v,c,l])=>`<div class="wfr"><div class="wfl"><span>${l}</span><span>${fmtD(v)}</span></div><div class="wft"><div class="wff" style="width:${Math.round(v/tc*100)}%;background:${c}"></div></div></div>`).join('')}
     <div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid #e8e8e8;margin-top:4px;font-size:11px;font-weight:600"><span>Total all-in</span><span>${fmtD(tc)}</span></div>
+    <div class="sh">Why this pencils</div>
+    ${pencilReadHTML(s, costs, income, valuation)}
     <div class="sh">Construction budget</div>
     <table class="ct">
+      <tr><td>Construction plan</td><td>${costs.planLabel}</td></tr>
       <tr><td>Total building SF</td><td>${totalSF.toLocaleString()} SF</td></tr>
       <tr><td>Hard construction</td><td>${fmtD(hardCosts)}</td></tr>
       <tr><td>Hard cost / SF</td><td>${fmtD(hardPerSf)}/SF${hardCostOverride?' <span style="color:#b98b2f;font-size:9px">custom input</span>':''}</td></tr>
       <tr><td>Hard cost / unit</td><td>${fmtD(hardPerUnit)}/unit</td></tr>
       <tr><td>Soft costs / hard costs</td><td>${softPctHard}%</td></tr>
+      <tr><td>Construction period</td><td>${costs.months} months</td></tr>
+      <tr><td>Rent impact</td><td>${signedPlanPct(costs.rentPremium)}</td></tr>
       <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/unit</td></tr>
     </table>
-    <div style="font-size:9px;color:#6f7b8c;line-height:1.35;margin:5px 0 8px">${hardCostRead} The Excel Construction Costs tab includes detailed hard and soft cost line items.</div>
+    <div style="font-size:9px;color:#6f7b8c;line-height:1.35;margin:5px 0 8px">${costs.planNote} ${hardCostRead}${costs.recast && costs.storedHardPsf ? ' Stored hard cost was about ' + fmtD(costs.storedHardPsf) + '/SF, so this view is recast to ' + fmtD(costs.hardPerSf) + '/SF.' : ''} The Excel Construction Costs tab includes detailed hard and soft cost line items.</div>
+    <div class="sh">Plan comparison</div>
+    ${scenarioComparisonHTML(s)}
     <div class="sh">Valuation</div>
     <table class="ct">
-      <tr><td>NOI (stabilized)</td><td>${fmtD(s.noi||0)}</td></tr>
-      <tr><td>Exit cap rate</td><td>${(((s.entryCap||0.045)+0.0025)*100).toFixed(2)}%</td></tr>
-      <tr><td>Year 5 NOI</td><td>${fmtD(s.year5Noi || (s.noi||0)*Math.pow(1.03,4))}</td></tr>
-      <tr><td>Exit value</td><td>${fmtD(s.exitValue||0)}</td></tr>
+      <tr><td>NOI (stabilized)</td><td>${fmtD(valuation.noi)}</td></tr>
+      <tr><td>Exit cap rate</td><td>${(valuation.exitCap*100).toFixed(2)}%</td></tr>
+      <tr><td>Year 5 NOI</td><td>${fmtD(valuation.year5Noi)}</td></tr>
+      <tr><td>Exit value</td><td>${fmtD(valuation.exitValue)}</td></tr>
+      <tr><td>Valuation formula</td><td>${fmtD(valuation.year5Noi)} / ${(valuation.exitCap*100).toFixed(2)}%</td></tr>
       <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">−${fmtD(tc)}</td></tr>
       <tr class="tot"><td style="color:${pc}">Net profit</td><td style="color:${pc};font-size:14px">${fmtD(prof)}</td></tr>
     </table>
@@ -493,6 +921,9 @@ function renderDetail(s) {
     </table>
     <div class="sh">Sold comps — ${s.hood}</div>
     <div id="comps-${s.id}" style="font-size:10px;color:#aaa">Loading comps...</div>
+
+    <div class="sh">Assumption sources</div>
+    ${sourceLinksHTML(s)}
 
     <div class="sh">AI deal analysis <span style="font-size:8px;color:#bbb;font-weight:400">powered by Claude</span></div>
     <div id="narr-${s.id}"><button class="gb" onclick="generateNarrative(${s.id})">Generate analysis →</button></div>
@@ -644,6 +1075,58 @@ function compQueryForSite(s, limit = 12) {
   }
   const q = p.toString();
   return q ? '?' + q : '';
+}
+
+function mapOptionsRows(s) {
+  const rows = [
+    xlsTitleRow('Mapping & Location Research', s.addr),
+    xlsHeaderRow(['Option', 'Why it matters', 'Link']),
+    xlsRow(['Google Maps', 'Open the parcel location and surrounding neighborhood', mapsLink(s.addr)]),
+    xlsRow(['Directions', 'Check access from target origin points', directionsLink(s.addr)]),
+    xlsRow(['Street View', 'Review frontage, curb cuts, slope, street condition and adjacent uses', streetViewLink(s.addr)]),
+    xlsRow(['Satellite / aerial', 'Review building footprint, lot layout, alleys and neighboring improvements', mapsLink(s.addr)]),
+    xlsRow(['ZIMAS zoning search', 'Validate zoning, overlays, specific plans, TOC and planning notes', officialResearchLink(s.addr, 'ZIMAS zoning')]),
+    xlsRow(['LADBS permit search', 'Review permits, plan checks, certificates and permit history', officialResearchLink(s.addr, 'LADBS permits PCIS')]),
+    xlsRow(['Rent comps nearby', 'Quick map search for visible rental competition', nearbySearchLink(s.addr, 'apartments for rent')]),
+    xlsRow(['Sales comps nearby', 'Quick map search for nearby multifamily sales context', nearbySearchLink(s.addr, 'multifamily sale comps')]),
+  ];
+  return rows;
+}
+
+function investmentReadRows(s, costs, income, valuation) {
+  return [
+    xlsTitleRow('Investment Read', s.addr),
+    xlsHeaderRow(['Status', 'Read']),
+    ...pencilReadItems(s, costs, income, valuation).map(item => xlsRow([item.status, [item.text, 'String', item.status === 'Risk' ? 'note' : '']])),
+    xlsRow(['']),
+    xlsSectionRow('Data Sources'),
+    xlsRow(['LA City Open Data', 'https://data.lacity.org/']),
+    xlsRow(['ZIMAS zoning', officialResearchLink(s.addr, 'ZIMAS zoning')]),
+    xlsRow(['LADBS permits', officialResearchLink(s.addr, 'LADBS permits PCIS')]),
+    xlsRow(['Google Maps', mapsLink(s.addr)]),
+    xlsRow(['County recorder search', officialResearchLink(s.addr, 'Los Angeles county recorder deed sale')]),
+  ];
+}
+
+function scenarioRowsForExport(s) {
+  return [
+    xlsTitleRow('Construction Plan Scenarios', s.addr),
+    xlsHeaderRow(['Plan', 'Hard Cost / SF', 'Soft %', 'Months', 'Rent Impact', 'Total Cost', 'Cost / Unit', 'NOI', 'Exit Value', 'Net Profit', 'Cap on Cost', 'Notes']),
+    ...scenarioListForSite(s).map(row => xlsRow([
+      row.plan.label,
+      cellMoney(row.costs.hardPerSf),
+      cellPct(Math.round((row.costs.softPct || 0) * 1000) / 10),
+      cellNumber(row.costs.months || 18),
+      cellPct(Math.round((row.costs.rentPremium || 0) * 1000) / 10),
+      cellMoney(row.costs.totalCost),
+      cellMoney(row.costs.totalPerUnit),
+      cellMoney(row.income.noi),
+      cellMoney(row.valuation.exitValue),
+      cellMoneySigned(row.valuation.netProfit),
+      cellPct(row.valuation.capOnCost || 0),
+      [row.plan.note || '', 'String', 'note'],
+    ])),
+  ];
 }
 
 
@@ -892,22 +1375,25 @@ function pushCostSchedule(rows, title, total, schedule, totalSF, units) {
 }
 
 function constructionCostRows(s, tc, land) {
+  const costs = costModelForSite(s);
   const units = s.units || 0;
   const avgUnitSf = s.usf || 800;
-  const totalSF = units * avgUnitSf;
-  const hardCosts = Math.round(s.hardCosts ?? Math.max(0, (tc - land) * 0.58));
-  const softCosts = Math.round(s.softCosts ?? Math.max(0, (tc - land) * 0.24));
-  const carryCost = Math.round(s.carryCost ?? Math.max(0, (tc - land) * 0.18));
-  const loan = Math.round(s.loanAmount ?? tc * 0.65);
-  const equity = Math.round(s.equity ?? tc * 0.35);
+  const totalSF = costs.totalSF || units * avgUnitSf;
+  const landBasis = costs.land || land || 0;
+  const totalCost = costs.totalCost || tc || 0;
+  const hardCosts = costs.hardCosts || 0;
+  const softCosts = costs.softCosts || 0;
+  const carryCost = costs.carryCost || 0;
+  const loan = Math.round(s.loanAmount ?? totalCost * 0.65);
+  const equity = Math.round(s.equity ?? totalCost * 0.35);
   const hardPerSf = costPerSf(hardCosts, totalSF);
   const hardPerUnit = costPerUnit(hardCosts, units);
   const softPerSf = costPerSf(softCosts, totalSF);
   const softPerUnit = costPerUnit(softCosts, units);
   const carryPerSf = costPerSf(carryCost, totalSF);
   const carryPerUnit = costPerUnit(carryCost, units);
-  const totalPerSf = costPerSf(tc, totalSF);
-  const totalPerUnit = costPerUnit(tc, units);
+  const totalPerSf = costPerSf(totalCost, totalSF);
+  const totalPerUnit = costPerUnit(totalCost, units);
   const softPctHard = hardCosts ? Math.round((softCosts / hardCosts) * 1000) / 10 : 0;
   const hardSchedule = allocateCostSchedule(hardCosts, hardCostLineItems(s));
   const softSchedule = allocateCostSchedule(softCosts, softCostLineItems());
@@ -915,17 +1401,23 @@ function constructionCostRows(s, tc, land) {
   const rows = [
     xlsTitleRow('Construction Cost Validation', s.addr),
     xlsRow(['Project Type', s.type || '']),
+    xlsRow(['Construction Plan', costs.planLabel]),
+    xlsRow(['Plan Notes', [costs.planNote || '', 'String', 'note']]),
+    xlsRow(['Hard Cost Basis', cellMoney(costs.hardPerSf), '$ / SF', '', '', costs.source || 'current assumption']),
+    xlsRow(['Soft Cost % of Hard Cost', cellPct(Math.round((costs.softPct || 0) * 1000) / 10), '', '', '', 'Soft costs generated from selected plan']),
+    xlsRow(['Construction Period', cellNumber(costs.months || 18), 'months', '', '', 'Used to size financing carry']),
+    xlsRow(['Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10), '', '', '', 'Used in income statement and exit valuation']),
     xlsRow(['Units', cellNumber(units)]),
     xlsRow(['Avg Unit SF', cellNumber(avgUnitSf)]),
     xlsRow(['Total Net Rentable SF', cellNumber(totalSF)]),
-    xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current budget, not a contractor bid. Replace with GC pricing when available.' + (currentHardCostOverride() ? ' User hard-cost override applied across all deals: $' + currentHardCostOverride().toLocaleString() + '/SF.' : ''), 'String', 'note']]),
+    xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current plan budget, not a contractor bid. Replace with GC pricing when available.' + (currentHardCostOverride() ? ' User hard-cost override applied across all deals: $' + currentHardCostOverride().toLocaleString() + '/SF.' : ''), 'String', 'note']]),
     xlsRow(['']),
     xlsHeaderRow(['Budget Category', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
-    xlsRow([s.isComp ? 'Imputed Land Value' : 'Asking Price / Land Basis', cellMoney(Math.round(land)), totalSF ? cellMoney(costPerSf(land, totalSF)) : '', units ? cellMoney(costPerUnit(land, units)) : '', tc ? cellPct(costPct(land, tc)) : '', s.isComp ? 'Estimated off-market land basis' : 'For-sale asking price used as land basis']),
-    xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), tc ? cellPct(costPct(hardCosts, tc)) : '', 'Detailed schedule below: HVAC, framing, plumbing, electrical, etc.']),
-    xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(softPerSf) : '', units ? cellMoney(softPerUnit) : '', tc ? cellPct(costPct(softCosts, tc)) : '', 'A&E, permits, fees, legal, developer fee, contingency']),
-    xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(carryPerSf) : '', units ? cellMoney(carryPerUnit) : '', tc ? cellPct(costPct(carryCost, tc)) : '', 'Interest reserve, loan fees, taxes and lease-up carry']),
-    xlsRow(['Total All-In Cost', cellMoney(Math.round(tc)), cellMoney(totalPerSf), cellMoney(totalPerUnit), cellPct(100), 'Total underwriting basis'], 'section'),
+    xlsRow([s.isComp ? 'Imputed Land Value' : 'Asking Price / Land Basis', cellMoney(Math.round(landBasis)), totalSF ? cellMoney(costPerSf(landBasis, totalSF)) : '', units ? cellMoney(costPerUnit(landBasis, units)) : '', totalCost ? cellPct(costPct(landBasis, totalCost)) : '', s.isComp ? 'Estimated off-market land basis' : 'For-sale asking price used as land basis']),
+    xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), totalCost ? cellPct(costPct(hardCosts, totalCost)) : '', 'Detailed schedule below: HVAC, framing, plumbing, electrical, etc.']),
+    xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(softPerSf) : '', units ? cellMoney(softPerUnit) : '', totalCost ? cellPct(costPct(softCosts, totalCost)) : '', 'A&E, permits, fees, legal, developer fee, contingency']),
+    xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(carryPerSf) : '', units ? cellMoney(carryPerUnit) : '', totalCost ? cellPct(costPct(carryCost, totalCost)) : '', 'Interest reserve, loan fees, taxes and lease-up carry']),
+    xlsRow(['Total All-In Cost', cellMoney(Math.round(totalCost)), cellMoney(totalPerSf), cellMoney(totalPerUnit), cellPct(100), 'Total underwriting basis'], 'section'),
   ];
 
   pushCostSchedule(rows, 'Hard Cost Schedule', hardCosts, hardSchedule, totalSF, units);
@@ -934,8 +1426,8 @@ function constructionCostRows(s, tc, land) {
 
   rows.push(xlsRow(['']));
   rows.push(xlsSectionRow('Financing Metrics'));
-  rows.push(xlsRow(['Construction Loan', cellMoney(loan), totalSF ? cellMoney(costPerSf(loan, totalSF)) : '', units ? cellMoney(costPerUnit(loan, units)) : '', tc ? cellPct(costPct(loan, tc)) : '', 'Assumes 65% loan-to-cost unless model overrides']));
-  rows.push(xlsRow(['Equity Required', cellMoney(equity), totalSF ? cellMoney(costPerSf(equity, totalSF)) : '', units ? cellMoney(costPerUnit(equity, units)) : '', tc ? cellPct(costPct(equity, tc)) : '', 'Borrower cash / sponsor equity']));
+  rows.push(xlsRow(['Construction Loan', cellMoney(loan), totalSF ? cellMoney(costPerSf(loan, totalSF)) : '', units ? cellMoney(costPerUnit(loan, units)) : '', totalCost ? cellPct(costPct(loan, totalCost)) : '', 'Assumes 65% loan-to-cost unless model overrides']));
+  rows.push(xlsRow(['Equity Required', cellMoney(equity), totalSF ? cellMoney(costPerSf(equity, totalSF)) : '', units ? cellMoney(costPerUnit(equity, units)) : '', totalCost ? cellPct(costPct(equity, totalCost)) : '', 'Borrower cash / sponsor equity']));
   rows.push(xlsRow(['']));
   rows.push(xlsSectionRow('Benchmark Checks'));
   rows.push(xlsRow(['Hard Cost / SF', cellMoney(hardPerSf), '', '', '', 'Primary construction-cost reasonableness check']));
@@ -985,28 +1477,30 @@ async function exportExcel(id) {
     fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(s.hood) + compQuery),
   ]);
 
-  const tc = s.totalCost || 0;
-  const land = s.landCost || s.askPrice || 0;
-  const noi = s.noi || 0;
-  const exitValue = s.exitValue || 0;
-  const netProfit = s.netProfit || 0;
+  const costs = costModelForSite(s);
+  const income = incomeStatementForSite(s, costs);
+  const valuation = valuationForSite(s, costs, income);
+  const tc = costs.totalCost || 0;
+  const land = costs.land || s.askPrice || 0;
+  const noi = valuation.noi || 0;
+  const exitValue = valuation.exitValue || 0;
+  const netProfit = valuation.netProfit || 0;
   const irr = s.irrV || 0;
-  const entryCap = s.entryCap || submarket?.entryCap || 0.0475;
-  const exitCap = s.exitCap || submarket?.exitCap || entryCap + 0.0025;
+  const entryCap = valuation.entryCap || submarket?.entryCap || 0.0475;
+  const exitCap = valuation.exitCap || submarket?.exitCap || entryCap + 0.0025;
   const loan = tc * 0.65;
   const equity = tc * 0.35;
-  const debtService = loan * 0.065;
+  const debtService = income.debtService || loan * 0.065;
   const today = new Date().toISOString().slice(0,10);
-  const rentMonthly = noi > 0 ? Math.round(noi / 0.62 / 0.95 / 12) : 0;
-  const totalSF = (s.units || 0) * (s.usf || 800);
-  const hardCosts = Math.round(s.hardCosts ?? Math.max(0, (tc - land) * 0.58));
-  const softCosts = Math.round(s.softCosts ?? Math.max(0, (tc - land) * 0.24));
-  const carryCost = Math.round(s.carryCost ?? Math.max(0, (tc - land) * 0.18));
-  const hardPerSf = totalSF ? Math.round(hardCosts / totalSF) : 0;
-  const hardPerUnit = s.units ? Math.round(hardCosts / s.units) : 0;
-  const totalPerSf = totalSF ? Math.round(tc / totalSF) : 0;
-  const totalPerUnit = s.units ? Math.round(tc / s.units) : 0;
-  const income = incomeStatementForSite(s);
+  const rentMonthly = income.grossPotentialRent ? Math.round(income.grossPotentialRent / 12) : 0;
+  const totalSF = costs.totalSF;
+  const hardCosts = costs.hardCosts;
+  const softCosts = costs.softCosts;
+  const carryCost = costs.carryCost;
+  const hardPerSf = costs.hardPerSf;
+  const hardPerUnit = costs.hardPerUnit;
+  const totalPerSf = costs.totalPerSf;
+  const totalPerUnit = costs.totalPerUnit;
 
   const summaryRows = [
     xlsTitleRow('ParceLLA Comprehensive Underwriting', s.addr),
@@ -1017,6 +1511,11 @@ async function exportExcel(id) {
     xlsRow(['Neighborhood', s.hood]),
     xlsRow(['Zoning', s.zone]),
     xlsRow(['Project Type', s.type]),
+    xlsRow(['Construction Plan', costs.planLabel]),
+    xlsRow(['Hard Cost / SF', cellMoney(hardPerSf)]),
+    xlsRow(['Soft Cost % of Hard Cost', cellPct(Math.round((costs.softPct || 0) * 1000) / 10)]),
+    xlsRow(['Construction Months', cellNumber(costs.months || 18)]),
+    xlsRow(['Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10)]),
     xlsRow(['Units', cellNumber(s.units || 0)]),
     xlsRow(['Average Unit SF', cellNumber(s.usf || 0)]),
     xlsRow(['Lot SF', cellNumber(s.lot || 0)]),
@@ -1032,6 +1531,11 @@ async function exportExcel(id) {
   const underwritingRows = [
     xlsTitleRow('Underwriting', s.addr),
     xlsHeaderRow(['Metric', 'Value', '$ / SF', '$ / Unit', 'Notes']),
+    xlsRow(['Construction Plan', costs.planLabel, '', '', costs.planNote || '']),
+    xlsRow(['Hard Cost Basis', costs.source || 'current assumption', cellMoney(hardPerSf), '', 'Selected plan hard-cost assumption']),
+    xlsRow(['Soft Cost %', cellPct(Math.round((costs.softPct || 0) * 1000) / 10), '', '', 'Selected plan soft-cost assumption']),
+    xlsRow(['Construction Months', cellNumber(costs.months || 18), '', '', 'Selected plan duration for carry cost']),
+    xlsRow(['Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10), '', '', 'Selected plan rent adjustment applied to NOI']),
     xlsRow(['Land Cost', cellMoney(Math.round(land)), totalSF ? cellMoney(Math.round(land / totalSF)) : '', s.units ? cellMoney(Math.round(land / s.units)) : '', 'Purchase price or imputed land basis']),
     xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), 'Construction cost validation shown in Construction Costs tab']),
     xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(Math.round(softCosts / totalSF)) : '', s.units ? cellMoney(Math.round(softCosts / s.units)) : '', 'A&E, permits, fees, contingency, developer fee']),
@@ -1040,20 +1544,22 @@ async function exportExcel(id) {
     xlsRow(['Loan Amount', cellMoney(Math.round(loan)), totalSF ? cellMoney(Math.round(loan / totalSF)) : '', s.units ? cellMoney(Math.round(loan / s.units)) : '', '65% LTC assumption unless overridden']),
     xlsRow(['Equity Required', cellMoney(Math.round(equity)), totalSF ? cellMoney(Math.round(equity / totalSF)) : '', s.units ? cellMoney(Math.round(equity / s.units)) : '', 'Sponsor equity requirement']),
     xlsRow(['NOI', cellMoney(Math.round(noi)), totalSF ? cellMoney(Math.round(noi / totalSF)) : '', s.units ? cellMoney(Math.round(noi / s.units)) : '', 'Stabilized annual NOI']),
-    xlsRow(['Year 5 NOI', cellMoney(Math.round(s.year5Noi || noi * Math.pow(1.03, 4))), totalSF ? cellMoney(Math.round((s.year5Noi || noi * Math.pow(1.03, 4)) / totalSF)) : '', s.units ? cellMoney(Math.round((s.year5Noi || noi * Math.pow(1.03, 4)) / s.units)) : '', 'Year-5 NOI used for exit valuation']),
+    xlsRow(['Year 5 NOI', cellMoney(Math.round(valuation.year5Noi)), totalSF ? cellMoney(Math.round(valuation.year5Noi / totalSF)) : '', s.units ? cellMoney(Math.round(valuation.year5Noi / s.units)) : '', 'Year-5 NOI used for exit valuation']),
     xlsRow(['Entry Cap Rate %', cellPct(Math.round(entryCap * 10000) / 100), '', '', 'Market cap rate input']),
     xlsRow(['Exit Cap Rate %', cellPct(Math.round(exitCap * 10000) / 100), '', '', 'Exit cap assumption']),
     xlsRow(['Exit Value', cellMoney(Math.round(exitValue)), totalSF ? cellMoney(Math.round(exitValue / totalSF)) : '', s.units ? cellMoney(Math.round(exitValue / s.units)) : '', 'Year-5 NOI divided by exit cap']),
     xlsRow(['Net Profit', cellMoneySigned(Math.round(netProfit)), totalSF ? cellMoneySigned(Math.round(netProfit / totalSF)) : '', s.units ? cellMoneySigned(Math.round(netProfit / s.units)) : '', 'Exit value less total all-in cost']),
     xlsRow(['IRR %', cellPct(Math.round(irr * 10) / 10), '', '', 'Levered 5-year IRR']),
-    xlsRow(['Cap On Cost %', cellPct(s.capOnCost || 0), '', '', 'NOI / total cost']),
-    xlsRow(['Development Spread %', cellPct(Math.round((s.devSpreadPct || 0) * 1000) / 10), '', '', 'Spread over all-in cost']),
+    xlsRow(['Cap On Cost %', cellPct(valuation.capOnCost || 0), '', '', 'NOI / total cost']),
+    xlsRow(['Development Spread %', cellPct(Math.round((valuation.devSpreadPct || 0) * 1000) / 10), '', '', 'Spread over all-in cost']),
   ];
 
   const rentRows = [
     xlsTitleRow('Rent Roll', s.addr),
     xlsSectionRow('Rent Assumptions'),
     xlsRow(['Submarket', s.hood]),
+    xlsRow(['Construction Plan', costs.planLabel]),
+    xlsRow(['Plan Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10)]),
     xlsRow(['Implied Monthly Gross Rent', cellMoney(rentMonthly)]),
     xlsRow(['Implied Annual Gross Rent', cellMoney(rentMonthly * 12)]),
     xlsRow(['Vacancy', '5.0%']),
@@ -1091,6 +1597,9 @@ async function exportExcel(id) {
     '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
     xlsStyles() +
     xlsSheet('Summary', summaryRows, [220, 220, 120, 120, 220]) +
+    xlsSheet('Mapping', mapOptionsRows(s), [170, 320, 520]) +
+    xlsSheet('Investment Read', investmentReadRows(s, costs, income, valuation), [160, 520]) +
+    xlsSheet('Plan Scenarios', scenarioRowsForExport(s), [180, 115, 90, 80, 90, 130, 120, 120, 130, 130, 100, 320]) +
     xlsSheet('Pencil Check', pencilCheckRows(s, { tc, land, noi, exitValue, netProfit, exitCap, hardCosts, hardPerSf, totalPerSf, totalPerUnit }), [190, 150, 130, 300]) +
     xlsSheet('Underwriting', underwritingRows, [190, 130, 120, 120, 280]) +
     xlsSheet('Income Statement', incomeStatementRows(s, income), [220, 130, 120, 110, 260]) +
@@ -1111,31 +1620,37 @@ function exportPDF(id) {
   if (!s) return;
 
   const win = window.open('', '_blank');
+  const costs = costModelForSite(s);
+  const pdfIncome = incomeStatementForSite(s, costs);
+  const valuation = valuationForSite(s, costs, pdfIncome);
   const irr  = s.irrV || 0;
-  const prof = s.netProfit || 0;
+  const prof = valuation.netProfit || 0;
   const pc   = prof > 0 ? '#1d9e75' : '#e24b4a';
   const ic   = irrC(irr);
-  const tc   = s.totalCost || 0;
-  const land = s.landCost || s.askPrice || 0;
-  const noi  = s.noi || 0;
-  const exitV = s.exitValue || 0;
-  const entryCap = s.entryCap || 0.0475;
-  const exitCap  = s.exitCap || entryCap + 0.0025;
-  const capoc    = s.capOnCost || 0;
-  const spread   = Math.round((s.devSpreadPct || 0) * 1000) / 10;
+  const tc   = costs.totalCost || 0;
+  const land = costs.land || s.askPrice || 0;
+  const noi  = valuation.noi || 0;
+  const exitV = valuation.exitValue || 0;
+  const entryCap = valuation.entryCap || 0.0475;
+  const exitCap  = valuation.exitCap || entryCap + 0.0025;
+  const capoc    = valuation.capOnCost || 0;
+  const spread   = Math.round((valuation.devSpreadPct || 0) * 1000) / 10;
   const today    = new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'});
-  const pdfTotalSF = (s.units || 0) * (s.usf || 800);
-  const pdfHardCosts = Math.round(s.hardCosts ?? Math.max(0, (tc - land) * 0.58));
-  const pdfSoftCosts = Math.round(s.softCosts ?? Math.max(0, (tc - land) * 0.24));
-  const pdfCarryCost = Math.round(s.carryCost ?? Math.max(0, (tc - land) * 0.18));
-  const pdfHardPerSf = pdfTotalSF ? Math.round(pdfHardCosts / pdfTotalSF) : 0;
-  const pdfHardPerUnit = s.units ? Math.round(pdfHardCosts / s.units) : 0;
+  const pdfTotalSF = costs.totalSF;
+  const pdfHardCosts = costs.hardCosts;
+  const pdfSoftCosts = costs.softCosts;
+  const pdfCarryCost = costs.carryCost;
+  const pdfHardPerSf = costs.hardPerSf;
+  const pdfHardPerUnit = costs.hardPerUnit;
   const pdfSoftPerSf = pdfTotalSF ? Math.round(pdfSoftCosts / pdfTotalSF) : 0;
   const pdfCarryPerSf = pdfTotalSF ? Math.round(pdfCarryCost / pdfTotalSF) : 0;
-  const pdfTotalPerSf = pdfTotalSF ? Math.round(tc / pdfTotalSF) : 0;
-  const pdfTotalPerUnit = s.units ? Math.round(tc / s.units) : 0;
+  const pdfTotalPerSf = costs.totalPerSf;
+  const pdfTotalPerUnit = costs.totalPerUnit;
   const pdfSoftPctHard = pdfHardCosts ? Math.round((pdfSoftCosts / pdfHardCosts) * 1000) / 10 : 0;
-  const pdfIncome = incomeStatementForSite(s);
+  const pdfSoftSchedule = allocateCostSchedule(pdfSoftCosts, softCostLineItems());
+  const pdfCarrySchedule = allocateCostSchedule(pdfCarryCost, carryCostLineItems());
+  const pdfLoan = Math.round(tc * 0.65);
+  const pdfRentImpact = signedPlanPct(costs.rentPremium);
 
   win.document.write(`<!DOCTYPE html>
 <html>
@@ -1233,6 +1748,23 @@ function exportPDF(id) {
   with a stabilized exit value of <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding a net development profit of <strong>${fmtD(prof)}</strong>.
 </div>
 
+<div class="two-col">
+  <div>
+    <h3>Investment Read</h3>
+    <table>
+      <tr><th>Status</th><th>Read</th></tr>
+      ${pencilReadItems(s, costs, pdfIncome, valuation).map(item => `<tr><td class="${item.status === 'Pass' ? 'green' : item.status === 'Watch' ? 'amber' : 'red'}">${item.status}</td><td>${item.text}</td></tr>`).join('')}
+    </table>
+  </div>
+  <div>
+    <h3>Construction Plan Scenario Snapshot</h3>
+    <table>
+      <tr><th>Plan</th><th>Hard/SF</th><th>Net Profit</th></tr>
+      ${scenarioListForSite(s).map(row => `<tr><td>${row.plan.label}</td><td>${fmtD(row.costs.hardPerSf)}</td><td class="${row.valuation.netProfit >= 0 ? 'green' : 'red'}">${fmtM(row.valuation.netProfit)}</td></tr>`).join('')}
+    </table>
+  </div>
+</div>
+
 <!-- SITE DESCRIPTION -->
 <h2>II. Property & Site Description</h2>
 <div class="two-col">
@@ -1268,6 +1800,15 @@ function exportPDF(id) {
       <tr><td>1 Bedroom</td><td>50%</td><td>${Math.round(s.units*0.50)}</td><td>Market</td></tr>
       <tr><td>2 Bedroom</td><td>20%</td><td>${Math.round(s.units*0.20)}</td><td>Market</td></tr>
       <tr><td>3 Bedroom</td><td>5%</td><td>${Math.round(s.units*0.05)}</td><td>Market</td></tr>
+    </table>
+
+    <h3>Location Research</h3>
+    <table>
+      <tr><td>Google Maps</td><td><a href="${mapsLink(s.addr)}" target="_blank">Open</a></td></tr>
+      <tr><td>Street View</td><td><a href="${streetViewLink(s.addr)}" target="_blank">Open</a></td></tr>
+      <tr><td>Directions</td><td><a href="${directionsLink(s.addr)}" target="_blank">Open</a></td></tr>
+      <tr><td>ZIMAS zoning</td><td><a href="${officialResearchLink(s.addr, 'ZIMAS zoning')}" target="_blank">Search</a></td></tr>
+      <tr><td>LADBS permits</td><td><a href="${officialResearchLink(s.addr, 'LADBS permits PCIS')}" target="_blank">Search</a></td></tr>
     </table>
   </div>
 </div>
@@ -1322,9 +1863,11 @@ function exportPDF(id) {
       <tr class="tot"><td>Land Subtotal</td><td>${fmtD(land*1.015+25000)}</td></tr>
 
       <tr><th colspan="2" style="padding-top:10px">HARD COSTS</th></tr>
+      <tr><td>Construction Plan</td><td>${costs.planLabel}</td></tr>
       <tr><td>Hard Construction Budget</td><td>${fmtD(pdfHardCosts)}</td></tr>
       <tr><td>Hard Cost / SF</td><td>${fmtD(pdfHardPerSf)}/SF</td></tr>
       <tr><td>Hard Cost / Unit</td><td>${fmtD(pdfHardPerUnit)}/unit</td></tr>
+      <tr><td>Cost Source</td><td>${costs.source}</td></tr>
       <tr><td>Budget Read</td><td>Use $/SF first; $/unit rises with larger units</td></tr>
       <tr class="tot"><td>Hard Cost Subtotal</td><td>${fmtD(pdfHardCosts)}</td></tr>
     </table>
@@ -1332,20 +1875,20 @@ function exportPDF(id) {
   <div>
     <table>
       <tr><th colspan="2">SOFT COSTS</th></tr>
-      <tr><td>Architecture & Engineering (6%)</td><td>${fmtD(tc*0.09)}</td></tr>
-      <tr><td>Permits & Fees</td><td>${fmtD(s.units*2500)}</td></tr>
-      <tr><td>Property Tax During Construction</td><td>${fmtD(land*0.0125*1.5)}</td></tr>
-      <tr><td>Developer Fee (4%)</td><td>${fmtD(tc*0.04)}</td></tr>
-      <tr><td>Other Soft Costs</td><td>${fmtD(s.units*3000)}</td></tr>
-      <tr class="tot"><td>Soft Cost Subtotal (18%)</td><td>${fmtD(tc*0.18)}</td></tr>
+      <tr><td>Soft Cost Assumption</td><td>${Math.round((costs.softPct || 0) * 1000) / 10}% of hard costs</td></tr>
+      ${pdfSoftSchedule.slice(0,5).map(item => `<tr><td>${item.name}</td><td>${fmtD(item.amount)}</td></tr>`).join('')}
+      <tr class="tot"><td>Soft Cost Subtotal</td><td>${fmtD(pdfSoftCosts)}</td></tr>
 
       <tr><th colspan="2" style="padding-top:10px">FINANCING & CARRY</th></tr>
-      <tr><td>Construction Loan (65% LTC)</td><td>${fmtD(tc*0.65)}</td></tr>
-      <tr><td>Construction Interest (6.5%, 18mo)</td><td>${fmtD(tc*0.65*0.065*1.5)}</td></tr>
-      <tr><td>Loan Origination Fee (1%)</td><td>${fmtD(tc*0.65*0.01)}</td></tr>
-      <tr class="tot"><td>Total Carry</td><td>${fmtD(tc*0.65*0.065*1.5+tc*0.65*0.01)}</td></tr>
+      <tr><td>Construction Period</td><td>${costs.months || 18} months</td></tr>
+      <tr><td>Construction Loan (65% LTC)</td><td>${fmtD(pdfLoan)}</td></tr>
+      ${pdfCarrySchedule.slice(0,3).map(item => `<tr><td>${item.name}</td><td>${fmtD(item.amount)}</td></tr>`).join('')}
+      <tr class="tot"><td>Total Carry</td><td>${fmtD(pdfCarryCost)}</td></tr>
     </table>
   </div>
+</div>
+<div class="note">
+  <strong>Selected plan:</strong> ${costs.planLabel}. ${costs.planNote || ''} Rent impact: ${pdfRentImpact}. The construction budget, income statement, exit value, and net profit are recalculated from this selected plan.
 </div>
 
 <table style="background:#0f1f3d;color:white">
@@ -1371,6 +1914,8 @@ function exportPDF(id) {
   <tr><td>Total Cost / SF</td><td>${fmtD(pdfTotalPerSf)}/SF</td><td>All-in basis including land, soft costs, carry</td></tr>
   <tr><td>Total Cost / Unit</td><td>${fmtD(pdfTotalPerUnit)}/unit</td><td>All-in delivered unit basis</td></tr>
   <tr><td>Soft Costs / Hard Costs</td><td>${pdfSoftPctHard}%</td><td>Soft-cost reasonableness check</td></tr>
+  <tr><td>Construction Period</td><td>${costs.months || 18} months</td><td>Carry-cost timing assumption</td></tr>
+  <tr><td>Rent Premium / Haircut</td><td>${pdfRentImpact}</td><td>Income-statement scenario adjustment</td></tr>
 </table>
 <!-- INCOME APPROACH -->
 <div class="page-break"></div>
@@ -1384,7 +1929,7 @@ function exportPDF(id) {
       <tr><td>1 Bedroom</td><td>${Math.round(s.units*0.50)}</td><td>$3,400</td><td>${fmtD(Math.round(s.units*0.50)*3400*12)}</td></tr>
       <tr><td>2 Bedroom</td><td>${Math.round(s.units*0.20)}</td><td>$4,400</td><td>${fmtD(Math.round(s.units*0.20)*4400*12)}</td></tr>
       <tr><td>3 Bedroom</td><td>${Math.round(s.units*0.05)}</td><td>$5,800</td><td>${fmtD(Math.round(s.units*0.05)*5800*12)}</td></tr>
-      <tr class="tot"><td colspan="3">Gross Potential Rent</td><td>${fmtD(noi/0.62*1.0)}</td></tr>
+      <tr class="tot"><td colspan="3">Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
     </table>
 
     <h3>Operating Statement</h3>
@@ -1415,10 +1960,10 @@ function exportPDF(id) {
       <tr><td>Entry Cap Rate</td><td>${(entryCap*100).toFixed(2)}%</td></tr>
       <tr><td>Stabilized Value (entry cap)</td><td>${fmtD(noi/entryCap)}</td></tr>
       <tr><td>&nbsp;</td><td>&nbsp;</td></tr>
+      <tr><td>Year 5 NOI</td><td>${fmtD(valuation.year5Noi)}</td></tr>
       <tr><td>Exit Cap Rate (entry + 25bps)</td><td>${(exitCap*100).toFixed(2)}%</td></tr>
+      <tr><td>Valuation Formula</td><td>${fmtD(valuation.year5Noi)} / ${(exitCap*100).toFixed(2)}%</td></tr>
       <tr><td>Exit Value</td><td>${fmtD(exitV)}</td></tr>
-      <tr><td>Less: Construction Loan</td><td style="color:#e24b4a">(${fmtD(tc*0.65)})</td></tr>
-      <tr><td>Exit Proceeds to Equity</td><td>${fmtD(exitV-tc*0.65)}</td></tr>
       <tr><td>&nbsp;</td><td>&nbsp;</td></tr>
       <tr><td>All-In Development Cost</td><td>${fmtD(tc)}</td></tr>
       <tr><td style="color:#e24b4a">Less: All-In Cost</td><td style="color:#e24b4a">(${fmtD(tc)})</td></tr>
@@ -1616,8 +2161,10 @@ function exportPDF(id) {
 function resetFilters() {
   ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
   const sf=g('f-sf'); if(sf)sf.checked=false;
+  const watch=g('f-watch'); if(watch)watch.checked=false;
   ['f-hood','f-zone'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-umin','f-umax','f-pmin','f-pmax','mf-p','mf-i','mf-s','mf-c','mf-hc'].forEach(id=>{const el=g(id);if(el)el.value='';});
+  const plan=g('mf-plan'); if(plan)plan.value='auto';
   loadSites();
 }
 
