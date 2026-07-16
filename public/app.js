@@ -140,7 +140,7 @@ const fmtM = n => n >= 1e6 ? '$'+(Math.round(n/1e5)/10)+'M' : n >= 1e3 ? '$'+Mat
 const fmtD = n => '$'+Math.round(n||0).toLocaleString();
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
-let allSites = [], filtered = [], openId = null, activeView = 'list', watchlist = loadWatchlist();
+let allSites = [], filtered = [], openId = null, activeView = 'list', watchlist = loadWatchlist(), userMetrics = null;
 const g = id => document.getElementById(id);
 const LA_MAP_BOUNDS = { minLat: 33.92, maxLat: 34.18, minLng: -118.48, maxLng: -118.16 };
 const MAP_TRANSIT_NODES = [
@@ -159,6 +159,19 @@ const FRONTEND_CAP_RATES = {
   'West Adams':0.0525,'Boyle Heights':0.0575,'Hollywood':0.0500,'North Hollywood':0.0525,
   'Northridge':0.0550,'Van Nuys':0.0550,'Reseda':0.0575,'Panorama City':0.0600
 };
+const DEFAULT_USER_METRICS = {
+  hardCostMultifamily:285,
+  hardCostMixedUse:320,
+  hardCostCondoTH:340,
+  hardCostSfrAdu:275,
+  baseSoftCostPct:18,
+  loanToCostPct:65,
+  interestRatePct:6.5,
+  vacancyPct:5,
+  expenseRatioPct:35,
+  rentGrowthPct:3,
+  exitCapSpreadBps:25,
+};
 const CONSTRUCTION_PLANS = {
   auto:     { label:'Auto by type', hardCost:null, softPct:0.18, months:18, rentPremium:0,    note:'Uses the project-type base cost.' },
   value:    { label:'Value engineered', hardCost:255, softPct:0.16, months:16, rentPremium:-0.02, note:'Simpler spec, tighter soft costs, and a modest rent haircut.' },
@@ -168,6 +181,7 @@ const CONSTRUCTION_PLANS = {
   luxury:   { label:'Luxury finish', hardCost:380, softPct:0.23, months:22, rentPremium:0.08, note:'Higher finishes, amenities, and achievable rent premium.' },
   concrete: { label:'Concrete / steel', hardCost:450, softPct:0.25, months:28, rentPremium:0.06, note:'Heavy structure/high-rise plan; use only when the site requires it.' },
 };
+userMetrics = loadUserMetrics();
 
 document.getElementById('app').innerHTML = `<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -175,7 +189,7 @@ document.getElementById('app').innerHTML = `<style>
 body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink);height:100vh;overflow:hidden}
 .nav{background:linear-gradient(90deg,var(--navy),#172b52);padding:0 16px;height:48px;display:flex;align-items:center;gap:12px;position:fixed;top:0;left:0;right:0;z-index:100;box-shadow:0 1px 8px rgba(15,31,61,0.18)}
 .logo{font-size:16px;font-weight:800;color:#fff;letter-spacing:0;flex-shrink:0}.logo span{color:var(--gold)}
-.ntag{font-size:10px;color:rgba(255,255,255,0.62);letter-spacing:0;text-transform:uppercase}.nav-r{margin-left:auto;display:flex;align-items:center;gap:7px}
+.ntag{font-size:10px;color:rgba(255,255,255,0.62);letter-spacing:0;text-transform:uppercase}.nav-r{margin-left:auto;display:flex;align-items:center;gap:7px}.navbtn{border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.08);color:#fff;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.navbtn:hover{background:rgba(255,255,255,.15)}
 .adot{width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 3px rgba(239,159,39,0.18)}.adot.ok{background:var(--green);box-shadow:0 0 0 3px rgba(29,158,117,0.18)}.albl{font-size:10px;color:rgba(255,255,255,0.7)}
 .layout{display:flex;height:calc(100vh - 48px);margin-top:48px}
 .sb{width:230px;background:#fbfcfd;border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
@@ -196,21 +210,22 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .pb{display:flex;align-items:center;gap:7px}.pbl{font-size:10px;color:#7f8a9a;min-width:62px}.pbt{flex:1;height:5px;background:#edf1f5;border-radius:3px;overflow:hidden}.pbf{height:100%;border-radius:3px}.pbv{font-size:10px;font-weight:800;min-width:58px;text-align:right;white-space:nowrap}
 .empty{text-align:center;padding:34px 16px;color:#7f8a9a;font-size:12px}.sw{text-align:center;padding:34px;color:#7f8a9a;font-size:12px}.spin{width:26px;height:26px;border:3px solid #e7edf4;border-top-color:var(--navy);border-radius:50%;animation:sp 0.8s linear infinite;margin:0 auto 9px}@keyframes sp{to{transform:rotate(360deg)}}
 .detail{position:fixed;right:0;top:48px;width:min(560px,46vw);max-width:100vw;height:calc(100vh - 48px);background:#fff;border-left:1px solid var(--line);overflow-y:auto;overflow-x:hidden;transform:translateX(100%);transition:transform 0.2s;z-index:50;box-shadow:-10px 0 30px rgba(15,31,61,0.14)}.detail.open{transform:translateX(0)}
+.settings{position:fixed;inset:0;background:rgba(15,31,61,.42);display:none;align-items:flex-start;justify-content:center;padding:70px 16px 16px;z-index:200;overflow:auto}.settings.open{display:flex}.settings-panel{width:min(820px,100%);background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 50px rgba(15,31,61,.25);overflow:hidden}.settings-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);background:#f8fafc}.settings-head h3{font-size:14px;color:var(--navy)}.settings-head p{font-size:10px;color:#6f7b8c;margin-top:2px}.settings-body{padding:12px 14px}.settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.setfield{border:1px solid var(--line);border-radius:8px;padding:8px;background:#fbfcfd}.setfield label{display:block;font-size:8px;font-weight:900;text-transform:uppercase;color:#7f8a9a;margin-bottom:5px}.setfield .mfr input{font-size:12px}.setnote{font-size:10px;color:#6f7b8c;line-height:1.35;margin:10px 0 0}.setactions{display:flex;justify-content:flex-end;gap:7px;padding:10px 14px;border-top:1px solid var(--line);background:#f8fafc}.setactions button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:800;cursor:pointer;color:#536071}.setactions button.primary{background:var(--navy);border-color:var(--navy);color:#fff}.setactions button.warn{color:#8a5b06;background:#fffaf0;border-color:#ead7a6}
 .dh{padding:9px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#fff;z-index:2}.dht{font-size:12px;font-weight:800;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px}.dha{display:flex;gap:5px;flex-shrink:0}.da{padding:5px 8px;font-size:9px;font-weight:800;border:1px solid var(--line);border-radius:5px;cursor:pointer;background:#fff;color:#536071}.da.p{background:var(--navy);color:#fff;border-color:var(--navy)}.dhx{background:none;border:none;font-size:18px;cursor:pointer;color:#8792a2;padding:0 2px;flex-shrink:0}
 .db{padding:10px 12px}.sh{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0;color:#8390a2;margin:10px 0 5px}.sh:first-child{margin-top:0}.ig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:6px}.ic{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:6px 8px}.icl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.icv{font-size:11px;font-weight:800;overflow-wrap:anywhere}
 .mbg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:5px}.mb{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:7px 8px;border-left:3px solid #ddd}.mbl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.mbv{font-size:15px;font-weight:900}.mbs{font-size:8px;color:#7f8a9a;margin-top:1px;line-height:1.15}
 .ct{width:100%;font-size:11px;border-collapse:collapse}.ct td{padding:5px 0;border-bottom:0.5px solid #edf1f4}.ct td:last-child{text-align:right;font-weight:800}.ct tr.tot td{font-weight:900;border-top:1px solid #d8dee7;border-bottom:none;padding-top:6px}.wfr{margin-bottom:5px}.wfl{display:flex;justify-content:space-between;font-size:9px;color:#4d5969;margin-bottom:2px}.wft{height:8px;background:#edf1f5;border-radius:3px;overflow:hidden}.wff{height:100%;border-radius:3px}
 .nb{background:#fffbf0;border:1px solid #f0e0b0;border-left:3px solid var(--gold);border-radius:7px;padding:9px 11px;font-size:11px;line-height:1.55;color:#3f4a5a;margin-top:6px}.gb{padding:7px 12px;background:var(--gold);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-top:5px}.ab{width:100%;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:800;cursor:pointer;margin-top:6px}.ap{background:var(--navy);color:#fff}.as{background:#fff;color:var(--navy);border:1px solid var(--navy)}
 .maptabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:5px}.mapbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 4px;font-size:9px;font-weight:800;cursor:pointer}.mapbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.mapcard{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:5px;background:#fff;text-decoration:none}.mapcard img{width:100%;height:152px;object-fit:cover;display:block}.mapcap{padding:5px 8px;font-size:9px;color:#536071;background:#f8fafc;border-top:1px solid var(--line)}.maplinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:6px}.maplinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}.maplinks a:hover{border-color:var(--gold);background:#fffdf7}
-.viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:cover;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:3;transform:translate(-50%,-50%) scale(1.25)}.pin:after{content:attr(data-label);position:absolute;left:18px;top:-4px;background:#fff;border:1px solid var(--line);border-radius:5px;padding:3px 5px;font-size:9px;font-weight:800;color:var(--ink);white-space:nowrap;display:none}.pin:hover:after{display:block}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}
-@media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}}
+.viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:cover;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:5;transform:translate(-50%,-50%) scale(1.12)}.pin:after{display:none!important}.pintip{position:absolute;left:21px;top:-18px;width:224px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;box-shadow:0 10px 25px rgba(15,31,61,.2);text-align:left;color:var(--ink);font-size:10px;line-height:1.25;display:none;pointer-events:none}.pin:hover .pintip{display:block}.pintip b{display:block;font-size:11px;margin-bottom:2px;overflow-wrap:anywhere}.pintip em{display:block;font-style:normal;color:#6f7b8c;margin-bottom:6px}.pintip span{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #edf1f4;padding-top:4px;margin-top:4px}.pintip strong{font-size:10px}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}
+@media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.settings-grid{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}}
 @media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}}
-@media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg,.maplinks,.sourcelinks{grid-template-columns:1fr}.viewtabs{width:100%;margin-left:0}.viewbtn{flex:1}}
+@media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg,.maplinks,.sourcelinks,.settings-grid{grid-template-columns:1fr}.viewtabs{width:100%;margin-left:0}.viewbtn{flex:1}}
 </style>
 <nav class="nav">
   <div class="logo">PARCEL<span>LA</span></div>
   <div class="ntag">LA Development Sites</div>
-  <div class="nav-r"><span class="adot" id="adot"></span><span class="albl" id="albl">Connecting...</span></div>
+  <div class="nav-r"><button class="navbtn" onclick="openSettings()">Settings</button><span class="adot" id="adot"></span><span class="albl" id="albl">Connecting...</span></div>
 </nav>
 <div class="layout">
   <div class="sb">
@@ -218,7 +233,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <h4>Listing type</h4>
       <label class="cb"><input type="checkbox" id="f-fs" checked> For sale</label>
       <label class="cb"><input type="checkbox" id="f-rti" checked> RTI / Entitled</label>
-      <label class="cb"><input type="checkbox" id="f-comp" checked> Off-market</label>
+      <label class="cb"><input type="checkbox" id="f-comp" checked> Off-market / not for sale</label>
       <label class="cb"><input type="checkbox" id="f-watch"> Watchlist only</label>
       <h4>Project type</h4>
       <label class="cb"><input type="checkbox" id="f-mf" checked> Multifamily</label>
@@ -285,6 +300,35 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
     <button class="dhx" onclick="closeDetail()">×</button>
   </div>
   <div class="db" id="d-body"></div>
+</div>
+<div class="settings" id="settings">
+  <div class="settings-panel">
+    <div class="settings-head">
+      <div><h3>Underwriting Settings</h3><p>Saved in this browser and applied across every site, export, and scenario.</p></div>
+      <button class="dhx" onclick="closeSettings()">×</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-grid">
+        <div class="setfield"><label>Multifamily hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-mf" step="5"></div></div>
+        <div class="setfield"><label>Mixed-use hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-mx" step="5"></div></div>
+        <div class="setfield"><label>Condo / TH hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-cn" step="5"></div></div>
+        <div class="setfield"><label>SFR + ADU hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-sf" step="5"></div></div>
+        <div class="setfield"><label>Soft costs / hard costs</label><div class="mfr"><input type="number" id="set-soft" step="0.5"><span>%</span></div></div>
+        <div class="setfield"><label>Loan-to-cost</label><div class="mfr"><input type="number" id="set-ltc" step="1"><span>%</span></div></div>
+        <div class="setfield"><label>Interest rate</label><div class="mfr"><input type="number" id="set-rate" step="0.1"><span>%</span></div></div>
+        <div class="setfield"><label>Vacancy</label><div class="mfr"><input type="number" id="set-vacancy" step="0.5"><span>%</span></div></div>
+        <div class="setfield"><label>Operating expenses / EGI</label><div class="mfr"><input type="number" id="set-expense" step="0.5"><span>%</span></div></div>
+        <div class="setfield"><label>Annual rent growth</label><div class="mfr"><input type="number" id="set-growth" step="0.25"><span>%</span></div></div>
+        <div class="setfield"><label>Exit cap spread</label><div class="mfr"><input type="number" id="set-exit-spread" step="5"><span>bps</span></div></div>
+      </div>
+      <div class="setnote">Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. The top-row hard-cost override still works as a quick one-off stress test.</div>
+    </div>
+    <div class="setactions">
+      <button class="warn" onclick="resetSettings()">Reset defaults</button>
+      <button onclick="closeSettings()">Cancel</button>
+      <button class="primary" onclick="saveSettings()">Save & re-underwrite</button>
+    </div>
+  </div>
 </div>`;
 
 async function boot() {
@@ -313,6 +357,122 @@ function signedPlanPct(value) {
 
 function planByKey(key) {
   return { key, ...(CONSTRUCTION_PLANS[key] || CONSTRUCTION_PLANS.auto) };
+}
+
+function loadUserMetrics() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('parcella_user_metrics') || '{}');
+    return { ...DEFAULT_USER_METRICS, ...saved };
+  } catch {
+    return { ...DEFAULT_USER_METRICS };
+  }
+}
+
+function currentUserMetrics() {
+  return { ...DEFAULT_USER_METRICS, ...(userMetrics || {}) };
+}
+
+function saveUserMetrics() {
+  localStorage.setItem('parcella_user_metrics', JSON.stringify(currentUserMetrics()));
+}
+
+function metricNumber(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function metricsCustomized() {
+  const m = currentUserMetrics();
+  return Object.keys(DEFAULT_USER_METRICS).some(key => Number(m[key]) !== Number(DEFAULT_USER_METRICS[key]));
+}
+
+function setSettingsField(id, value) {
+  const el = g(id);
+  if (el) el.value = value;
+}
+
+function populateSettingsForm() {
+  const m = currentUserMetrics();
+  setSettingsField('set-hc-mf', m.hardCostMultifamily);
+  setSettingsField('set-hc-mx', m.hardCostMixedUse);
+  setSettingsField('set-hc-cn', m.hardCostCondoTH);
+  setSettingsField('set-hc-sf', m.hardCostSfrAdu);
+  setSettingsField('set-soft', m.baseSoftCostPct);
+  setSettingsField('set-ltc', m.loanToCostPct);
+  setSettingsField('set-rate', m.interestRatePct);
+  setSettingsField('set-vacancy', m.vacancyPct);
+  setSettingsField('set-expense', m.expenseRatioPct);
+  setSettingsField('set-growth', m.rentGrowthPct);
+  setSettingsField('set-exit-spread', m.exitCapSpreadBps);
+}
+
+function openSettings() {
+  populateSettingsForm();
+  g('settings')?.classList.add('open');
+}
+
+function closeSettings() {
+  g('settings')?.classList.remove('open');
+}
+
+function refreshUnderwritingViews() {
+  const id = openId;
+  applyFilters();
+  if (id) {
+    const s = allSites.find(x => x.id === id);
+    if (s) renderDetail(s);
+  }
+}
+
+function saveSettings() {
+  const current = currentUserMetrics();
+  userMetrics = {
+    hardCostMultifamily: metricNumber(g('set-hc-mf')?.value, current.hardCostMultifamily, 100, 1000),
+    hardCostMixedUse: metricNumber(g('set-hc-mx')?.value, current.hardCostMixedUse, 100, 1000),
+    hardCostCondoTH: metricNumber(g('set-hc-cn')?.value, current.hardCostCondoTH, 100, 1000),
+    hardCostSfrAdu: metricNumber(g('set-hc-sf')?.value, current.hardCostSfrAdu, 100, 1000),
+    baseSoftCostPct: metricNumber(g('set-soft')?.value, current.baseSoftCostPct, 5, 45),
+    loanToCostPct: metricNumber(g('set-ltc')?.value, current.loanToCostPct, 0, 90),
+    interestRatePct: metricNumber(g('set-rate')?.value, current.interestRatePct, 0, 20),
+    vacancyPct: metricNumber(g('set-vacancy')?.value, current.vacancyPct, 0, 30),
+    expenseRatioPct: metricNumber(g('set-expense')?.value, current.expenseRatioPct, 5, 70),
+    rentGrowthPct: metricNumber(g('set-growth')?.value, current.rentGrowthPct, -10, 12),
+    exitCapSpreadBps: metricNumber(g('set-exit-spread')?.value, current.exitCapSpreadBps, -100, 200),
+  };
+  saveUserMetrics();
+  closeSettings();
+  refreshUnderwritingViews();
+}
+
+function resetSettings() {
+  userMetrics = { ...DEFAULT_USER_METRICS };
+  saveUserMetrics();
+  populateSettingsForm();
+  refreshUnderwritingViews();
+}
+
+function metricRate(key) {
+  return (Number(currentUserMetrics()[key]) || 0) / 100;
+}
+
+function siteAskPrice(s) {
+  return Number(s?.askPrice || s?.price || 0);
+}
+
+function isForSaleSite(s) {
+  return !s?.isComp && siteAskPrice(s) > 0;
+}
+
+function isOffMarketSite(s) {
+  const status = String(s?.status || s?.listingStatus || '').toLowerCase();
+  return !!(s?.isComp || s?.offMarket || status.includes('off') || status.includes('not for sale') || !siteAskPrice(s));
+}
+
+function siteListingStatus(s) {
+  if (s?.rti) return 'RTI / entitled';
+  if (isOffMarketSite(s)) return 'Off-market / not for sale';
+  return 'For sale';
 }
 
 function loadWatchlist() {
@@ -366,15 +526,16 @@ function markerColorForSite(s, valuation) {
   if (isWatched(s.id)) return '#b98b2f';
   if ((valuation?.netProfit || 0) > 500000) return '#1d9e75';
   if (s.rti) return '#378add';
-  if (s.isComp) return '#8994a5';
+  if (isOffMarketSite(s)) return '#8994a5';
   return '#ef9f27';
 }
 
 function visibleOnMapLayer(s) {
   if (isWatched(s.id) && mapLayers.watchlist) return true;
-  if (s.isComp) return mapLayers.offMarket;
   if (s.rti) return mapLayers.rti;
-  return mapLayers.forSale;
+  if (isForSaleSite(s)) return mapLayers.forSale;
+  if (isOffMarketSite(s)) return mapLayers.offMarket;
+  return mapLayers.offMarket;
 }
 
 function toggleMapLayer(layer) {
@@ -498,15 +659,15 @@ function applyFilters() {
 
   filtered = allSites.filter(s => {
     const valuation = valuationForSite(s, costModelForSite(s));
-    if (!ffs && !s.isComp && !s.rti && !s.forSale) return false;
-    if (!frti && s.rti) return false;
-    if (!fcomp && s.isComp) return false;
+    const listingMatch = (ffs && isForSaleSite(s)) || (frti && s.rti) || (fcomp && isOffMarketSite(s));
+    if (!listingMatch) return false;
     if (watchOnly && !isWatched(s.id)) return false;
     if (types.length && !types.includes(s.type)) return false;
     if (hood && s.hood !== hood) return false;
     if (zone && s.zone !== zone) return false;
     if (s.units < umin || s.units > umax) return false;
-    if (!s.isComp && s.askPrice && (s.askPrice < pmin || s.askPrice > pmax)) return false;
+    const ask = siteAskPrice(s);
+    if (isForSaleSite(s) && ask && (ask < pmin || ask > pmax)) return false;
     if (mfp && (valuation.netProfit||0) < mfp) return false;
     if (mfi && (s.irrV||0) < mfi) return false;
     if (mfs && ((valuation.devSpreadPct||0)*100) < mfs) return false;
@@ -518,8 +679,8 @@ function applyFilters() {
     if (srt==='irr')     return (b.irrV||0)-(a.irrV||0);
     if (srt==='spread')  return (valuationForSite(b, costModelForSite(b)).devSpreadPct||0)-(valuationForSite(a, costModelForSite(a)).devSpreadPct||0);
     if (srt==='capoc')   return (valuationForSite(b, costModelForSite(b)).capOnCost||0)-(valuationForSite(a, costModelForSite(a)).capOnCost||0);
-    if (srt==='price-a') return (a.askPrice||0)-(b.askPrice||0);
-    if (srt==='price-d') return (b.askPrice||0)-(a.askPrice||0);
+    if (srt==='price-a') return (siteAskPrice(a)||Infinity)-(siteAskPrice(b)||Infinity);
+    if (srt==='price-d') return (siteAskPrice(b)||0)-(siteAskPrice(a)||0);
     if (srt==='units')   return b.units-a.units;
     return (valuationForSite(b, costModelForSite(b)).netProfit||0)-(valuationForSite(a, costModelForSite(a)).netProfit||0);
   });
@@ -527,8 +688,9 @@ function applyFilters() {
   const hcpsf = currentHardCostOverride();
   const plan = currentConstructionPlan();
   const planText = plan.key === 'auto' ? '' : ' - ' + plan.label;
+  const settingsText = metricsCustomized() ? ' - custom assumptions' : '';
   updateHardCostOverrideUI();
-  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + (hcpsf ? ' - re-underwritten at $' + hcpsf.toLocaleString() + '/SF hard cost' : planText || ' - pre-underwritten');
+  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + (hcpsf ? ' - re-underwritten at $' + hcpsf.toLocaleString() + '/SF hard cost' : (planText || ' - pre-underwritten') + settingsText);
   renderCards();
 }
 
@@ -579,10 +741,12 @@ function renderCards() {
     const spd = Math.round((valuation.devSpreadPct||0)*1000)/10;
     const hcpsf = currentHardCostOverride();
     const plan = currentConstructionPlan();
-    const ask = s.askPrice || s.price || 0;
+    const ask = siteAskPrice(s);
     const landBasis = s.landCost || ask || 0;
-    const priceMain = s.isComp ? 'Off-market' : (ask ? fmtM(ask) : 'Price n/a');
-    const priceSub = s.isComp ? 'imputed land ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
+    const offMarket = isOffMarketSite(s);
+    const status = siteListingStatus(s);
+    const priceMain = isForSaleSite(s) ? fmtM(ask) : 'Not for sale';
+    const priceSub = offMarket ? 'imputed land ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
     const watched = isWatched(s.id);
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
       <div class="ch">
@@ -590,8 +754,8 @@ function renderCards() {
         <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div><button class="watchbtn ${watched?'on':''}" onclick="toggleWatch(${s.id}, event)">${watched?'Saved':'Save'}</button></div>
       </div>
       <div class="bdgs">
-        ${s.rti?'<span class="bdg b1">✓ RTI</span>':s.isComp?'<span class="bdg b4">Off-market</span>':'<span class="bdg b2">For sale</span>'}
-        <span class="bdg b3">${s.type}</span>${s.isComp?'<span class="bdg b4">land imputed</span>':''}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
+        ${s.rti?'<span class="bdg b1">✓ RTI</span>':offMarket?'<span class="bdg b4">Off-market</span>':'<span class="bdg b2">For sale</span>'}
+        <span class="bdg b3">${s.type}</span>${offMarket?'<span class="bdg b4">' + status + '</span>':''}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${pc}">${fmtM(prof)}</div></div>
@@ -612,11 +776,23 @@ function renderMapView() {
   const el = g('list');
   const visibleSites = filtered.filter(visibleOnMapLayer).slice(0, 250);
   const pins = visibleSites.map(s => {
-    const valuation = valuationForSite(s, costModelForSite(s));
+    const costs = costModelForSite(s);
+    const valuation = valuationForSite(s, costs);
     const pt = siteMapPoint(s);
     const color = markerColorForSite(s, valuation);
     const label = `${s.addr} - ${fmtM(valuation.netProfit)}`.replace(/"/g, '');
-    return `<button class="pin" data-label="${label}" onclick="openDetail(${s.id})" style="left:${pt.x}%;top:${pt.y}%;background:${color}"></button>`;
+    const price = isForSaleSite(s) ? fmtM(siteAskPrice(s)) : 'Not for sale';
+    const profitColor = (valuation.netProfit || 0) >= 0 ? '#1d9e75' : '#e24b4a';
+    return `<button class="pin" data-label="${xmlEscape(label)}" onclick="openDetail(${s.id})" style="left:${pt.x}%;top:${pt.y}%;background:${color}">
+      <span class="pintip">
+        <b>${xmlEscape(s.addr)}</b>
+        <em>${xmlEscape(siteListingStatus(s))} · ${s.units || 0} units · ${xmlEscape(s.hood || '')}</em>
+        <span><small>Price</small><strong>${price}</strong></span>
+        <span><small>Net profit</small><strong style="color:${profitColor}">${fmtM(valuation.netProfit)}</strong></span>
+        <span><small>Cap on cost</small><strong>${valuation.capOnCost || 0}%</strong></span>
+        <span><small>Hard cost</small><strong>${fmtD(costs.hardPerSf)}/SF</strong></span>
+      </span>
+    </button>`;
   }).join('');
   const transit = mapLayers.transit ? MAP_TRANSIT_NODES.map(node => {
     const pt = mapPoint(node.lat, node.lng);
@@ -673,17 +849,20 @@ function closeDetail() {
 }
 
 function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan()) {
+  const metrics = currentUserMetrics();
   const planScenario = plan.key !== 'auto';
+  const recastIncome = planScenario || !!costs || metricsCustomized();
   const storedNoi = Math.round(s.noi || 0);
-  const opexRatio = 0.35;
-  const baseGrossPotentialRent = Math.round(s.grossPotentialRent || (storedNoi ? storedNoi / (1 - opexRatio) / 0.95 : 0));
+  const opexRatio = metricRate('expenseRatioPct') || 0.35;
+  const vacancyRate = metricRate('vacancyPct') || 0.05;
+  const baseGrossPotentialRent = Math.round(s.grossPotentialRent || (storedNoi ? storedNoi / Math.max(0.01, (1 - opexRatio) * (1 - vacancyRate)) : 0));
   const grossPotentialRent = Math.round(baseGrossPotentialRent * (1 + (plan.rentPremium || 0)));
-  const vacancyLoss = Math.round(planScenario ? grossPotentialRent * 0.05 : (s.vacancyLoss ?? grossPotentialRent * 0.05));
+  const vacancyLoss = Math.round(recastIncome ? grossPotentialRent * vacancyRate : (s.vacancyLoss ?? grossPotentialRent * vacancyRate));
   const otherIncome = Math.round(s.otherIncome ?? (s.units || 0) * 600);
-  const effectiveGrossIncome = Math.round(planScenario ? grossPotentialRent - vacancyLoss + otherIncome : (s.effectiveGrossIncome || (grossPotentialRent - vacancyLoss + otherIncome)));
-  const operatingExpenses = Math.round(planScenario ? effectiveGrossIncome * opexRatio : (s.operatingExpenses || Math.max(0, effectiveGrossIncome - storedNoi)));
-  const noi = Math.round(planScenario || !storedNoi ? Math.max(0, effectiveGrossIncome - operatingExpenses) : storedNoi);
-  const expenseDetail = !planScenario && s.expenseDetail ? s.expenseDetail : {
+  const effectiveGrossIncome = Math.round(recastIncome ? grossPotentialRent - vacancyLoss + otherIncome : (s.effectiveGrossIncome || (grossPotentialRent - vacancyLoss + otherIncome)));
+  const operatingExpenses = Math.round(recastIncome ? effectiveGrossIncome * opexRatio : (s.operatingExpenses || Math.max(0, effectiveGrossIncome - storedNoi)));
+  const noi = Math.round(recastIncome || !storedNoi ? Math.max(0, effectiveGrossIncome - operatingExpenses) : storedNoi);
+  const expenseDetail = !recastIncome && s.expenseDetail ? s.expenseDetail : {
     propertyTaxes: operatingExpenses * 0.22,
     insurance: operatingExpenses * 0.08,
     utilities: operatingExpenses * 0.08,
@@ -695,8 +874,10 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
     otherOperating: operatingExpenses * 0.12,
   };
   const debtBase = costs?.totalCost || s.totalCost || 0;
-  const loanAmount = (planScenario || costs) ? debtBase * 0.65 : (s.loanAmount || debtBase * 0.65);
-  const debtService = Math.round((planScenario || costs) ? loanAmount * 0.065 : (s.debtService ?? loanAmount * 0.065));
+  const ltc = metricRate('loanToCostPct') || 0.65;
+  const interestRate = metricRate('interestRatePct') || 0.065;
+  const loanAmount = recastIncome ? debtBase * ltc : (s.loanAmount || debtBase * ltc);
+  const debtService = Math.round(recastIncome ? loanAmount * interestRate : (s.debtService ?? loanAmount * interestRate));
   return {
     grossPotentialRent,
     vacancyLoss,
@@ -726,16 +907,27 @@ function expenseRowsHTML(expenseDetail = {}) {
 }
 
 function baseHardCostPerSf(type) {
-  return FRONTEND_HARD_COST_PSF[type] || 285;
+  const m = currentUserMetrics();
+  const byType = {
+    'Multifamily': m.hardCostMultifamily,
+    'Mixed-Use': m.hardCostMixedUse,
+    'Condo/TH': m.hardCostCondoTH,
+    'SFR+ADU': m.hardCostSfrAdu,
+  };
+  return Number(byType[type]) || FRONTEND_HARD_COST_PSF[type] || 285;
 }
 
 function costModelForSite(s, plan = currentConstructionPlan()) {
+  const metrics = currentUserMetrics();
   const units = s.units || 0;
   const avgUnitSf = s.usf || 800;
   const totalSF = units * avgUnitSf;
-  const land = s.landCost || s.askPrice || s.price || 0;
+  const land = s.landCost || siteAskPrice(s) || 0;
   const override = currentHardCostOverride();
-  const basePsf = override || plan.hardCost || baseHardCostPerSf(s.type);
+  const typeBase = baseHardCostPerSf(s.type);
+  const defaultTypeBase = FRONTEND_HARD_COST_PSF[s.type] || FRONTEND_HARD_COST_PSF.Multifamily;
+  const planDelta = plan.hardCost ? plan.hardCost - defaultTypeBase : 0;
+  const basePsf = override || Math.max(100, Math.round(typeBase + planDelta));
   let modeledHard = basePsf * totalSF;
   if (totalSF > 100000) modeledHard *= 0.93;
   else if (totalSF > 50000) modeledHard *= 0.95;
@@ -744,14 +936,16 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
   const storedHard = Math.round(s.hardCosts || 0);
   const storedHardPsf = totalSF ? Math.round(storedHard / totalSF) : 0;
   const modeledHardPsf = totalSF ? Math.round(modeledHard / totalSF) : 0;
-  const shouldRecast = override || plan.key !== 'auto' || !storedHard || storedHardPsf > modeledHardPsf * 1.2;
+  const shouldRecast = override || plan.key !== 'auto' || metricsCustomized() || !storedHard || storedHardPsf > modeledHardPsf * 1.2;
 
   const hardCosts = shouldRecast ? modeledHard : storedHard;
-  const softPct = plan.softPct ?? 0.18;
+  const softPct = Math.max(0, (metrics.baseSoftCostPct / 100) + ((plan.softPct ?? 0.18) - 0.18));
   const softCosts = shouldRecast ? Math.round(hardCosts * softPct) : Math.round(s.softCosts ?? Math.max(0, ((s.totalCost || 0) - land) * 0.24));
   const preCarry = land + hardCosts + softCosts;
   const carryYears = (plan.months || 18) / 12;
-  const carryCost = shouldRecast ? Math.round(preCarry * 0.65 * 0.065 * carryYears) : Math.round(s.carryCost ?? preCarry * 0.65 * 0.065 * carryYears);
+  const ltc = metrics.loanToCostPct / 100;
+  const interestRate = metrics.interestRatePct / 100;
+  const carryCost = shouldRecast ? Math.round(preCarry * ltc * interestRate * carryYears) : Math.round(s.carryCost ?? preCarry * ltc * interestRate * carryYears);
   const totalCost = shouldRecast ? preCarry + carryCost : Math.round(s.totalCost || preCarry + carryCost);
 
   return {
@@ -770,19 +964,22 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
     planLabel: plan.label,
     planNote: plan.note,
     softPct,
+    loanToCost: ltc,
+    interestRate,
     months: plan.months || 18,
     rentPremium: plan.rentPremium || 0,
     storedHardPsf,
     recast: !!shouldRecast,
-    source: override ? 'custom input' : plan.key !== 'auto' ? plan.label : shouldRecast ? 'current base assumption' : 'stored model',
+    source: override ? 'custom input' : plan.key !== 'auto' ? plan.label : metricsCustomized() ? 'user settings' : shouldRecast ? 'current base assumption' : 'stored model',
   };
 }
 
-function valuationForSite(s, costs = costModelForSite(s), income = incomeStatementForSite(s)) {
+function valuationForSite(s, costs = costModelForSite(s), income = incomeStatementForSite(s, costs)) {
+  const metrics = currentUserMetrics();
   const entryCap = Number(s.entryCap) || FRONTEND_CAP_RATES[s.hood] || 0.0525;
-  const exitCap = Number(s.exitCap) || entryCap + 0.0025;
+  const exitCap = entryCap + ((Number(metrics.exitCapSpreadBps) || 0) / 10000);
   const noi = Math.round(income.noi || 0);
-  const year5Noi = Math.round(s.year5Noi || noi * Math.pow(1.03, 4));
+  const year5Noi = Math.round(noi * Math.pow(1 + metricRate('rentGrowthPct'), 4));
   const exitValue = exitCap ? Math.round(year5Noi / exitCap) : 0;
   const netProfit = exitValue - costs.totalCost;
   return {
@@ -804,10 +1001,14 @@ function renderDetail(s) {
   const irr=s.irrV||0, prof=valuation.netProfit||0, tc=costs.totalCost||0;
   const pc=prof>0?'#1d9e75':'#e24b4a', ic=irrC(irr);
   const spd=Math.round((valuation.devSpreadPct||0)*1000)/10;
-  const ask=s.askPrice||s.price||0;
+  const ask=siteAskPrice(s);
   const land=costs.land||ask||0;
-  const landLabel=s.isComp?'Imputed land value':'Asking price';
-  const landNote=s.isComp?'Estimated from comparable land basis':'Used as land basis in underwriting';
+  const listingStatus = siteListingStatus(s);
+  const offMarket = isOffMarketSite(s);
+  const landLabel=offMarket?'Imputed land value':'Asking price';
+  const landNote=offMarket?'Estimated from comparable land basis or permit data':'Used as land basis in underwriting';
+  const metrics = currentUserMetrics();
+  const vacancyLabel = Math.round(metrics.vacancyPct * 10) / 10;
   const totalSF=(s.units||0)*(s.usf||800);
   const hardCostOverride=currentHardCostOverride();
   const hardCosts=costs.hardCosts;
@@ -822,7 +1023,7 @@ function renderDetail(s) {
     ? 'High hard cost per unit is being driven by unit size/count. Compare hard cost per SF first; per-unit cost is only reliable against similar unit sizes.'
     : 'Hard cost per SF is the primary construction benchmark. Per-unit cost is a secondary check and rises quickly for larger units.';
   const bars=[
-    [land,'#0f1f3d','Land'+(s.isComp?' (imputed)':'')],
+    [land,'#0f1f3d','Land'+(offMarket?' (imputed)':'')],
     [hardCosts,'#378add','Hard costs'],
     [softCosts,'#1d9e75','Soft costs'],
     [carryCost,'#ef9f27','Financing carry'],
@@ -862,7 +1063,7 @@ function renderDetail(s) {
     <div class="ig">
       <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${s.hood}</div></div>
       <div class="ic"><div class="icl">Zoning</div><div class="icv">${s.zone}</div></div>
-      <div class="ic"><div class="icl">Status</div><div class="icv">${s.rti?'✓ RTI':s.isComp?'Off-market':'For sale'}</div></div>
+      <div class="ic"><div class="icl">Status</div><div class="icv">${listingStatus}</div></div>
       <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${s.units} / ${s.usf} SF</div></div>
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${land?fmtD(land):'Not provided'} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
@@ -890,6 +1091,7 @@ function renderDetail(s) {
       <tr><td>Hard cost / SF</td><td>${fmtD(hardPerSf)}/SF${hardCostOverride?' <span style="color:#b98b2f;font-size:9px">custom input</span>':''}</td></tr>
       <tr><td>Hard cost / unit</td><td>${fmtD(hardPerUnit)}/unit</td></tr>
       <tr><td>Soft costs / hard costs</td><td>${softPctHard}%</td></tr>
+      <tr><td>Loan / interest assumptions</td><td>${Math.round((costs.loanToCost || 0) * 1000) / 10}% LTC @ ${Math.round((costs.interestRate || 0) * 1000) / 10}%</td></tr>
       <tr><td>Construction period</td><td>${costs.months} months</td></tr>
       <tr><td>Rent impact</td><td>${signedPlanPct(costs.rentPremium)}</td></tr>
       <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/unit</td></tr>
@@ -910,7 +1112,7 @@ function renderDetail(s) {
     <div class="sh">Income statement</div>
     <table class="ct">
       <tr><td>Gross potential rent</td><td>${fmtD(income.grossPotentialRent)}</td></tr>
-      <tr><td>Vacancy loss (5%)</td><td style="color:#e24b4a">-${fmtD(income.vacancyLoss)}</td></tr>
+      <tr><td>Vacancy loss (${vacancyLabel}%)</td><td style="color:#e24b4a">-${fmtD(income.vacancyLoss)}</td></tr>
       <tr><td>Other income</td><td>${fmtD(income.otherIncome)}</td></tr>
       <tr class="tot"><td>Effective gross income</td><td>${fmtD(income.effectiveGrossIncome)}</td></tr>
       ${expenseRowsHTML(income.expenseDetail)}
@@ -1376,6 +1578,7 @@ function pushCostSchedule(rows, title, total, schedule, totalSF, units) {
 
 function constructionCostRows(s, tc, land) {
   const costs = costModelForSite(s);
+  const metrics = currentUserMetrics();
   const units = s.units || 0;
   const avgUnitSf = s.usf || 800;
   const totalSF = costs.totalSF || units * avgUnitSf;
@@ -1384,8 +1587,8 @@ function constructionCostRows(s, tc, land) {
   const hardCosts = costs.hardCosts || 0;
   const softCosts = costs.softCosts || 0;
   const carryCost = costs.carryCost || 0;
-  const loan = Math.round(s.loanAmount ?? totalCost * 0.65);
-  const equity = Math.round(s.equity ?? totalCost * 0.35);
+  const loan = Math.round(totalCost * (metrics.loanToCostPct / 100));
+  const equity = Math.round(totalCost - loan);
   const hardPerSf = costPerSf(hardCosts, totalSF);
   const hardPerUnit = costPerUnit(hardCosts, units);
   const softPerSf = costPerSf(softCosts, totalSF);
@@ -1413,7 +1616,7 @@ function constructionCostRows(s, tc, land) {
     xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current plan budget, not a contractor bid. Replace with GC pricing when available.' + (currentHardCostOverride() ? ' User hard-cost override applied across all deals: $' + currentHardCostOverride().toLocaleString() + '/SF.' : ''), 'String', 'note']]),
     xlsRow(['']),
     xlsHeaderRow(['Budget Category', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
-    xlsRow([s.isComp ? 'Imputed Land Value' : 'Asking Price / Land Basis', cellMoney(Math.round(landBasis)), totalSF ? cellMoney(costPerSf(landBasis, totalSF)) : '', units ? cellMoney(costPerUnit(landBasis, units)) : '', totalCost ? cellPct(costPct(landBasis, totalCost)) : '', s.isComp ? 'Estimated off-market land basis' : 'For-sale asking price used as land basis']),
+    xlsRow([isOffMarketSite(s) ? 'Imputed Land Value' : 'Asking Price / Land Basis', cellMoney(Math.round(landBasis)), totalSF ? cellMoney(costPerSf(landBasis, totalSF)) : '', units ? cellMoney(costPerUnit(landBasis, units)) : '', totalCost ? cellPct(costPct(landBasis, totalCost)) : '', isOffMarketSite(s) ? 'Estimated off-market / not-for-sale land basis' : 'For-sale asking price used as land basis']),
     xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), totalCost ? cellPct(costPct(hardCosts, totalCost)) : '', 'Detailed schedule below: HVAC, framing, plumbing, electrical, etc.']),
     xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(softPerSf) : '', units ? cellMoney(softPerUnit) : '', totalCost ? cellPct(costPct(softCosts, totalCost)) : '', 'A&E, permits, fees, legal, developer fee, contingency']),
     xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(carryPerSf) : '', units ? cellMoney(carryPerUnit) : '', totalCost ? cellPct(costPct(carryCost, totalCost)) : '', 'Interest reserve, loan fees, taxes and lease-up carry']),
@@ -1426,7 +1629,7 @@ function constructionCostRows(s, tc, land) {
 
   rows.push(xlsRow(['']));
   rows.push(xlsSectionRow('Financing Metrics'));
-  rows.push(xlsRow(['Construction Loan', cellMoney(loan), totalSF ? cellMoney(costPerSf(loan, totalSF)) : '', units ? cellMoney(costPerUnit(loan, units)) : '', totalCost ? cellPct(costPct(loan, totalCost)) : '', 'Assumes 65% loan-to-cost unless model overrides']));
+  rows.push(xlsRow(['Construction Loan', cellMoney(loan), totalSF ? cellMoney(costPerSf(loan, totalSF)) : '', units ? cellMoney(costPerUnit(loan, units)) : '', totalCost ? cellPct(costPct(loan, totalCost)) : '', 'Uses current user setting: ' + metrics.loanToCostPct + '% loan-to-cost']));
   rows.push(xlsRow(['Equity Required', cellMoney(equity), totalSF ? cellMoney(costPerSf(equity, totalSF)) : '', units ? cellMoney(costPerUnit(equity, units)) : '', totalCost ? cellPct(costPct(equity, totalCost)) : '', 'Borrower cash / sponsor equity']));
   rows.push(xlsRow(['']));
   rows.push(xlsSectionRow('Benchmark Checks'));
@@ -1480,17 +1683,18 @@ async function exportExcel(id) {
   const costs = costModelForSite(s);
   const income = incomeStatementForSite(s, costs);
   const valuation = valuationForSite(s, costs, income);
+  const metrics = currentUserMetrics();
   const tc = costs.totalCost || 0;
-  const land = costs.land || s.askPrice || 0;
+  const land = costs.land || siteAskPrice(s) || 0;
   const noi = valuation.noi || 0;
   const exitValue = valuation.exitValue || 0;
   const netProfit = valuation.netProfit || 0;
   const irr = s.irrV || 0;
   const entryCap = valuation.entryCap || submarket?.entryCap || 0.0475;
   const exitCap = valuation.exitCap || submarket?.exitCap || entryCap + 0.0025;
-  const loan = tc * 0.65;
-  const equity = tc * 0.35;
-  const debtService = income.debtService || loan * 0.065;
+  const loan = tc * (metrics.loanToCostPct / 100);
+  const equity = tc - loan;
+  const debtService = income.debtService || loan * (metrics.interestRatePct / 100);
   const today = new Date().toISOString().slice(0,10);
   const rentMonthly = income.grossPotentialRent ? Math.round(income.grossPotentialRent / 12) : 0;
   const totalSF = costs.totalSF;
@@ -1514,6 +1718,12 @@ async function exportExcel(id) {
     xlsRow(['Construction Plan', costs.planLabel]),
     xlsRow(['Hard Cost / SF', cellMoney(hardPerSf)]),
     xlsRow(['Soft Cost % of Hard Cost', cellPct(Math.round((costs.softPct || 0) * 1000) / 10)]),
+    xlsRow(['Loan-to-Cost', cellPct(metrics.loanToCostPct)]),
+    xlsRow(['Interest Rate', cellPct(metrics.interestRatePct)]),
+    xlsRow(['Vacancy', cellPct(metrics.vacancyPct)]),
+    xlsRow(['Expense Ratio', cellPct(metrics.expenseRatioPct)]),
+    xlsRow(['Annual Rent Growth', cellPct(metrics.rentGrowthPct)]),
+    xlsRow(['Exit Cap Spread', cellNumber(metrics.exitCapSpreadBps), 'bps']),
     xlsRow(['Construction Months', cellNumber(costs.months || 18)]),
     xlsRow(['Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10)]),
     xlsRow(['Units', cellNumber(s.units || 0)]),
@@ -1523,7 +1733,7 @@ async function exportExcel(id) {
     xlsRow(['All-In Cost', cellMoney(Math.round(tc))]),
     xlsRow(['Net Profit', cellMoneySigned(Math.round(netProfit))]),
     xlsRow(['RTI', s.rti ? 'Yes' : 'No']),
-    xlsRow(['Status', s.isComp ? 'Off-market' : 'For sale']),
+    xlsRow(['Status', siteListingStatus(s)]),
     xlsRow(['Permit Source ID', s.permitSourceId || '']),
     xlsRow(['Underwritten At', s.underwrittenAt || '']),
   ];
@@ -1541,7 +1751,7 @@ async function exportExcel(id) {
     xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(Math.round(softCosts / totalSF)) : '', s.units ? cellMoney(Math.round(softCosts / s.units)) : '', 'A&E, permits, fees, contingency, developer fee']),
     xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(Math.round(carryCost / totalSF)) : '', s.units ? cellMoney(Math.round(carryCost / s.units)) : '', 'Interest, loan fees, taxes during construction']),
     xlsRow(['Total All-In Cost', cellMoney(Math.round(tc)), cellMoney(totalPerSf), cellMoney(totalPerUnit), 'Total development basis'], 'section'),
-    xlsRow(['Loan Amount', cellMoney(Math.round(loan)), totalSF ? cellMoney(Math.round(loan / totalSF)) : '', s.units ? cellMoney(Math.round(loan / s.units)) : '', '65% LTC assumption unless overridden']),
+    xlsRow(['Loan Amount', cellMoney(Math.round(loan)), totalSF ? cellMoney(Math.round(loan / totalSF)) : '', s.units ? cellMoney(Math.round(loan / s.units)) : '', metrics.loanToCostPct + '% LTC user assumption']),
     xlsRow(['Equity Required', cellMoney(Math.round(equity)), totalSF ? cellMoney(Math.round(equity / totalSF)) : '', s.units ? cellMoney(Math.round(equity / s.units)) : '', 'Sponsor equity requirement']),
     xlsRow(['NOI', cellMoney(Math.round(noi)), totalSF ? cellMoney(Math.round(noi / totalSF)) : '', s.units ? cellMoney(Math.round(noi / s.units)) : '', 'Stabilized annual NOI']),
     xlsRow(['Year 5 NOI', cellMoney(Math.round(valuation.year5Noi)), totalSF ? cellMoney(Math.round(valuation.year5Noi / totalSF)) : '', s.units ? cellMoney(Math.round(valuation.year5Noi / s.units)) : '', 'Year-5 NOI used for exit valuation']),
@@ -1562,8 +1772,8 @@ async function exportExcel(id) {
     xlsRow(['Plan Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10)]),
     xlsRow(['Implied Monthly Gross Rent', cellMoney(rentMonthly)]),
     xlsRow(['Implied Annual Gross Rent', cellMoney(rentMonthly * 12)]),
-    xlsRow(['Vacancy', '5.0%']),
-    xlsRow(['Expense Ratio', '35.0%']),
+    xlsRow(['Vacancy', cellPct(metrics.vacancyPct)]),
+    xlsRow(['Expense Ratio', cellPct(metrics.expenseRatioPct)]),
     xlsRow(['']),
     ...rentRowsFromSubmarket(s, submarket),
   ];
@@ -1573,7 +1783,7 @@ async function exportExcel(id) {
     xlsHeaderRow(['Year', 'NOI', 'Debt Service', 'Cash Flow Before Tax', 'Exit Value', 'Loan Payoff', 'Net Sale Proceeds']),
   ];
   for (let year = 1; year <= 5; year++) {
-    const yearNoi = Math.round(noi * Math.pow(1.03, year - 1));
+    const yearNoi = Math.round(noi * Math.pow(1 + metrics.rentGrowthPct / 100, year - 1));
     const sale = year === 5 ? Math.round(yearNoi / exitCap) : '';
     const payoff = year === 5 ? Math.round(loan) : '';
     const proceeds = year === 5 ? Math.round((sale || 0) - loan) : '';
@@ -1588,7 +1798,7 @@ async function exportExcel(id) {
     xlsRow(['Bull', '+8%', '-40 bps', '-5%', 'Higher rents, tighter exit cap, value engineering']),
     xlsRow(['']),
     xlsRow(['Risk', 'Impact', 'Mitigation']),
-    xlsRow(['Rent miss 5%', cellMoneyRed(-Math.round(noi * 0.05 * 5)), 'Validate achievable rents with local comps']),
+    xlsRow(['Rent miss ' + metrics.vacancyPct + '%', cellMoneyRed(-Math.round(noi * (metrics.vacancyPct / 100) * 5)), 'Validate achievable rents with local comps']),
     xlsRow(['Cap expansion 50 bps', cellMoneyRed(-Math.round(noi / 0.005)), 'Use conservative exit cap and stress test']),
     xlsRow(['Cost overrun 10%', cellMoneyRed(-Math.round(tc * 0.10)), 'GC pricing, contingency, value engineering']),
   ];
@@ -1623,12 +1833,13 @@ function exportPDF(id) {
   const costs = costModelForSite(s);
   const pdfIncome = incomeStatementForSite(s, costs);
   const valuation = valuationForSite(s, costs, pdfIncome);
+  const metrics = currentUserMetrics();
   const irr  = s.irrV || 0;
   const prof = valuation.netProfit || 0;
   const pc   = prof > 0 ? '#1d9e75' : '#e24b4a';
   const ic   = irrC(irr);
   const tc   = costs.totalCost || 0;
-  const land = costs.land || s.askPrice || 0;
+  const land = costs.land || siteAskPrice(s) || 0;
   const noi  = valuation.noi || 0;
   const exitV = valuation.exitValue || 0;
   const entryCap = valuation.entryCap || 0.0475;
@@ -1649,7 +1860,10 @@ function exportPDF(id) {
   const pdfSoftPctHard = pdfHardCosts ? Math.round((pdfSoftCosts / pdfHardCosts) * 1000) / 10 : 0;
   const pdfSoftSchedule = allocateCostSchedule(pdfSoftCosts, softCostLineItems());
   const pdfCarrySchedule = allocateCostSchedule(pdfCarryCost, carryCostLineItems());
-  const pdfLoan = Math.round(tc * 0.65);
+  const pdfLoan = Math.round(tc * (metrics.loanToCostPct / 100));
+  const pdfEquity = Math.round(tc - pdfLoan);
+  const pdfDebtService = Math.round(pdfLoan * (metrics.interestRatePct / 100));
+  const pdfRentGrowth = metrics.rentGrowthPct / 100;
   const pdfRentImpact = signedPlanPct(costs.rentPremium);
 
   win.document.write(`<!DOCTYPE html>
@@ -1710,7 +1924,7 @@ function exportPDF(id) {
   <div style="font-size:10px;color:#c49a3c;letter-spacing:2px;margin:8px 0">DEVELOPMENT APPRAISAL REPORT</div>
   <h1>${s.addr}</h1>
   <div class="sub">${s.hood || ''}, Los Angeles, CA &nbsp;|&nbsp; ${s.zone || ''} Zoning &nbsp;|&nbsp; ${s.units}-Unit ${s.type || 'Multifamily'}</div>
-  <div class="sub">${s.rti ? '✓ RTI Approved — Entitled Site' : s.isComp ? 'Off-Market Comparable' : 'Active Listing — For Sale'}</div>
+  <div class="sub">${s.rti ? '✓ RTI Approved — Entitled Site' : isOffMarketSite(s) ? 'Off-Market / Not For Sale' : 'Active Listing — For Sale'}</div>
   <div class="date">Report Date: ${today} &nbsp;|&nbsp; Prepared by ParceLLA Analytics Engine</div>
   <div class="conf">CONFIDENTIAL — FOR APPROVED RECIPIENTS ONLY</div>
 </div>
@@ -1786,11 +2000,11 @@ function exportPDF(id) {
     <h3>Entitlement Status</h3>
     <table>
       <tr><td>RTI Status</td><td class="${s.rti ? 'green' : 'amber'}">${s.rti ? '✓ RTI Approved' : 'In Process'}</td></tr>
-      <tr><td>Listing Status</td><td>${s.isComp ? 'Off-Market' : 'Active For Sale'}</td></tr>
+      <tr><td>Listing Status</td><td>${siteListingStatus(s)}</td></tr>
       <tr><td>Demo Required</td><td>${s.demo ? 'Yes' : 'No'}</td></tr>
-      <tr><td>Asking Price</td><td>${s.isComp ? 'Off-market (imputed)' : fmtD(s.askPrice||0)}</td></tr>
-      <tr><td>Price per Unit</td><td>${fmtD(Math.round((s.askPrice||land)/s.units))}</td></tr>
-      <tr><td>Price per SF (land)</td><td>${fmtD(Math.round((s.askPrice||land)/(s.lot||5000)))}/SF</td></tr>
+      <tr><td>Asking Price</td><td>${isForSaleSite(s) ? fmtD(siteAskPrice(s)) : 'Not for sale (imputed)'}</td></tr>
+      <tr><td>Price per Unit</td><td>${fmtD(Math.round((siteAskPrice(s)||land)/s.units))}</td></tr>
+      <tr><td>Price per SF (land)</td><td>${fmtD(Math.round((siteAskPrice(s)||land)/(s.lot||5000)))}/SF</td></tr>
     </table>
 
     <h3>Unit Mix</h3>
@@ -1858,7 +2072,7 @@ function exportPDF(id) {
   <div>
     <table>
       <tr><th colspan="2">LAND & ACQUISITION</th></tr>
-      <tr><td>${s.isComp?'Imputed Land Value':'Asking Price / Land Basis'}</td><td>${fmtD(land)}${s.isComp?' (estimated)':''}</td></tr>
+      <tr><td>${isOffMarketSite(s)?'Imputed Land Value':'Asking Price / Land Basis'}</td><td>${fmtD(land)}${isOffMarketSite(s)?' (estimated)':''}</td></tr>
       <tr><td>Title, Escrow & Legal (est.)</td><td>${fmtD(land*0.015+25000)}</td></tr>
       <tr class="tot"><td>Land Subtotal</td><td>${fmtD(land*1.015+25000)}</td></tr>
 
@@ -1881,7 +2095,7 @@ function exportPDF(id) {
 
       <tr><th colspan="2" style="padding-top:10px">FINANCING & CARRY</th></tr>
       <tr><td>Construction Period</td><td>${costs.months || 18} months</td></tr>
-      <tr><td>Construction Loan (65% LTC)</td><td>${fmtD(pdfLoan)}</td></tr>
+      <tr><td>Construction Loan (${metrics.loanToCostPct}% LTC)</td><td>${fmtD(pdfLoan)}</td></tr>
       ${pdfCarrySchedule.slice(0,3).map(item => `<tr><td>${item.name}</td><td>${fmtD(item.amount)}</td></tr>`).join('')}
       <tr class="tot"><td>Total Carry</td><td>${fmtD(pdfCarryCost)}</td></tr>
     </table>
@@ -1935,7 +2149,7 @@ function exportPDF(id) {
     <h3>Operating Statement</h3>
     <table>
       <tr><td>Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
-      <tr><td>Less: Vacancy (5%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.vacancyLoss)})</td></tr>
+      <tr><td>Less: Vacancy (${metrics.vacancyPct}%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.vacancyLoss)})</td></tr>
       <tr><td>Plus: Other Income</td><td>${fmtD(pdfIncome.otherIncome)}</td></tr>
       <tr class="tot"><td>Effective Gross Income</td><td>${fmtD(pdfIncome.effectiveGrossIncome)}</td></tr>
       <tr><td>Property Taxes</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.propertyTaxes || 0)})</td></tr>
@@ -1947,7 +2161,7 @@ function exportPDF(id) {
       <tr><td>Marketing / Turnover</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.marketingTurnover || 0)})</td></tr>
       <tr><td>Replacement Reserves</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.replacementReserves || 0)})</td></tr>
       <tr><td>Other Operating</td><td style="color:#e24b4a">(${fmtD(pdfIncome.expenseDetail.otherOperating || 0)})</td></tr>
-      <tr><td>Total Operating Expenses (35%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.operatingExpenses)})</td></tr>
+      <tr><td>Total Operating Expenses (${metrics.expenseRatioPct}%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.operatingExpenses)})</td></tr>
       <tr class="tot" style="background:#e8f5ee"><td style="color:#1d9e75;font-weight:700">NET OPERATING INCOME</td><td style="color:#1d9e75;font-weight:700;font-size:12px">${fmtD(pdfIncome.noi)}</td></tr>
       <tr><td>Debt Service</td><td style="color:#e24b4a">(${fmtD(pdfIncome.debtService)})</td></tr>
       <tr class="tot"><td>Cash Flow Before Tax</td><td>${fmtD(pdfIncome.cfbt)}</td></tr>
@@ -1961,7 +2175,7 @@ function exportPDF(id) {
       <tr><td>Stabilized Value (entry cap)</td><td>${fmtD(noi/entryCap)}</td></tr>
       <tr><td>&nbsp;</td><td>&nbsp;</td></tr>
       <tr><td>Year 5 NOI</td><td>${fmtD(valuation.year5Noi)}</td></tr>
-      <tr><td>Exit Cap Rate (entry + 25bps)</td><td>${(exitCap*100).toFixed(2)}%</td></tr>
+      <tr><td>Exit Cap Rate (entry + ${metrics.exitCapSpreadBps}bps)</td><td>${(exitCap*100).toFixed(2)}%</td></tr>
       <tr><td>Valuation Formula</td><td>${fmtD(valuation.year5Noi)} / ${(exitCap*100).toFixed(2)}%</td></tr>
       <tr><td>Exit Value</td><td>${fmtD(exitV)}</td></tr>
       <tr><td>&nbsp;</td><td>&nbsp;</td></tr>
@@ -2005,20 +2219,20 @@ function exportPDF(id) {
     <th style="text-align:right">Year 5</th>
   </tr>
   <tr>
-    <td>NOI (3.0% annual growth)</td>
+    <td>NOI (${metrics.rentGrowthPct}% annual growth)</td>
     <td style="text-align:right;color:#999">—</td>
-    ${[1,2,3,4,5].map(yr => `<td style="text-align:right">${fmtD(Math.round(noi*Math.pow(1.03,yr-1)))}</td>`).join('')}
+    ${[1,2,3,4,5].map(yr => `<td style="text-align:right">${fmtD(Math.round(noi*Math.pow(1 + pdfRentGrowth,yr-1)))}</td>`).join('')}
   </tr>
   <tr>
-    <td>Debt Service (I/O @ 6.5%)</td>
+    <td>Debt Service (I/O @ ${metrics.interestRatePct}%)</td>
     <td style="text-align:right;color:#999">—</td>
-    ${[1,2,3,4,5].map(() => `<td style="text-align:right;color:#e24b4a">(${fmtD(Math.round(tc*0.65*0.065))})</td>`).join('')}
+    ${[1,2,3,4,5].map(() => `<td style="text-align:right;color:#e24b4a">(${fmtD(pdfDebtService)})</td>`).join('')}
   </tr>
   <tr class="tot">
     <td>CFBT</td>
     <td style="text-align:right;color:#999">—</td>
     ${[1,2,3,4,5].map(yr => {
-      const cfbt = Math.round(noi*Math.pow(1.03,yr-1) - tc*0.65*0.065);
+      const cfbt = Math.round(noi*Math.pow(1 + pdfRentGrowth,yr-1) - pdfDebtService);
       return `<td style="text-align:right;color:${cfbt>0?'#1d9e75':'#e24b4a'}">${cfbt>0?fmtD(cfbt):`(${fmtD(Math.abs(cfbt))})`}</td>`;
     }).join('')}
   </tr>
@@ -2032,14 +2246,14 @@ function exportPDF(id) {
     <td>Less: Loan Repayment</td>
     <td style="text-align:right;color:#999">—</td>
     <td colspan="4" style="text-align:right;color:#999">—</td>
-    <td style="text-align:right;color:#e24b4a">(${fmtD(Math.round(tc*0.65))})</td>
+    <td style="text-align:right;color:#e24b4a">(${fmtD(pdfLoan)})</td>
   </tr>
   <tr class="tot" style="background:#0f1f3d;color:white">
     <td style="color:white">EQUITY CASHFLOWS</td>
-    <td style="text-align:right;color:#c49a3c">(${fmtD(Math.round(tc*0.35))})</td>
+    <td style="text-align:right;color:#c49a3c">(${fmtD(pdfEquity)})</td>
     ${[1,2,3,4,5].map((yr, i) => {
-      const cfbt = Math.round(noi*Math.pow(1.03,yr-1) - tc*0.65*0.065);
-      const exit = yr===5 ? exitV - Math.round(tc*0.65) : 0;
+      const cfbt = Math.round(noi*Math.pow(1 + pdfRentGrowth,yr-1) - pdfDebtService);
+      const exit = yr===5 ? exitV - pdfLoan : 0;
       const total = cfbt + exit;
       return `<td style="text-align:right;color:#c49a3c">${fmtD(total)}</td>`;
     }).join('')}
@@ -2054,17 +2268,17 @@ function exportPDF(id) {
   </div>
   <div class="kpi" style="border-left-color:${pc}">
     <div class="kpi-l">Equity Multiple</div>
-    <div class="kpi-v">${tc > 0 ? (Math.round((exitV - tc*0.65 + tc*0.35) / (tc*0.35) * 100)/100).toFixed(2) : '—'}x</div>
+    <div class="kpi-v">${pdfEquity > 0 ? (Math.round((exitV - pdfLoan + pdfEquity) / pdfEquity * 100)/100).toFixed(2) : '—'}x</div>
     <div class="kpi-s">total equity return</div>
   </div>
   <div class="kpi" style="border-left-color:#4472C4">
     <div class="kpi-l">Cash-on-Cash (Yr1)</div>
-    <div class="kpi-v">${tc > 0 ? (Math.round((noi - tc*0.65*0.065)/(tc*0.35)*1000)/10).toFixed(1) : '—'}%</div>
+    <div class="kpi-v">${pdfEquity > 0 ? (Math.round((noi - pdfDebtService)/pdfEquity*1000)/10).toFixed(1) : '—'}%</div>
     <div class="kpi-s">CFBT / equity</div>
   </div>
   <div class="kpi" style="border-left-color:#4472C4">
     <div class="kpi-l">DSCR (Yr1)</div>
-    <div class="kpi-v">${tc > 0 ? (Math.round(noi/(tc*0.65*0.065)*100)/100).toFixed(2) : '—'}x</div>
+    <div class="kpi-v">${pdfDebtService > 0 ? (Math.round(noi/pdfDebtService*100)/100).toFixed(2) : '—'}x</div>
     <div class="kpi-s">NOI / debt service</div>
   </div>
 </div>
@@ -2078,10 +2292,10 @@ function exportPDF(id) {
     <table>
       <tr><th>Risk Factor</th><th>Impact</th><th>Mitigation</th></tr>
       <tr><td>Cost overrun (10%)</td><td class="red">−${fmtM(tc*0.10)} profit</td><td>10% contingency included</td></tr>
-      <tr><td>Rent miss (5%)</td><td class="red">−${fmtM(noi*0.05*5)} NPV</td><td>Conservative rent assumptions</td></tr>
+      <tr><td>Rent miss (${metrics.vacancyPct}%)</td><td class="red">−${fmtM(noi*(metrics.vacancyPct/100)*5)} NPV</td><td>Conservative rent assumptions</td></tr>
       <tr><td>Cap rate expansion (+50bps)</td><td class="red">−${fmtM(noi/0.005)}</td><td>Exit cap already +25bps over entry</td></tr>
-      <tr><td>Construction delay (6 mo)</td><td class="amber">+${fmtM(tc*0.65*0.065*0.5)} carry</td><td>${s.rti ? 'RTI eliminates entitlement delay' : 'Depends on plan check timeline'}</td></tr>
-      <tr><td>Interest rate spike (+1%)</td><td class="amber">+${fmtM(tc*0.65*0.01*1.5)} carry</td><td>Rate cap recommended</td></tr>
+      <tr><td>Construction delay (6 mo)</td><td class="amber">+${fmtM(pdfLoan*(metrics.interestRatePct/100)*0.5)} carry</td><td>${s.rti ? 'RTI eliminates entitlement delay' : 'Depends on plan check timeline'}</td></tr>
+      <tr><td>Interest rate spike (+1%)</td><td class="amber">+${fmtM(pdfLoan*0.01*1.5)} carry</td><td>Rate cap recommended</td></tr>
     </table>
   </div>
   <div>
@@ -2091,7 +2305,7 @@ function exportPDF(id) {
       ${[0.045, 0.0475, 0.05, 0.0525, 0.055, 0.0575].map(cap => {
         const ev = noi/cap;
         const np = ev - tc;
-        const irrEst = Math.round((np/tc/5 + (noi-tc*0.65*0.065)/(tc*0.35))*500)/10;
+        const irrEst = Math.round((np/tc/5 + (noi-pdfDebtService)/Math.max(1,pdfEquity))*500)/10;
         const color = irrEst >= 15 ? '#1d9e75' : irrEst >= 10 ? '#ef9f27' : '#e24b4a';
         return `<tr><td>${(cap*100).toFixed(2)}%</td><td>${fmtM(ev)}</td><td style="color:${color}">${fmtM(np)}</td><td style="color:${color}">${irrEst}%</td></tr>`;
       }).join('')}
@@ -2114,8 +2328,8 @@ function exportPDF(id) {
   <tr class="tot"><td colspan="5">MARKET AVERAGE (24-month)</td><td>$356,500</td><td>4.52%</td></tr>
   <tr style="background:#fffbf0;font-weight:600">
     <td>${s.addr}</td><td>${s.hood||''}</td><td>Subject</td><td>${s.units}</td>
-    <td>${s.isComp?'Off-mkt':fmtD(s.askPrice||0)}</td>
-    <td>${fmtD(Math.round((s.askPrice||land)/s.units))}</td>
+    <td>${isOffMarketSite(s)?'Off-mkt':fmtD(siteAskPrice(s)||0)}</td>
+    <td>${fmtD(Math.round((siteAskPrice(s)||land)/s.units))}</td>
     <td>${capoc}% (on cost)</td>
   </tr>
 </table>
