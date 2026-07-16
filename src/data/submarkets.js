@@ -75,7 +75,7 @@ export const RSMEANS = {
   'Multifamily': 285,  // Type V wood frame, 3–5 stories
   'Mixed-Use':   320,  // Type III/V podium, ground-floor retail
   'Condo/TH':    340,  // Type III concrete/wood, higher finish
-  'SFR+ADU':     275,  // Single family + accessory dwelling unit
+  'New House':   275,  // New single-family construction; ADUs/additions excluded
 };
 
 // Scale discounts (volume pricing, site efficiency)

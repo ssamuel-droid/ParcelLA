@@ -205,7 +205,7 @@ async function main() {
       return {
         permit_number: String(r.permit_number || r.id || 'hu-' + i).slice(0,100),
         permit_type: 'Bldg-New',
-        permit_subtype: 'Multifamily',
+        permit_subtype: units <= 1 ? 'New House' : 'Multifamily',
         status: String(r.status || r.project_status || 'Issued').slice(0,50),
         address: cleanAddress(r.address || r.location_address || r.project_address),
         zone: r.zoning || r.zone || null,

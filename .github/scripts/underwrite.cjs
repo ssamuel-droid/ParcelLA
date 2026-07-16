@@ -76,7 +76,7 @@ const CAPS = {
   'Boyle Heights':0.0575,'Van Nuys':0.0550,'Reseda':0.0575,'Canoga Park':0.0575,
   'Panorama City':0.0600,'Pacoima':0.0625,'Chatsworth':0.0525,
 };
-const HC = {'Multifamily':285,'Mixed-Use':320,'Condo/TH':340,'SFR+ADU':275};
+const HC = {'Multifamily':285,'Mixed-Use':320,'Condo/TH':340,'New House':275};
 
 const BOXES = [
   {h:'Silver Lake',lat0:34.070,lat1:34.105,lng0:-118.290,lng1:-118.250},
@@ -152,10 +152,22 @@ function hood(lat, lng, addr) {
 
 function ptype(pt, st, u) {
   const s = (st||'').toLowerCase();
+  if (s.includes('adu')||s.includes('accessory')||s.includes('addition')) return null;
   if (s.includes('condo')||s.includes('townhouse')) return 'Condo/TH';
   if (s.includes('commercial')||s.includes('mixed')) return 'Mixed-Use';
+  if (s.includes('single')||(s.includes('1 or 2')&&u<=1)||u===1) return 'New House';
   if (u>=5) return 'Multifamily';
-  return 'SFR+ADU';
+  if (u>=2) return 'Multifamily';
+  return 'Multifamily';
+}
+
+function developmentStatus(status, isRti) {
+  const s = String(status || '').toLowerCase();
+  if (isRti || s.includes('ready') || s.includes('approved')) return 'city_approved_not_started';
+  if (s.includes('plan')) return 'plan_check';
+  if (s.includes('issued')) return 'permit_issued';
+  if (s.includes('final') || s.includes('certificate') || s.includes('inspection')) return 'possibly_started_unknown';
+  return 'possibly_started_unknown';
 }
 
 function irr(cfs) {
@@ -179,10 +191,12 @@ function uw(p) {
   if (subtype.includes('adu') || subtype.includes('accessory') || subtype.includes('addition')) return null;
 
   const t = ptype(p.permit_type, p.permit_subtype, actualUnits);
+  if (!t) return null;
+  const devStatus = developmentStatus(p.status, p.is_rti);
   // Estimate units from valuation if not available
-  const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='SFR+ADU'?220000:228000;
-  const estimatedUnits = actualUnits > 0 ? actualUnits : Math.max(Math.round((p.valuation||228000)/costPerUnit), 2);
-  const u = Math.min(Math.max(estimatedUnits, 2), 200);
+  const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='New House'?220000:228000;
+  const estimatedUnits = actualUnits > 0 ? actualUnits : Math.max(Math.round((p.valuation||228000)/costPerUnit), t==='New House' ? 1 : 2);
+  const u = t==='New House' ? 1 : Math.min(Math.max(estimatedUnits, 2), 200);
   const R = RENTS[h]||RENTS['Koreatown'];
   const cap = CAPS[h]||0.0525;
   const hc = HC[t]||285;
@@ -209,6 +223,7 @@ function uw(p) {
     neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:800, lot_sf:5000,
     status:'active', data_source:'ladbs_permit', rti:p.is_rti||false,
     lat:p.lat, lng:p.lng,
+    raw_permit_data:{permit_status:p.status||null, development_status:devStatus},
     noi:Math.round(noi), total_cost:Math.round(total), exit_value:Math.round(exit),
     net_profit:Math.round(profit), irr_v:irrV,
     cap_on_cost:Math.round(noi/total*10000)/100,
@@ -223,7 +238,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,address,zone,units,valuation,is_rti,permit_type,permit_subtype,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;

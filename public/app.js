@@ -152,7 +152,7 @@ const MAP_TRANSIT_NODES = [
   { name:'Hollywood/Highland', lat:34.1019, lng:-118.3397 },
 ];
 const mapLayers = { forSale:true, rti:true, offMarket:true, watchlist:true, transit:true };
-const FRONTEND_HARD_COST_PSF = {'Multifamily':285,'Mixed-Use':320,'Condo/TH':340,'SFR+ADU':275};
+const FRONTEND_HARD_COST_PSF = {'Multifamily':285,'Mixed-Use':320,'Condo/TH':340,'New House':275};
 const FRONTEND_CAP_RATES = {
   'Silver Lake':0.0475,'Echo Park':0.0500,'Highland Park':0.0525,'Los Feliz':0.0475,
   'Koreatown':0.0525,'Mid-Wilshire':0.0500,'Culver City':0.0475,'Mar Vista':0.0500,
@@ -163,7 +163,7 @@ const DEFAULT_USER_METRICS = {
   hardCostMultifamily:285,
   hardCostMixedUse:320,
   hardCostCondoTH:340,
-  hardCostSfrAdu:275,
+  hardCostNewHouse:275,
   baseSoftCostPct:18,
   loanToCostPct:65,
   interestRatePct:6.5,
@@ -235,11 +235,16 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-rti" checked> RTI / Entitled</label>
       <label class="cb"><input type="checkbox" id="f-comp" checked> Off-market / not for sale</label>
       <label class="cb"><input type="checkbox" id="f-watch"> Watchlist only</label>
+      <h4>Development status</h4>
+      <label class="cb"><input type="checkbox" id="f-d-plan" checked> Plan check</label>
+      <label class="cb"><input type="checkbox" id="f-d-approved" checked> City approved / not started</label>
+      <label class="cb"><input type="checkbox" id="f-d-issued" checked> Permit issued</label>
+      <label class="cb"><input type="checkbox" id="f-d-unknown" checked> Started / unknown</label>
       <h4>Project type</h4>
       <label class="cb"><input type="checkbox" id="f-mf" checked> Multifamily</label>
       <label class="cb"><input type="checkbox" id="f-mx" checked> Mixed-use</label>
       <label class="cb"><input type="checkbox" id="f-cn" checked> Condo / TH</label>
-      <label class="cb"><input type="checkbox" id="f-sf"> SFR + ADU</label>
+      <label class="cb"><input type="checkbox" id="f-nh"> New house</label>
       <h4>Neighborhood</h4>
       <select id="f-hood" class="sbs">
         <option value="">All neighborhoods</option>
@@ -312,7 +317,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <div class="setfield"><label>Multifamily hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-mf" step="5"></div></div>
         <div class="setfield"><label>Mixed-use hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-mx" step="5"></div></div>
         <div class="setfield"><label>Condo / TH hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-cn" step="5"></div></div>
-        <div class="setfield"><label>SFR + ADU hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-sf" step="5"></div></div>
+        <div class="setfield"><label>New house hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-nh" step="5"></div></div>
         <div class="setfield"><label>Soft costs / hard costs</label><div class="mfr"><input type="number" id="set-soft" step="0.5"><span>%</span></div></div>
         <div class="setfield"><label>Loan-to-cost</label><div class="mfr"><input type="number" id="set-ltc" step="1"><span>%</span></div></div>
         <div class="setfield"><label>Interest rate</label><div class="mfr"><input type="number" id="set-rate" step="0.1"><span>%</span></div></div>
@@ -362,6 +367,7 @@ function planByKey(key) {
 function loadUserMetrics() {
   try {
     const saved = JSON.parse(localStorage.getItem('parcella_user_metrics') || '{}');
+    if (saved.hardCostSfrAdu && !saved.hardCostNewHouse) saved.hardCostNewHouse = saved.hardCostSfrAdu;
     return { ...DEFAULT_USER_METRICS, ...saved };
   } catch {
     return { ...DEFAULT_USER_METRICS };
@@ -397,7 +403,7 @@ function populateSettingsForm() {
   setSettingsField('set-hc-mf', m.hardCostMultifamily);
   setSettingsField('set-hc-mx', m.hardCostMixedUse);
   setSettingsField('set-hc-cn', m.hardCostCondoTH);
-  setSettingsField('set-hc-sf', m.hardCostSfrAdu);
+  setSettingsField('set-hc-nh', m.hardCostNewHouse);
   setSettingsField('set-soft', m.baseSoftCostPct);
   setSettingsField('set-ltc', m.loanToCostPct);
   setSettingsField('set-rate', m.interestRatePct);
@@ -431,7 +437,7 @@ function saveSettings() {
     hardCostMultifamily: metricNumber(g('set-hc-mf')?.value, current.hardCostMultifamily, 100, 1000),
     hardCostMixedUse: metricNumber(g('set-hc-mx')?.value, current.hardCostMixedUse, 100, 1000),
     hardCostCondoTH: metricNumber(g('set-hc-cn')?.value, current.hardCostCondoTH, 100, 1000),
-    hardCostSfrAdu: metricNumber(g('set-hc-sf')?.value, current.hardCostSfrAdu, 100, 1000),
+    hardCostNewHouse: metricNumber(g('set-hc-nh')?.value, current.hardCostNewHouse, 100, 1000),
     baseSoftCostPct: metricNumber(g('set-soft')?.value, current.baseSoftCostPct, 5, 45),
     loanToCostPct: metricNumber(g('set-ltc')?.value, current.loanToCostPct, 0, 90),
     interestRatePct: metricNumber(g('set-rate')?.value, current.interestRatePct, 0, 20),
@@ -470,9 +476,27 @@ function isOffMarketSite(s) {
 }
 
 function siteListingStatus(s) {
-  if (s?.rti) return 'RTI / entitled';
   if (isOffMarketSite(s)) return 'Off-market / not for sale';
   return 'For sale';
+}
+
+function developmentStatusKey(s) {
+  const explicit = String(s?.developmentStatus || '').trim();
+  if (['plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
+  const raw = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
+  if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
+  if (raw.includes('plan')) return 'plan_check';
+  if (raw.includes('issued')) return 'permit_issued';
+  return 'possibly_started_unknown';
+}
+
+function developmentStatusLabel(s) {
+  return {
+    plan_check: 'Plan check',
+    city_approved_not_started: 'City approved / not started',
+    permit_issued: 'Permit issued',
+    possibly_started_unknown: 'Started / unknown',
+  }[developmentStatusKey(s)] || 'Started / unknown';
 }
 
 function loadWatchlist() {
@@ -525,14 +549,15 @@ function siteMapPoint(s) {
 function markerColorForSite(s, valuation) {
   if (isWatched(s.id)) return '#b98b2f';
   if ((valuation?.netProfit || 0) > 500000) return '#1d9e75';
-  if (s.rti) return '#378add';
+  if (developmentStatusKey(s) === 'city_approved_not_started') return '#378add';
+  if (developmentStatusKey(s) === 'plan_check') return '#ef9f27';
   if (isOffMarketSite(s)) return '#8994a5';
   return '#ef9f27';
 }
 
 function visibleOnMapLayer(s) {
   if (isWatched(s.id) && mapLayers.watchlist) return true;
-  if (s.rti) return mapLayers.rti;
+  if (developmentStatusKey(s) === 'city_approved_not_started') return mapLayers.rti;
   if (isForSaleSite(s)) return mapLayers.forSale;
   if (isOffMarketSite(s)) return mapLayers.offMarket;
   return mapLayers.offMarket;
@@ -651,16 +676,22 @@ function applyFilters() {
   const srt = g('srt')?.value||'profit';
   const ffs = g('f-fs')?.checked!==false, frti = g('f-rti')?.checked!==false, fcomp = g('f-comp')?.checked!==false;
   const watchOnly = g('f-watch')?.checked === true;
+  const devStatuses = [];
+  if (g('f-d-plan')?.checked) devStatuses.push('plan_check');
+  if (g('f-d-approved')?.checked) devStatuses.push('city_approved_not_started');
+  if (g('f-d-issued')?.checked) devStatuses.push('permit_issued');
+  if (g('f-d-unknown')?.checked) devStatuses.push('possibly_started_unknown');
   const types = [];
   if (g('f-mf')?.checked) types.push('Multifamily');
   if (g('f-mx')?.checked) types.push('Mixed-Use');
   if (g('f-cn')?.checked) types.push('Condo/TH');
-  if (g('f-sf')?.checked) types.push('SFR+ADU');
+  if (g('f-nh')?.checked) types.push('New House');
 
   filtered = allSites.filter(s => {
     const valuation = valuationForSite(s, costModelForSite(s));
     const listingMatch = (ffs && isForSaleSite(s)) || (frti && s.rti) || (fcomp && isOffMarketSite(s));
     if (!listingMatch) return false;
+    if (devStatuses.length && !devStatuses.includes(developmentStatusKey(s))) return false;
     if (watchOnly && !isWatched(s.id)) return false;
     if (types.length && !types.includes(s.type)) return false;
     if (hood && s.hood !== hood) return false;
@@ -745,6 +776,7 @@ function renderCards() {
     const landBasis = s.landCost || ask || 0;
     const offMarket = isOffMarketSite(s);
     const status = siteListingStatus(s);
+    const devStatus = developmentStatusLabel(s);
     const priceMain = isForSaleSite(s) ? fmtM(ask) : 'Not for sale';
     const priceSub = offMarket ? 'imputed land ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
     const watched = isWatched(s.id);
@@ -755,7 +787,7 @@ function renderCards() {
       </div>
       <div class="bdgs">
         ${s.rti?'<span class="bdg b1">✓ RTI</span>':offMarket?'<span class="bdg b4">Off-market</span>':'<span class="bdg b2">For sale</span>'}
-        <span class="bdg b3">${s.type}</span>${offMarket?'<span class="bdg b4">' + status + '</span>':''}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
+        <span class="bdg b3">${s.type}</span><span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${offMarket?'<span class="bdg b4">' + status + '</span>':''}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${pc}">${fmtM(prof)}</div></div>
@@ -786,7 +818,7 @@ function renderMapView() {
     return `<button class="pin" data-label="${xmlEscape(label)}" onclick="openDetail(${s.id})" style="left:${pt.x}%;top:${pt.y}%;background:${color}">
       <span class="pintip">
         <b>${xmlEscape(s.addr)}</b>
-        <em>${xmlEscape(siteListingStatus(s))} · ${s.units || 0} units · ${xmlEscape(s.hood || '')}</em>
+        <em>${xmlEscape(developmentStatusLabel(s))} · ${s.units || 0} units · ${xmlEscape(s.hood || '')}</em>
         <span><small>Price</small><strong>${price}</strong></span>
         <span><small>Net profit</small><strong style="color:${profitColor}">${fmtM(valuation.netProfit)}</strong></span>
         <span><small>Cap on cost</small><strong>${valuation.capOnCost || 0}%</strong></span>
@@ -808,7 +840,7 @@ function renderMapView() {
       ${pins}${transit}
       <div class="maplegend">
         <span><i class="dot" style="background:#1d9e75"></i>Strong profit</span>
-        <span><i class="dot" style="background:#378add"></i>RTI / entitled</span>
+        <span><i class="dot" style="background:#378add"></i>City approved / not started</span>
         <span><i class="dot" style="background:#ef9f27"></i>For sale</span>
         <span><i class="dot" style="background:#b98b2f"></i>Watchlist</span>
       </div>
@@ -818,7 +850,7 @@ function renderMapView() {
         <h4>Map layers</h4>
         ${[
           ['forSale','For sale'],
-          ['rti','RTI / entitled'],
+          ['rti','City approved / RTI'],
           ['offMarket','Off-market'],
           ['watchlist','Watchlist'],
           ['transit','Transit / TOC'],
@@ -912,7 +944,7 @@ function baseHardCostPerSf(type) {
     'Multifamily': m.hardCostMultifamily,
     'Mixed-Use': m.hardCostMixedUse,
     'Condo/TH': m.hardCostCondoTH,
-    'SFR+ADU': m.hardCostSfrAdu,
+    'New House': m.hardCostNewHouse,
   };
   return Number(byType[type]) || FRONTEND_HARD_COST_PSF[type] || 285;
 }
@@ -1004,6 +1036,7 @@ function renderDetail(s) {
   const ask=siteAskPrice(s);
   const land=costs.land||ask||0;
   const listingStatus = siteListingStatus(s);
+  const devStatus = developmentStatusLabel(s);
   const offMarket = isOffMarketSite(s);
   const landLabel=offMarket?'Imputed land value':'Asking price';
   const landNote=offMarket?'Estimated from comparable land basis or permit data':'Used as land basis in underwriting';
@@ -1063,7 +1096,8 @@ function renderDetail(s) {
     <div class="ig">
       <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${s.hood}</div></div>
       <div class="ic"><div class="icl">Zoning</div><div class="icv">${s.zone}</div></div>
-      <div class="ic"><div class="icl">Status</div><div class="icv">${listingStatus}</div></div>
+      <div class="ic"><div class="icl">Listing status</div><div class="icv">${listingStatus}</div></div>
+      <div class="ic"><div class="icl">Development status</div><div class="icv">${devStatus}</div></div>
       <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${s.units} / ${s.usf} SF</div></div>
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${land?fmtD(land):'Not provided'} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
@@ -1733,7 +1767,9 @@ async function exportExcel(id) {
     xlsRow(['All-In Cost', cellMoney(Math.round(tc))]),
     xlsRow(['Net Profit', cellMoneySigned(Math.round(netProfit))]),
     xlsRow(['RTI', s.rti ? 'Yes' : 'No']),
-    xlsRow(['Status', siteListingStatus(s)]),
+    xlsRow(['Listing Status', siteListingStatus(s)]),
+    xlsRow(['Development Status', developmentStatusLabel(s)]),
+    xlsRow(['Permit Status', s.permitStatus || '']),
     xlsRow(['Permit Source ID', s.permitSourceId || '']),
     xlsRow(['Underwritten At', s.underwrittenAt || '']),
   ];
@@ -1924,7 +1960,7 @@ function exportPDF(id) {
   <div style="font-size:10px;color:#c49a3c;letter-spacing:2px;margin:8px 0">DEVELOPMENT APPRAISAL REPORT</div>
   <h1>${s.addr}</h1>
   <div class="sub">${s.hood || ''}, Los Angeles, CA &nbsp;|&nbsp; ${s.zone || ''} Zoning &nbsp;|&nbsp; ${s.units}-Unit ${s.type || 'Multifamily'}</div>
-  <div class="sub">${s.rti ? '✓ RTI Approved — Entitled Site' : isOffMarketSite(s) ? 'Off-Market / Not For Sale' : 'Active Listing — For Sale'}</div>
+  <div class="sub">${developmentStatusLabel(s)} &nbsp;|&nbsp; ${isOffMarketSite(s) ? 'Off-Market / Not For Sale' : 'Active Listing — For Sale'}</div>
   <div class="date">Report Date: ${today} &nbsp;|&nbsp; Prepared by ParceLLA Analytics Engine</div>
   <div class="conf">CONFIDENTIAL — FOR APPROVED RECIPIENTS ONLY</div>
 </div>
@@ -1957,7 +1993,7 @@ function exportPDF(id) {
 <div class="note">
   <strong>Investment Summary:</strong> This analysis presents a ${s.units}-unit ${s.type || 'multifamily'} development opportunity located at ${s.addr} in ${s.hood || 'Los Angeles'}, CA. 
   The subject property is zoned ${s.zone || 'R3'} with a ${(s.lot||5000).toLocaleString()} SF lot. 
-  ${s.rti ? 'The project holds Ready-to-Issue (RTI) approval, eliminating entitlement risk and enabling immediate construction commencement upon permit issuance.' : 'The project is currently in the entitlement pipeline.'}
+  ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
   Based on RSMeans 2024 construction cost data and CoStar Q3 2024 market cap rates, the projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF), 
   with a stabilized exit value of <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding a net development profit of <strong>${fmtD(prof)}</strong>.
 </div>
@@ -1999,7 +2035,8 @@ function exportPDF(id) {
   <div>
     <h3>Entitlement Status</h3>
     <table>
-      <tr><td>RTI Status</td><td class="${s.rti ? 'green' : 'amber'}">${s.rti ? '✓ RTI Approved' : 'In Process'}</td></tr>
+      <tr><td>Development Status</td><td class="${developmentStatusKey(s) === 'city_approved_not_started' ? 'green' : 'amber'}">${developmentStatusLabel(s)}</td></tr>
+      <tr><td>Raw Permit Status</td><td>${s.permitStatus || ''}</td></tr>
       <tr><td>Listing Status</td><td>${siteListingStatus(s)}</td></tr>
       <tr><td>Demo Required</td><td>${s.demo ? 'Yes' : 'No'}</td></tr>
       <tr><td>Asking Price</td><td>${isForSaleSite(s) ? fmtD(siteAskPrice(s)) : 'Not for sale (imputed)'}</td></tr>
@@ -2056,7 +2093,7 @@ function exportPDF(id) {
       <tr><td>Class A New Construction</td><td>${(entryCap*100).toFixed(2)}%</td><td>${(exitCap*100).toFixed(2)}%</td></tr>
       <tr><td>Class B Value-Add</td><td>${((entryCap+0.005)*100).toFixed(2)}%</td><td>${((exitCap+0.005)*100).toFixed(2)}%</td></tr>
       <tr><td>Mixed-Use (ground flr retail)</td><td>${((entryCap+0.0025)*100).toFixed(2)}%</td><td>${((exitCap+0.0025)*100).toFixed(2)}%</td></tr>
-      <tr><td>SFR + ADU</td><td>${((entryCap+0.0075)*100).toFixed(2)}%</td><td>${((exitCap+0.0075)*100).toFixed(2)}%</td></tr>
+      <tr><td>New House</td><td>${((entryCap+0.0075)*100).toFixed(2)}%</td><td>${((exitCap+0.0075)*100).toFixed(2)}%</td></tr>
     </table>
     <div class="note">
       <strong>Source:</strong> CoStar Q3 2024, CBRE LA Multifamily Market Report Q3 2024, 
@@ -2373,8 +2410,8 @@ function exportPDF(id) {
 }
 
 function resetFilters() {
-  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
-  const sf=g('f-sf'); if(sf)sf.checked=false;
+  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
+  const nh=g('f-nh'); if(nh)nh.checked=false;
   const watch=g('f-watch'); if(watch)watch.checked=false;
   ['f-hood','f-zone'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-umin','f-umax','f-pmin','f-pmax','mf-p','mf-i','mf-s','mf-c','mf-hc'].forEach(id=>{const el=g(id);if(el)el.value='';});

@@ -28,12 +28,13 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 function guessType(permitType, subType, units) {
   const pt = (permitType || '').toLowerCase();
   const st = (subType || '').toLowerCase();
-  if (st.includes('1 or 2') || st.includes('single')) return 'SFR+ADU';
+  if (st.includes('adu') || st.includes('accessory') || st.includes('addition')) return null;
+  if (st.includes('single') || (st.includes('1 or 2') && (units || 0) <= 1) || (units || 0) === 1) return 'New House';
   if (st.includes('condo') || st.includes('townhouse')) return 'Condo/TH';
   if (st.includes('commercial') || st.includes('mixed')) return 'Mixed-Use';
   if (units >= 5) return 'Multifamily';
-  if (units >= 2) return 'SFR+ADU';
-  return 'Multifamily';
+  if (units >= 2) return 'Multifamily';
+  return 'New House';
 }
 
 // Guess neighborhood from LA address
@@ -115,6 +116,7 @@ function modelFromSupabaseSite(s) {
 }
 
 function mapSupabaseSite(s, i = 0) {
+  const rawPermit = s.raw_permit_data || {};
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
@@ -132,6 +134,8 @@ function mapSupabaseSite(s, i = 0) {
     lat:          s.lat,
     lng:          s.lng,
     permitSourceId: s.permit_source_id,
+    permitStatus: rawPermit.permit_status || rawPermit.status || null,
+    developmentStatus: rawPermit.development_status || null,
     underwrittenAt: s.underwritten_at,
     _precomputed: true,
     _m: modelFromSupabaseSite(s),
@@ -242,6 +246,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         units:        s.units,
         usf:          s.usf  ?? s.avg_unit_sf,
         rti:          s.rti,
+        permitStatus: s.permitStatus,
+        developmentStatus: s.developmentStatus,
         isComp:       s.isComp ?? s.is_comp ?? false,
         lat:          s.lat,
         lng:          s.lng,
