@@ -10,7 +10,7 @@ if (!SB_URL || !SB_KEY) {
 }
 
 const EXCLUDE_SUBTYPE = /adu|accessory|addition/i;
-const EXCLUDE_WORK = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bsupplemental\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
+const EXCLUDE_WORK = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
 
 function get(url) {
   return new Promise((resolve, reject) => {
@@ -125,6 +125,7 @@ function shouldSkipSubtype(value) {
 
 function shouldSkipPermit(record, textParts = []) {
   if (record?.adu_changed || record?.junior_adu) return true;
+  if (/standard plan way/i.test(String(record?.primary_address || record?.address || ''))) return true;
   return textParts.some(value => EXCLUDE_WORK.test(String(value || '')));
 }
 
@@ -142,7 +143,9 @@ function unitsFromText(value) {
 }
 
 function statusIsRti(value) {
-  return /ready|approved/i.test(String(value || ''));
+  const status = String(value || '');
+  if (/not ready/i.test(status)) return false;
+  return /ready to issue|pc approved|approved/i.test(status);
 }
 
 function buildModernPermitRow(r, i, fallbackPrefix) {
@@ -194,6 +197,16 @@ async function syncDataset(name, records, buildRow) {
     seen.add(row.permit_number);
     rows.push(row);
   }
+
+  const statusCounts = {};
+  let rtiCount = 0;
+  for (const row of rows) {
+    const status = row.status || 'Unknown';
+    statusCounts[status] = (statusCounts[status] || 0) + 1;
+    if (row.is_rti) rtiCount++;
+  }
+  console.log('Prepared rows by status:', JSON.stringify(statusCounts));
+  console.log('Prepared city-approved / RTI rows:', rtiCount);
 
   let synced = 0;
   for (let i = 0; i < rows.length; i += 25) {

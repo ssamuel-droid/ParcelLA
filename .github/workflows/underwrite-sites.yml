@@ -1,6 +1,8 @@
 name: Underwrite LA Sites
 
 on:
+  schedule:
+    - cron: '30 10 * * *'
   workflow_run:
     workflows: ["Fetch LA City Permit Data"]
     types: [completed]
@@ -8,6 +10,7 @@ on:
 
 jobs:
   underwrite:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

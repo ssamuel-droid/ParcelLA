@@ -485,6 +485,7 @@ function developmentStatusKey(s) {
   const explicit = String(s?.developmentStatus || '').trim();
   if (['submitted','plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
   const raw = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
+  if (raw.includes('not ready')) return 'plan_check';
   if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
   if (raw.includes('submit')) return 'submitted';
   if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('correction') || raw.includes('verification') || raw.includes('review') || raw.includes('hold')) return 'plan_check';

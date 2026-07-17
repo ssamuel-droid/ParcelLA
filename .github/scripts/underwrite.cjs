@@ -150,7 +150,8 @@ function hood(lat, lng, addr) {
   return 'Koreatown';
 }
 
-const EXCLUDED_PROJECT_TEXT = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bsupplemental\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
+const EXCLUDED_PROJECT_TEXT = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
+const RESIDENTIAL_PROJECT_TEXT = /(apartment|dwelling|residential|multifamily|multi-family|mixed[- ]use|affordable housing|\bunit\b|\bunits\b|duplex|townhouse|condo|single[- ]family|\bsfd\b)/i;
 
 function unitsFromText(value) {
   const text = String(value || '');
@@ -162,11 +163,15 @@ function excludedProject(...values) {
   return values.some(value => EXCLUDED_PROJECT_TEXT.test(String(value || '')));
 }
 
+function residentialProject(units, ...values) {
+  return Number(units || 0) > 0 || values.some(value => RESIDENTIAL_PROJECT_TEXT.test(String(value || '')));
+}
+
 function ptype(pt, st, u, desc = '') {
   const s = [st, desc].filter(Boolean).join(' ').toLowerCase();
-  if (s.includes('adu')||s.includes('accessory')||s.includes('addition')) return null;
+  if (s.includes('adu')||s.includes('accessory')||/\baddition\b/.test(s)) return null;
   if (s.includes('condo')||s.includes('townhouse')) return 'Condo/TH';
-  if (s.includes('commercial')||s.includes('mixed')) return 'Mixed-Use';
+  if (s.includes('commercial')||s.includes('mixed')) return residentialProject(u, st, desc) ? 'Mixed-Use' : null;
   if (s.includes('single')||(s.includes('1 or 2')&&u<=1)||u===1) return 'New House';
   if (u>=5) return 'Multifamily';
   if (u>=2) return 'Multifamily';
@@ -175,6 +180,7 @@ function ptype(pt, st, u, desc = '') {
 
 function developmentStatus(status, isRti) {
   const s = String(status || '').toLowerCase();
+  if (s.includes('not ready')) return 'plan_check';
   if (isRti || s.includes('ready') || s.includes('approved')) return 'city_approved_not_started';
   if (s.includes('submit')) return 'submitted';
   if (s.includes('plan') || s.includes('pc ') || s.includes('pc_') || s.includes('correction') || s.includes('verification') || s.includes('review') || s.includes('hold')) return 'plan_check';
@@ -202,6 +208,7 @@ function uw(p) {
   // Skip ADUs and additions — not development opportunities
   const subtype = (p.permit_subtype || '').toLowerCase();
   if (subtype.includes('adu') || subtype.includes('accessory') || subtype.includes('addition')) return null;
+  if (/standard plan way/i.test(String(p.address || ''))) return null;
   if (p.adu_changed || p.junior_adu || excludedProject(p.permit_subtype, p.use_desc, p.work_description)) return null;
 
   const t = ptype(p.permit_type, p.permit_subtype, actualUnits, p.work_description);
