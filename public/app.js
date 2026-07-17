@@ -468,7 +468,7 @@ function siteAskPrice(s) {
 }
 
 function isForSaleSite(s) {
-  return !s?.isComp && siteAskPrice(s) > 0;
+  return !isOffMarketSite(s) && siteAskPrice(s) > 0;
 }
 
 function isOffMarketSite(s) {
@@ -483,13 +483,13 @@ function siteListingStatus(s) {
 
 function developmentStatusKey(s) {
   const explicit = String(s?.developmentStatus || '').trim();
-  if (['submitted','plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
   const raw = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
   if (raw.includes('not ready')) return 'plan_check';
-  if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
-  if (raw.includes('submit')) return 'submitted';
-  if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('correction') || raw.includes('verification') || raw.includes('review') || raw.includes('hold')) return 'plan_check';
   if (raw.includes('issued')) return 'permit_issued';
+  if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
+  if (raw.includes('submit') || raw.includes('pc assigned') || raw.includes('pc in progress') || raw.includes('pc info complete') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor')) return 'submitted';
+  if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('correction') || raw.includes('verification') || raw.includes('review') || raw.includes('hold')) return 'plan_check';
+  if (['submitted','plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
   return 'possibly_started_unknown';
 }
 
@@ -561,10 +561,11 @@ function markerColorForSite(s, valuation) {
 
 function visibleOnMapLayer(s) {
   if (isWatched(s.id) && mapLayers.watchlist) return true;
-  if (developmentStatusKey(s) === 'city_approved_not_started' || s.rti) return mapLayers.rti;
-  if (isForSaleSite(s)) return mapLayers.forSale;
-  if (isOffMarketSite(s)) return mapLayers.offMarket;
-  return mapLayers.offMarket;
+  return !!(
+    (isOffMarketSite(s) && mapLayers.offMarket) ||
+    ((developmentStatusKey(s) === 'city_approved_not_started' || s.rti) && mapLayers.rti) ||
+    (isForSaleSite(s) && mapLayers.forSale)
+  );
 }
 
 function toggleMapLayer(layer) {
@@ -655,12 +656,9 @@ async function loadSites() {
   g('list').innerHTML = '<div class="sw"><div class="spin"></div>Underwriting sites...</div>';
   try {
     const hcpsf = currentHardCostOverride();
-    const qs = new URLSearchParams({ limit: '2000', sort: 'profit' });
+    const qs = new URLSearchParams({ sort: 'profit' });
     if (hcpsf) qs.set('hcpsf', String(hcpsf));
-    const r = await fetch(API + '/api/sites?' + qs.toString());
-    if (!r.ok) throw new Error('API ' + r.status);
-    const data = await r.json();
-    allSites = data.results || [];
+    allSites = await fetchAllSitePages(qs);
     updateHardCostOverrideUI();
     console.log('[ParceLLA] Loaded', allSites.length, 'sites, first:', JSON.stringify(allSites[0]?.addr));
     console.log('[ParceLLA] Sample site type:', allSites[0]?.type, 'rti:', allSites[0]?.rti, 'isComp:', allSites[0]?.isComp);
@@ -669,6 +667,30 @@ async function loadSites() {
   } catch (e) {
     g('list').innerHTML = '<div class="empty">Could not load sites<br><small style="color:#e24b4a">' + e.message + '</small></div>';
   }
+}
+
+async function fetchAllSitePages(baseQs) {
+  const pageSize = 5000;
+  let offset = 0;
+  let total = Infinity;
+  const results = [];
+
+  while (results.length < total) {
+    const qs = new URLSearchParams(baseQs);
+    qs.set('limit', String(pageSize));
+    qs.set('offset', String(offset));
+    const r = await fetch(API + '/api/sites?' + qs.toString());
+    if (!r.ok) throw new Error('API ' + r.status);
+    const data = await r.json();
+    const page = data.results || [];
+    total = Number.isFinite(Number(data.total)) ? Number(data.total) : results.length + page.length;
+    results.push(...page);
+    if (page.length < pageSize) break;
+    offset += page.length;
+    g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loaded ' + results.length.toLocaleString() + ' of ' + total.toLocaleString() + ' sites...</div>';
+  }
+
+  return results;
 }
 
 function applyFilters() {
@@ -794,7 +816,7 @@ function renderCards() {
         <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div><button class="watchbtn ${watched?'on':''}" onclick="toggleWatch(${s.id}, event)">${watched?'Saved':'Save'}</button></div>
       </div>
       <div class="bdgs">
-        ${s.rti?'<span class="bdg b1">✓ RTI</span>':offMarket?'<span class="bdg b4">Off-market</span>':'<span class="bdg b2">For sale</span>'}
+        ${offMarket?'<span class="bdg b4">Off-market</span>':s.rti?'<span class="bdg b1">RTI</span>':'<span class="bdg b2">For sale</span>'}
         <span class="bdg b3">${s.type}</span><span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${offMarket?'<span class="bdg b4">' + status + '</span>':''}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">

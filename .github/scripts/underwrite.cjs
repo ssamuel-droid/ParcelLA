@@ -155,8 +155,8 @@ const RESIDENTIAL_PROJECT_TEXT = /(apartment|dwelling|residential|multifamily|mu
 
 function unitsFromText(value) {
   const text = String(value || '');
-  const match = text.match(/(\d{1,3})\s*[- ]?\s*(?:unit|dwelling|apartment|affordable housing)/i);
-  return match ? parseInt(match[1], 10) || 0 : 0;
+  const match = text.match(/(\d[\d,]*)\s*[- ]?\s*(?:unit|dwelling|apartment|affordable housing)/i);
+  return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
 }
 
 function excludedProject(...values) {
@@ -182,7 +182,7 @@ function developmentStatus(status, isRti) {
   const s = String(status || '').toLowerCase();
   if (s.includes('not ready')) return 'plan_check';
   if (isRti || s.includes('ready') || s.includes('approved')) return 'city_approved_not_started';
-  if (s.includes('submit')) return 'submitted';
+  if (s.includes('submit') || s.includes('pc assigned') || s.includes('pc in progress') || s.includes('pc info complete') || s.includes('correction') || s.includes('verification') || s.includes('quality review') || s.includes('reviewed by supervisor')) return 'submitted';
   if (s.includes('plan') || s.includes('pc ') || s.includes('pc_') || s.includes('correction') || s.includes('verification') || s.includes('review') || s.includes('hold')) return 'plan_check';
   if (s.includes('issued')) return 'permit_issued';
   if (s.includes('final') || s.includes('certificate') || s.includes('inspection')) return 'possibly_started_unknown';
@@ -216,8 +216,8 @@ function uw(p) {
   const devStatus = developmentStatus(p.status, p.is_rti);
   // Estimate units from valuation if not available
   const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='New House'?220000:228000;
-  const estimatedUnits = actualUnits > 0 ? actualUnits : Math.max(Math.round((p.valuation||228000)/costPerUnit), t==='New House' ? 1 : 2);
-  const u = t==='New House' ? 1 : Math.min(Math.max(estimatedUnits, 2), 200);
+  const estimatedUnits = Math.max(Math.round((p.valuation||228000)/costPerUnit), t==='New House' ? 1 : 2);
+  const u = t==='New House' ? 1 : (actualUnits > 0 ? actualUnits : Math.max(estimatedUnits, 2));
   const R = RENTS[h]||RENTS['Koreatown'];
   const cap = CAPS[h]||0.0525;
   const hc = HC[t]||285;
@@ -242,7 +242,7 @@ function uw(p) {
   const irrV = eq>500 ? Math.min(Math.max(irr([-eq,cf,cf,cf,cf,cf+exit-loan]),-50),100) : 0;
   return {
     neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:800, lot_sf:5000,
-    status:'active', data_source:'ladbs_permit', rti:p.is_rti||false,
+    status:'off-market', data_source:'ladbs_permit', rti:p.is_rti||false,
     lat:p.lat, lng:p.lng,
     raw_permit_data:{permit_status:p.status||null, development_status:devStatus},
     noi:Math.round(noi), total_cost:Math.round(total), exit_value:Math.round(exit),

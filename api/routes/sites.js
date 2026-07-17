@@ -23,6 +23,7 @@ const router = Router();
 let _siteCache = null;
 let _cacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const SITE_LOAD_PAGE_SIZE = 5000;
 
 // Guess project type from permit data
 function guessType(permitType, subType, units) {
@@ -117,6 +118,8 @@ function modelFromSupabaseSite(s) {
 
 function mapSupabaseSite(s, i = 0) {
   const rawPermit = s.raw_permit_data || {};
+  const status = s.status || 'active';
+  const offMarket = /off|not for sale/i.test(status);
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
@@ -127,7 +130,9 @@ function mapSupabaseSite(s, i = 0) {
     units:        s.units ?? 4,
     usf:          s.avg_unit_sf ?? s.usf ?? 800,
     rti:          s.rti ?? false,
-    forSale:      true,
+    status,
+    listingStatus: offMarket ? 'Off-market / not for sale' : 'For sale',
+    forSale:      !offMarket,
     isComp:       s.is_comp ?? false,
     price:        s.price ?? null,
     demo:         s.has_demo ?? false,
@@ -141,6 +146,35 @@ function mapSupabaseSite(s, i = 0) {
     _m: modelFromSupabaseSite(s),
     ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
   };
+}
+
+async function fetchAllUnderwrittenSites() {
+  const now = Date.now();
+  if (_siteCache && now - _cacheTime < CACHE_TTL) return { data: _siteCache, error: null };
+
+  const all = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('sites')
+      .select('*')
+      .in('status', ['active', 'off-market'])
+      .not('net_profit', 'is', null)
+      .order('irr_v', { ascending: false })
+      .range(offset, offset + SITE_LOAD_PAGE_SIZE - 1);
+
+    if (error) return { data: null, error };
+
+    const page = data || [];
+    all.push(...page);
+    if (page.length < SITE_LOAD_PAGE_SIZE) break;
+    offset += SITE_LOAD_PAGE_SIZE;
+  }
+
+  _siteCache = all;
+  _cacheTime = now;
+  return { data: all, error: null };
 }
 
 // ── GET /api/sites ─────────────────────────────────────────────────────────────
@@ -166,13 +200,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     if (process.env.SUPABASE_URL) {
       try {
         // Load pre-underwritten sites from Supabase (populated by GitHub Action)
-        const { data: sbSites, error: sbErr } = await supabase
-          .from('sites')
-          .select('*')
-          .eq('status', 'active')
-          .not('net_profit', 'is', null)  // only pre-underwritten sites
-          .limit(Math.min(Math.max(requestedLimit + requestedOffset, 2000), 10000))
-          .order('irr_v', { ascending: false });
+        const { data: sbSites, error: sbErr } = await fetchAllUnderwrittenSites();
 
         if (!sbErr && sbSites?.length > 0) {
           sites = sbSites.map(mapSupabaseSite);
@@ -248,6 +276,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         rti:          s.rti,
         permitStatus: s.permitStatus,
         developmentStatus: s.developmentStatus,
+        status:       s.status,
+        listingStatus: s.listingStatus,
         isComp:       s.isComp ?? s.is_comp ?? false,
         lat:          s.lat,
         lng:          s.lng,

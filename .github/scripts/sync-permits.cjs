@@ -138,8 +138,8 @@ function first(...values) {
 
 function unitsFromText(value) {
   const text = String(value || '');
-  const match = text.match(/(\d{1,3})\s*[- ]?\s*(?:unit|dwelling|apartment|affordable housing)/i);
-  return match ? integer(match[1]) : 0;
+  const match = text.match(/(\d[\d,]*)\s*[- ]?\s*(?:unit|dwelling|apartment|affordable housing)/i);
+  return match ? integer(match[1].replace(/,/g, '')) : 0;
 }
 
 function statusIsRti(value) {
