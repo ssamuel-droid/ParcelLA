@@ -236,6 +236,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-comp" checked> Off-market / not for sale</label>
       <label class="cb"><input type="checkbox" id="f-watch"> Watchlist only</label>
       <h4>Development status</h4>
+      <label class="cb"><input type="checkbox" id="f-d-submitted" checked> Submitted</label>
       <label class="cb"><input type="checkbox" id="f-d-plan" checked> Plan check</label>
       <label class="cb"><input type="checkbox" id="f-d-approved" checked> City approved / not started</label>
       <label class="cb"><input type="checkbox" id="f-d-issued" checked> Permit issued</label>
@@ -244,7 +245,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-mf" checked> Multifamily</label>
       <label class="cb"><input type="checkbox" id="f-mx" checked> Mixed-use</label>
       <label class="cb"><input type="checkbox" id="f-cn" checked> Condo / TH</label>
-      <label class="cb"><input type="checkbox" id="f-nh"> New house</label>
+      <label class="cb"><input type="checkbox" id="f-nh" checked> New house</label>
       <h4>Neighborhood</h4>
       <select id="f-hood" class="sbs">
         <option value="">All neighborhoods</option>
@@ -482,9 +483,10 @@ function siteListingStatus(s) {
 
 function developmentStatusKey(s) {
   const explicit = String(s?.developmentStatus || '').trim();
-  if (['plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
+  if (['submitted','plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
   const raw = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
   if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
+  if (raw.includes('submit')) return 'submitted';
   if (raw.includes('plan')) return 'plan_check';
   if (raw.includes('issued')) return 'permit_issued';
   return 'possibly_started_unknown';
@@ -492,6 +494,7 @@ function developmentStatusKey(s) {
 
 function developmentStatusLabel(s) {
   return {
+    submitted: 'Submitted',
     plan_check: 'Plan check',
     city_approved_not_started: 'City approved / not started',
     permit_issued: 'Permit issued',
@@ -557,7 +560,7 @@ function markerColorForSite(s, valuation) {
 
 function visibleOnMapLayer(s) {
   if (isWatched(s.id) && mapLayers.watchlist) return true;
-  if (developmentStatusKey(s) === 'city_approved_not_started') return mapLayers.rti;
+  if (developmentStatusKey(s) === 'city_approved_not_started' || s.rti) return mapLayers.rti;
   if (isForSaleSite(s)) return mapLayers.forSale;
   if (isOffMarketSite(s)) return mapLayers.offMarket;
   return mapLayers.offMarket;
@@ -677,6 +680,7 @@ function applyFilters() {
   const ffs = g('f-fs')?.checked!==false, frti = g('f-rti')?.checked!==false, fcomp = g('f-comp')?.checked!==false;
   const watchOnly = g('f-watch')?.checked === true;
   const devStatuses = [];
+  if (g('f-d-submitted')?.checked) devStatuses.push('submitted');
   if (g('f-d-plan')?.checked) devStatuses.push('plan_check');
   if (g('f-d-approved')?.checked) devStatuses.push('city_approved_not_started');
   if (g('f-d-issued')?.checked) devStatuses.push('permit_issued');
@@ -691,9 +695,12 @@ function applyFilters() {
     const valuation = valuationForSite(s, costModelForSite(s));
     const listingMatch = (ffs && isForSaleSite(s)) || (frti && s.rti) || (fcomp && isOffMarketSite(s));
     if (!listingMatch) return false;
-    if (devStatuses.length && !devStatuses.includes(developmentStatusKey(s))) return false;
+    const devKey = developmentStatusKey(s);
+    const devMatch = devStatuses.includes(devKey) || (devStatuses.includes('city_approved_not_started') && s.rti);
+    if (!devStatuses.length) return false;
+    if (devStatuses.length && !devMatch) return false;
     if (watchOnly && !isWatched(s.id)) return false;
-    if (types.length && !types.includes(s.type)) return false;
+    if (!types.length || !types.includes(s.type)) return false;
     if (hood && s.hood !== hood) return false;
     if (zone && s.zone !== zone) return false;
     if (s.units < umin || s.units > umax) return false;
@@ -1993,7 +2000,7 @@ function exportPDF(id) {
 <div class="note">
   <strong>Investment Summary:</strong> This analysis presents a ${s.units}-unit ${s.type || 'multifamily'} development opportunity located at ${s.addr} in ${s.hood || 'Los Angeles'}, CA. 
   The subject property is zoned ${s.zone || 'R3'} with a ${(s.lot||5000).toLocaleString()} SF lot. 
-  ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
+  ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'submitted' ? 'The project has been submitted to the city and is awaiting plan check or approval.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
   Based on RSMeans 2024 construction cost data and CoStar Q3 2024 market cap rates, the projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF), 
   with a stabilized exit value of <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding a net development profit of <strong>${fmtD(prof)}</strong>.
 </div>
@@ -2410,8 +2417,7 @@ function exportPDF(id) {
 }
 
 function resetFilters() {
-  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
-  const nh=g('f-nh'); if(nh)nh.checked=false;
+  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-nh','f-d-submitted','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
   const watch=g('f-watch'); if(watch)watch.checked=false;
   ['f-hood','f-zone'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-umin','f-umax','f-pmin','f-pmax','mf-p','mf-i','mf-s','mf-c','mf-hc'].forEach(id=>{const el=g(id);if(el)el.value='';});

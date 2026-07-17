@@ -157,7 +157,7 @@ async function main() {
   try {
     const where = [
       "permit_type='Bldg-New'",
-      "(latest_status='Ready to Issue' OR latest_status='Issued' OR latest_status='Plan Check')",
+      "(latest_status='Submitted' OR latest_status='Ready to Issue' OR latest_status='Approved' OR latest_status='Issued' OR latest_status='Plan Check')",
     ].join(' AND ');
     const records = await fetchAll(socrataUrl('t57t-h8jb', {
       '$order': 'issue_date DESC',
@@ -182,7 +182,7 @@ async function main() {
         units: integer(r.of_residential_dwelling_units || r.number_of_units),
         valuation: number(r.valuation),
         issued_date: cleanDate(r.issue_date),
-        is_rti: String(r.latest_status || '').toLowerCase().includes('ready'),
+        is_rti: /ready|approved/i.test(String(r.latest_status || '')),
         lat, lng,
         raw_data: r,
         synced_at: new Date().toISOString(),
@@ -245,7 +245,7 @@ async function main() {
         units: integer(r.numberofunits),
         valuation: number(r.valuation),
         issued_date: cleanDate(r.permitissuancedate),
-        is_rti: String(r.permitstatus || '').toLowerCase().includes('ready'),
+        is_rti: /ready|approved/i.test(String(r.permitstatus || '')),
         lat: null,
         lng: null,
         raw_data: r,

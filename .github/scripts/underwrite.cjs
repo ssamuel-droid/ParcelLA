@@ -164,6 +164,7 @@ function ptype(pt, st, u) {
 function developmentStatus(status, isRti) {
   const s = String(status || '').toLowerCase();
   if (isRti || s.includes('ready') || s.includes('approved')) return 'city_approved_not_started';
+  if (s.includes('submit')) return 'submitted';
   if (s.includes('plan')) return 'plan_check';
   if (s.includes('issued')) return 'permit_issued';
   if (s.includes('final') || s.includes('certificate') || s.includes('inspection')) return 'possibly_started_unknown';
