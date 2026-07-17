@@ -23,7 +23,7 @@ const router = Router();
 let _siteCache = null;
 let _cacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-const SITE_LOAD_PAGE_SIZE = 5000;
+const SITE_LOAD_PAGE_SIZE = 1000;
 
 // Guess project type from permit data
 function guessType(permitType, subType, units) {
