@@ -150,8 +150,20 @@ function hood(lat, lng, addr) {
   return 'Koreatown';
 }
 
-function ptype(pt, st, u) {
-  const s = (st||'').toLowerCase();
+const EXCLUDED_PROJECT_TEXT = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bsupplemental\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
+
+function unitsFromText(value) {
+  const text = String(value || '');
+  const match = text.match(/(\d{1,3})\s*[- ]?\s*(?:unit|dwelling|apartment|affordable housing)/i);
+  return match ? parseInt(match[1], 10) || 0 : 0;
+}
+
+function excludedProject(...values) {
+  return values.some(value => EXCLUDED_PROJECT_TEXT.test(String(value || '')));
+}
+
+function ptype(pt, st, u, desc = '') {
+  const s = [st, desc].filter(Boolean).join(' ').toLowerCase();
   if (s.includes('adu')||s.includes('accessory')||s.includes('addition')) return null;
   if (s.includes('condo')||s.includes('townhouse')) return 'Condo/TH';
   if (s.includes('commercial')||s.includes('mixed')) return 'Mixed-Use';
@@ -165,7 +177,7 @@ function developmentStatus(status, isRti) {
   const s = String(status || '').toLowerCase();
   if (isRti || s.includes('ready') || s.includes('approved')) return 'city_approved_not_started';
   if (s.includes('submit')) return 'submitted';
-  if (s.includes('plan')) return 'plan_check';
+  if (s.includes('plan') || s.includes('pc ') || s.includes('pc_') || s.includes('correction') || s.includes('verification') || s.includes('review') || s.includes('hold')) return 'plan_check';
   if (s.includes('issued')) return 'permit_issued';
   if (s.includes('final') || s.includes('certificate') || s.includes('inspection')) return 'possibly_started_unknown';
   return 'possibly_started_unknown';
@@ -185,13 +197,14 @@ function irr(cfs) {
 function uw(p) {
   const h = hood(p.lat, p.lng, p.address);
   // Get actual unit count from multiple sources
-  const rawUnits = parseInt(p['of_residential_dwelling_units'] || p['number_of_units'] || '0') || 0;
+  const rawUnits = parseInt(p['of_residential_dwelling_units'] || p['number_of_units'] || p.du_changed || '0') || unitsFromText(p.work_description);
   const actualUnits = rawUnits > 0 ? rawUnits : (p.units > 0 ? p.units : 0);
   // Skip ADUs and additions — not development opportunities
   const subtype = (p.permit_subtype || '').toLowerCase();
   if (subtype.includes('adu') || subtype.includes('accessory') || subtype.includes('addition')) return null;
+  if (p.adu_changed || p.junior_adu || excludedProject(p.permit_subtype, p.use_desc, p.work_description)) return null;
 
-  const t = ptype(p.permit_type, p.permit_subtype, actualUnits);
+  const t = ptype(p.permit_type, p.permit_subtype, actualUnits, p.work_description);
   if (!t) return null;
   const devStatus = developmentStatus(p.status, p.is_rti);
   // Estimate units from valuation if not available
@@ -239,7 +252,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;

@@ -10,6 +10,7 @@ if (!SB_URL || !SB_KEY) {
 }
 
 const EXCLUDE_SUBTYPE = /adu|accessory|addition/i;
+const EXCLUDE_WORK = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bsupplemental\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
 
 function get(url) {
   return new Promise((resolve, reject) => {
@@ -122,6 +123,65 @@ function shouldSkipSubtype(value) {
   return EXCLUDE_SUBTYPE.test(String(value || ''));
 }
 
+function shouldSkipPermit(record, textParts = []) {
+  if (record?.adu_changed || record?.junior_adu) return true;
+  return textParts.some(value => EXCLUDE_WORK.test(String(value || '')));
+}
+
+function first(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return null;
+}
+
+function unitsFromText(value) {
+  const text = String(value || '');
+  const match = text.match(/(\d{1,3})\s*[- ]?\s*(?:unit|dwelling|apartment|affordable housing)/i);
+  return match ? integer(match[1]) : 0;
+}
+
+function statusIsRti(value) {
+  return /ready|approved/i.test(String(value || ''));
+}
+
+function buildModernPermitRow(r, i, fallbackPrefix) {
+  const status = String(first(r.status_desc, r.status, r.project_status, 'Submitted')).slice(0,50);
+  const subtype = first(r.permit_sub_type, r.permitsubtype, r.use_desc);
+  const work = String(first(r.work_desc, r.work_description, '') || '').slice(0,2000);
+  const permitType = first(r.permit_type, r.permittype, 'Bldg-New');
+  if (!/new|bldg-new/i.test(String(permitType))) return null;
+  if (shouldSkipSubtype(subtype)) return null;
+  if (shouldSkipPermit(r, [subtype, r.use_desc, work])) return null;
+
+  const units = integer(first(
+    r.du_changed,
+    r.of_residential_dwelling_units,
+    r.number_of_units,
+    r.numberofunits,
+    r.units,
+    r.net_units
+  )) || unitsFromText(work);
+
+  return {
+    permit_number: String(first(r.permit_nbr, r.permit_number, r.permitnumber, r.pcis_permit, r.id, fallbackPrefix + '-' + i)).slice(0,100),
+    permit_type: String(permitType).slice(0,100),
+    permit_subtype: subtype ? String(subtype).slice(0,100) : null,
+    status,
+    address: cleanAddress(first(r.primary_address, r.address, r.location_address, r.project_address)),
+    zone: first(r.zone, r.zoning),
+    units,
+    valuation: number(r.valuation),
+    issued_date: cleanDate(first(r.issue_date, r.submitted_date, r.status_date, r.date, r.issued_date)),
+    is_rti: statusIsRti(status),
+    lat: r.lat ? parseFloat(r.lat) : (r.latitude ? parseFloat(r.latitude) : null),
+    lng: r.lon ? parseFloat(r.lon) : (r.longitude ? parseFloat(r.longitude) : null),
+    work_description: work || null,
+    raw_data: r,
+    synced_at: new Date().toISOString(),
+  };
+}
+
 async function syncDataset(name, records, buildRow) {
   console.log('\n--- ' + name + ': ' + records.length + ' records ---');
   const seen = new Set();
@@ -191,6 +251,50 @@ async function main() {
   } catch (e) {
     failures.push('DBS Permits: ' + e.message);
     console.error('DBS Permits failed:', e.message);
+  }
+
+  try {
+    const activeStatuses = [
+      "status_desc='Submitted'",
+      "status_desc='Submitted for Quality Review'",
+      "status_desc='Submitted for Sprvsr Rvw'",
+      "status_desc='PC Assigned'",
+      "status_desc='PC in Progress'",
+      "status_desc='PC Info Complete'",
+      "status_desc='Corrections Issued'",
+      "status_desc='Verifications in Progress'",
+      "status_desc='Quality Review Completed'",
+      "status_desc='Reviewed by Supervisor'",
+      "status_desc='Plans on Hold'",
+      "status_desc='Not Ready to Issue'",
+      "status_desc='PC Approved'",
+      "status_desc='Ready to Issue'",
+    ].join(' OR ');
+    const records = await fetchAll(socrataUrl('gwh9-jnip', {
+      '$order': 'submitted_date DESC',
+      '$where': "permit_type='Bldg-New' AND (" + activeStatuses + ")",
+    }), 'Current Submitted Building Permits');
+
+    total += await syncDataset('Current Submitted Building Permits', records, (r, i) =>
+      buildModernPermitRow(r, i, 'submitted')
+    );
+  } catch (e) {
+    failures.push('Current Submitted Building Permits: ' + e.message);
+    console.error('Current Submitted Building Permits failed:', e.message);
+  }
+
+  try {
+    const records = await fetchAll(socrataUrl('pi9x-tg5x', {
+      '$order': 'issue_date DESC',
+      '$where': "permit_type='Bldg-New'",
+    }), 'Current Issued Building Permits');
+
+    total += await syncDataset('Current Issued Building Permits', records, (r, i) =>
+      buildModernPermitRow(r, i, 'issued')
+    );
+  } catch (e) {
+    failures.push('Current Issued Building Permits: ' + e.message);
+    console.error('Current Issued Building Permits failed:', e.message);
   }
 
   try {
