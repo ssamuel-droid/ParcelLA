@@ -19,6 +19,34 @@ async function fetchLACityData(datasetId, params = {}) {
   return res.json();
 }
 
+function escapeText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+async function fetchJSONWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch {}
+    if (!res.ok) {
+      const msg = data?.error || data?.message || `API ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      throw new Error('The data server took too long to respond. It may be waking up.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 // Fetch new housing unit permits from LA City
 async function fetchHousingPermits() {
   try {
@@ -339,13 +367,15 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 
 async function boot() {
   try {
-    const r = await fetch(API + '/api/health');
-    if (r.ok) { g('adot').className = 'adot ok'; g('albl').textContent = 'Live'; }
-    else { g('albl').textContent = 'Error'; }
-  } catch { g('albl').textContent = 'Offline'; }
+    await fetchJSONWithTimeout(API + '/api/health', {}, 8000);
+    g('adot').className = 'adot ok';
+    g('albl').textContent = 'Live';
+  } catch {
+    g('adot').className = 'adot';
+    g('albl').textContent = 'API waking up';
+  }
   await loadSites();
 }
-
 function currentHardCostOverride() {
   const val = Number(g('mf-hc')?.value || 0);
   return val > 0 ? Math.round(val) : 0;
@@ -653,24 +683,40 @@ function sourceLinksHTML(s) {
 }
 
 async function loadSites() {
+  g('rct').textContent = 'Loading sites...';
   g('list').innerHTML = '<div class="sw"><div class="spin"></div>Underwriting sites...</div>';
+  const slowTimer = setTimeout(() => {
+    const list = g('list');
+    if (list && list.textContent.includes('Underwriting sites')) {
+      list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...</div>';
+      g('albl').textContent = 'API waking up';
+    }
+  }, 7000);
   try {
     const hcpsf = currentHardCostOverride();
     const qs = new URLSearchParams({ sort: 'profit' });
     if (hcpsf) qs.set('hcpsf', String(hcpsf));
-    allSites = await fetchAllSitePages(qs);
+    allSites = await fetchAllSitePages(qs, ({ loaded, total }) => {
+      const totalText = Number.isFinite(total) ? total.toLocaleString() : 'all';
+      g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loaded ' + loaded.toLocaleString() + ' of ' + totalText + ' sites...</div>';
+    });
     updateHardCostOverrideUI();
     console.log('[ParceLLA] Loaded', allSites.length, 'sites, first:', JSON.stringify(allSites[0]?.addr));
     console.log('[ParceLLA] Sample site type:', allSites[0]?.type, 'rti:', allSites[0]?.rti, 'isComp:', allSites[0]?.isComp);
     applyFilters();
     console.log('[ParceLLA] After filter:', filtered.length, 'sites visible');
   } catch (e) {
-    g('list').innerHTML = '<div class="empty">Could not load sites<br><small style="color:#e24b4a">' + e.message + '</small></div>';
+    g('rct').textContent = 'Could not load sites';
+    g('albl').textContent = 'API issue';
+    const msg = escapeText(e.message || e);
+    g('list').innerHTML = '<div class="empty">Could not load sites<br><small style="color:#e24b4a">' + msg + '</small><br><button class="gb" onclick="loadSites()">Retry</button><br><small style="display:block;margin-top:8px;color:#888">API: ' + escapeText(API || 'same server') + '/api/sites</small></div>';
+  } finally {
+    clearTimeout(slowTimer);
   }
 }
 
-async function fetchAllSitePages(baseQs) {
-  const pageSize = 5000;
+async function fetchAllSitePages(baseQs, onProgress) {
+  const pageSize = 1000;
   let offset = 0;
   let total = Infinity;
   const results = [];
@@ -679,20 +725,17 @@ async function fetchAllSitePages(baseQs) {
     const qs = new URLSearchParams(baseQs);
     qs.set('limit', String(pageSize));
     qs.set('offset', String(offset));
-    const r = await fetch(API + '/api/sites?' + qs.toString());
-    if (!r.ok) throw new Error('API ' + r.status);
-    const data = await r.json();
+    const data = await fetchJSONWithTimeout(API + '/api/sites?' + qs.toString(), {}, offset === 0 ? 45000 : 30000);
     const page = data.results || [];
     total = Number.isFinite(Number(data.total)) ? Number(data.total) : results.length + page.length;
     results.push(...page);
+    if (typeof onProgress === 'function') onProgress({ loaded: results.length, total });
     if (page.length < pageSize) break;
     offset += page.length;
-    g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loaded ' + results.length.toLocaleString() + ' of ' + total.toLocaleString() + ' sites...</div>';
   }
 
   return results;
 }
-
 function applyFilters() {
   const hood = g('f-hood')?.value||'', zone = g('f-zone')?.value||'';
   const umin = +g('f-umin')?.value||0, umax = +g('f-umax')?.value||Infinity;

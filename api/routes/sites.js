@@ -22,8 +22,10 @@ const router = Router();
 // Cache computed model results (refreshed every 5 min)
 let _siteCache = null;
 let _cacheTime = 0;
+const _modelCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const SITE_LOAD_PAGE_SIZE = 1000;
+const MODEL_CACHE_LIMIT = 12;
 
 // Guess project type from permit data
 function guessType(permitType, subType, units) {
@@ -174,10 +176,31 @@ async function fetchAllUnderwrittenSites() {
 
   _siteCache = all;
   _cacheTime = now;
+  _modelCache.clear();
   return { data: all, error: null };
 }
 
 // ── GET /api/sites ─────────────────────────────────────────────────────────────
+function modelCacheKey(overrides, siteCount) {
+  return `${_cacheTime}:${siteCount}:${JSON.stringify(overrides || {})}`;
+}
+
+function getModelledSites(sites, overrides) {
+  const key = modelCacheKey(overrides, sites.length);
+  if (_modelCache.has(key)) return _modelCache.get(key);
+
+  const modelled = sites.map(s => ({
+    ...s,
+    _m: runModel(normalizeSite(s), overrides),
+  }));
+
+  _modelCache.set(key, modelled);
+  if (_modelCache.size > MODEL_CACHE_LIMIT) {
+    const oldest = _modelCache.keys().next().value;
+    _modelCache.delete(oldest);
+  }
+  return modelled;
+}
 router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
   try {
     const {
@@ -217,10 +240,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
 
     // Re-run the current model for dashboard rows so valuation, income statement,
     // and user hard-cost overrides are consistent with the latest app logic.
-    const modelled = sites.map(s => ({
-      ...s,
-      _m: runModel(normalizeSite(s), overrides),
-    }));
+    // Cache the result because the frontend loads multiple pages in sequence.
+    const modelled = getModelledSites(sites, overrides);
 
     // Filter
     let filtered = modelled.filter(s => {
