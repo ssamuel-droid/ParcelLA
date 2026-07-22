@@ -90,17 +90,26 @@ function modelFromSupabaseSite(s) {
   const price = s.price || 0;
   const interestCarryPct = 0.65 * 0.065 * 1.5; // 65% LTC, 6.5%, 18 months
   const preCarryCost = totalCost > 0 ? totalCost / (1 + interestCarryPct) : 0;
-  const verticalBudget = Math.max(0, preCarryCost - price);
-  const hardFallback = verticalBudget / 1.18; // soft costs assumed at 18% of hard costs
-  const softFallback = hardFallback * 0.18;
+  const type = s.project_type ?? s.type ?? 'Multifamily';
+  const units = Number(s.units || 0);
+  const avgUnitSf = Number(s.avg_unit_sf || s.usf || 800);
+  const totalSf = units * avgUnitSf;
+  const hardPsf = { 'Multifamily':285, 'Mixed-Use':320, 'Condo/TH':340, 'New House':275 }[type] || 285;
+  let hardFallback = totalSf > 0 ? hardPsf * totalSf : Math.max(0, preCarryCost - price) / 1.18;
+  if (totalSf > 100000) hardFallback *= 0.93;
+  else if (totalSf > 50000) hardFallback *= 0.95;
+  hardFallback = Math.round(hardFallback);
+  const softFallback = Math.round(hardFallback * 0.18);
   const carryFallback = Math.max(0, totalCost - preCarryCost);
   const hardCosts = s.hard_costs ?? s.hardCosts ?? hardFallback;
   const softCosts = s.soft_costs ?? s.softCosts ?? softFallback;
   const carryCost = s.carry_cost ?? s.carryCost ?? carryFallback;
+  const landCost = price || Math.max(0, Math.round(preCarryCost - hardCosts - softCosts));
 
   return {
     noi:           s.noi          || 0,
     totalCost,
+    landCost,
     exitValue:     s.exit_value   || 0,
     exitProceeds:  s.net_profit   || 0,
     netProfit:     s.net_profit   || 0,
@@ -397,7 +406,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         irrV:         s._m.leveragedIRR,
         capOnCost:    Math.round(s._m.capRateOnCost * 10000) / 100,
         devSpreadPct: s._m.devSpreadPct,
-        landCost:     s._m.price ?? s.price ?? s.askPrice ?? null,
+        landCost:     s._m.landCost ?? s._m.price ?? s.price ?? s.askPrice ?? null,
         entryCap:     s._m.marketCapRate,
         exitCap:      s._m.exitCapRate ?? (s._m.marketCapRate + 0.0025),
         debtService:  s._m.debtService,

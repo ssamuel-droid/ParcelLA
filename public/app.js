@@ -166,6 +166,21 @@ function renderMapPanel(s) {
 }
 const fmtM = n => n >= 1e6 ? '$'+(Math.round(n/1e5)/10)+'M' : n >= 1e3 ? '$'+Math.round(n/1e3)+'K' : '$'+Math.round(n||0);
 const fmtD = n => '$'+Math.round(n||0).toLocaleString();
+function calcIRR(cashflows, guess = 0.15) {
+  let rate = guess;
+  for (let i = 0; i < 200; i++) {
+    let npv = 0, dnpv = 0;
+    for (let t = 0; t < cashflows.length; t++) {
+      const pv = Math.pow(1 + rate, t);
+      npv += cashflows[t] / pv;
+      dnpv -= t * cashflows[t] / Math.pow(1 + rate, t + 1);
+    }
+    if (Math.abs(npv) < 0.5) break;
+    if (dnpv !== 0) rate -= npv / dnpv;
+    rate = Math.max(-0.9, Math.min(5, rate));
+  }
+  return rate;
+}
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', watchlist = loadWatchlist(), userMetrics = null;
@@ -811,14 +826,14 @@ function applyFilters() {
     const ask = siteAskPrice(s);
     if (isForSaleSite(s) && ask && (ask < pmin || ask > pmax)) return false;
     if (mfp && (valuation.netProfit||0) < mfp) return false;
-    if (mfi && (s.irrV||0) < mfi) return false;
+    if (mfi && (valuation.leveragedIRR||0) < mfi) return false;
     if (mfs && ((valuation.devSpreadPct||0)*100) < mfs) return false;
     if (mfc && (valuation.capOnCost||0) < mfc) return false;
     return true;
   });
 
   filtered.sort((a,b) => {
-    if (srt==='irr')     return (b.irrV||0)-(a.irrV||0);
+    if (srt==='irr')     return (valuationForSite(b, costModelForSite(b)).leveragedIRR||0)-(valuationForSite(a, costModelForSite(a)).leveragedIRR||0);
     if (srt==='spread')  return (valuationForSite(b, costModelForSite(b)).devSpreadPct||0)-(valuationForSite(a, costModelForSite(a)).devSpreadPct||0);
     if (srt==='capoc')   return (valuationForSite(b, costModelForSite(b)).capOnCost||0)-(valuationForSite(a, costModelForSite(a)).capOnCost||0);
     if (srt==='price-a') return (siteAskPrice(a)||Infinity)-(siteAskPrice(b)||Infinity);
@@ -884,7 +899,7 @@ function renderCards() {
   el.innerHTML = filtered.map(s => {
     const costs = costModelForSite(s);
     const valuation = valuationForSite(s, costs);
-    const irr=s.irrV||0, prof=valuation.netProfit||0;
+    const irr=valuation.leveragedIRR||0, prof=valuation.netProfit||0;
     const pc = prof>1e6?'#1d9e75':prof>0?'#ef9f27':'#e24b4a';
     const pp = Math.max(0,Math.round(prof/maxP*100));
     const spd = Math.round((valuation.devSpreadPct||0)*1000)/10;
@@ -1129,9 +1144,21 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
   const entryCap = Number(s.entryCap) || FRONTEND_CAP_RATES[s.hood] || 0.0525;
   const exitCap = entryCap + ((Number(metrics.exitCapSpreadBps) || 0) / 10000);
   const noi = Math.round(income.noi || 0);
-  const year5Noi = Math.round(noi * Math.pow(1 + metricRate('rentGrowthPct'), 4));
+  const rentGrowth = metricRate('rentGrowthPct');
+  const year5Noi = Math.round(noi * Math.pow(1 + rentGrowth, 4));
   const exitValue = exitCap ? Math.round(year5Noi / exitCap) : 0;
   const netProfit = exitValue - costs.totalCost;
+  const loanAmount = Math.round(costs.totalCost * ((Number(metrics.loanToCostPct) || 0) / 100));
+  const equity = Math.max(0, costs.totalCost - loanAmount);
+  const debtService = Math.round(income.debtService ?? loanAmount * ((Number(metrics.interestRatePct) || 0) / 100));
+  const holdYears = 5;
+  const cashflows = [-equity];
+  for (let year = 1; year < holdYears; year++) {
+    const yearNoi = Math.round(noi * Math.pow(1 + rentGrowth, year - 1));
+    cashflows.push(yearNoi - debtService);
+  }
+  cashflows.push((year5Noi - debtService) + Math.max(0, exitValue - loanAmount));
+  const leveragedIRR = equity > 0 ? calcIRR(cashflows) * 100 : 0;
   return {
     entryCap,
     exitCap,
@@ -1139,16 +1166,21 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
     year5Noi,
     exitValue,
     netProfit,
+    loanAmount,
+    equity,
+    debtService,
+    cfbt: Math.round(noi - debtService),
+    leveragedIRR,
+    equityMultiple: equity > 0 ? Math.max(0, exitValue - loanAmount) / equity : 0,
     capOnCost: costs.totalCost ? Math.round((noi / costs.totalCost) * 10000) / 100 : 0,
     devSpreadPct: costs.totalCost ? (exitValue - costs.totalCost) / costs.totalCost : 0,
   };
 }
-
 function renderDetail(s) {
   const costs = costModelForSite(s);
   const income = incomeStatementForSite(s, costs);
   const valuation = valuationForSite(s, costs, income);
-  const irr=s.irrV||0, prof=valuation.netProfit||0, tc=costs.totalCost||0;
+  const irr=valuation.leveragedIRR||0, prof=valuation.netProfit||0, tc=costs.totalCost||0;
   const pc=prof>0?'#1d9e75':'#e24b4a', ic=irrC(irr);
   const spd=Math.round((valuation.devSpreadPct||0)*1000)/10;
   const ask=siteAskPrice(s);
@@ -1841,7 +1873,7 @@ async function exportExcel(id) {
   const noi = valuation.noi || 0;
   const exitValue = valuation.exitValue || 0;
   const netProfit = valuation.netProfit || 0;
-  const irr = s.irrV || 0;
+  const irr = valuation.leveragedIRR || 0;
   const entryCap = valuation.entryCap || submarket?.entryCap || 0.0475;
   const exitCap = valuation.exitCap || submarket?.exitCap || entryCap + 0.0025;
   const loan = tc * (metrics.loanToCostPct / 100);
@@ -1988,7 +2020,7 @@ function exportPDF(id) {
   const pdfIncome = incomeStatementForSite(s, costs);
   const valuation = valuationForSite(s, costs, pdfIncome);
   const metrics = currentUserMetrics();
-  const irr  = s.irrV || 0;
+  const irr  = valuation.leveragedIRR || 0;
   const prof = valuation.netProfit || 0;
   const pc   = prof > 0 ? '#1d9e75' : '#e24b4a';
   const ic   = irrC(irr);
