@@ -169,6 +169,7 @@ const fmtD = n => '$'+Math.round(n||0).toLocaleString();
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', watchlist = loadWatchlist(), userMetrics = null;
+let sitePageTotal = 0, sitePageLimit = 50, currentSiteQuery = '';
 const g = id => document.getElementById(id);
 const LA_MAP_BOUNDS = { minLat: 33.92, maxLat: 34.18, minLng: -118.48, maxLng: -118.16 };
 const MAP_TRANSIT_NODES = [
@@ -294,7 +295,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <div class="sb2"><input type="number" id="f-pmin" placeholder="Min $"><input type="number" id="f-pmax" placeholder="Max $"></div>
     </div>
     <div class="sbf">
-      <button class="bp" onclick="applyFilters()">Search</button>
+      <button class="bp" onclick="loadSites()">Search</button>
       <button class="br" onclick="resetFilters()">Reset filters</button>
     </div>
   </div>
@@ -313,7 +314,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <button class="viewbtn on" id="view-list" onclick="setView('list')">List</button>
         <button class="viewbtn" id="view-map" onclick="setView('map')">Map</button>
       </div>
-      <select class="ss" id="srt" onchange="applyFilters()">
+      <select class="ss" id="srt" onchange="loadSites()">
         <option value="profit">Net profit ↓</option><option value="irr">IRR ↓</option>
         <option value="spread">Dev spread ↓</option><option value="capoc">Cap on cost ↓</option>
         <option value="price-a">Price ↑</option><option value="price-d">Price ↓</option>
@@ -682,29 +683,70 @@ function sourceLinksHTML(s) {
   return `<div class="sourcelinks">${links.map(([label, href]) => `<a href="${href}" target="_blank" rel="noopener">${label}</a>`).join('')}</div>`;
 }
 
+function checkedIds(ids) {
+  return ids.filter(id => g(id)?.checked).map(id => id.replace(/^f-/, ''));
+}
+
+function buildSiteQueryParams(offset = 0) {
+  const qs = new URLSearchParams({ sort: g('srt')?.value || 'profit', limit: String(sitePageLimit), offset: String(offset) });
+  const types = [];
+  if (g('f-mf')?.checked) types.push('Multifamily');
+  if (g('f-mx')?.checked) types.push('Mixed-Use');
+  if (g('f-cn')?.checked) types.push('Condo/TH');
+  if (g('f-nh')?.checked) types.push('New House');
+  if (types.length && types.length < 4) qs.set('types', types.join(','));
+
+  const listings = [];
+  if (g('f-fs')?.checked) listings.push('for_sale');
+  if (g('f-rti')?.checked) listings.push('rti');
+  if (g('f-comp')?.checked) listings.push('off_market');
+  if (listings.length && listings.length < 3) qs.set('listing', listings.join(','));
+
+  const devStatuses = [];
+  if (g('f-d-submitted')?.checked) devStatuses.push('submitted');
+  if (g('f-d-plan')?.checked) devStatuses.push('plan_check');
+  if (g('f-d-approved')?.checked) devStatuses.push('city_approved_not_started');
+  if (g('f-d-issued')?.checked) devStatuses.push('permit_issued');
+  if (g('f-d-unknown')?.checked) devStatuses.push('possibly_started_unknown');
+  if (devStatuses.length && devStatuses.length < 5) qs.set('devStatus', devStatuses.join(','));
+
+  const pairs = [
+    ['f-hood', 'hood'], ['f-zone', 'zone'], ['f-umin', 'minUnits'], ['f-umax', 'maxUnits'],
+    ['f-pmin', 'minPrice'], ['f-pmax', 'maxPrice'], ['mf-i', 'minIRR'], ['mf-s', 'minSpread'], ['mf-c', 'minCapoc'],
+  ];
+  pairs.forEach(([id, key]) => { const val = g(id)?.value; if (val) qs.set(key, val); });
+  const minProfit = Number(g('mf-p')?.value || 0);
+  if (minProfit) qs.set('minProfit', String(minProfit * 1000));
+  return qs;
+}
+
+async function fetchSitePage(qs) {
+  const data = await fetchJSONWithTimeout(API + '/api/sites?' + qs.toString(), {}, 30000);
+  return {
+    results: data.results || [],
+    total: Number.isFinite(Number(data.total)) ? Number(data.total) : (data.results || []).length,
+  };
+}
+
 async function loadSites() {
-  g('rct').textContent = 'Loading sites...';
-  g('list').innerHTML = '<div class="sw"><div class="spin"></div>Underwriting sites...</div>';
+  g('rct').textContent = 'Loading first 50 sites...';
+  g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loading first 50 sites...</div>';
   const slowTimer = setTimeout(() => {
     const list = g('list');
-    if (list && list.textContent.includes('Underwriting sites')) {
+    if (list && list.textContent.includes('Loading first 50')) {
       list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...</div>';
       g('albl').textContent = 'API waking up';
     }
   }, 7000);
   try {
-    const hcpsf = currentHardCostOverride();
-    const qs = new URLSearchParams({ sort: 'profit' });
-    if (hcpsf) qs.set('hcpsf', String(hcpsf));
-    allSites = await fetchAllSitePages(qs, ({ loaded, total }) => {
-      const totalText = Number.isFinite(total) ? total.toLocaleString() : 'all';
-      g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loaded ' + loaded.toLocaleString() + ' of ' + totalText + ' sites...</div>';
-    });
+    const qs = buildSiteQueryParams(0);
+    currentSiteQuery = qs.toString();
+    const data = await fetchSitePage(qs);
+    allSites = data.results;
+    sitePageTotal = data.total;
     updateHardCostOverrideUI();
-    console.log('[ParceLLA] Loaded', allSites.length, 'sites, first:', JSON.stringify(allSites[0]?.addr));
-    console.log('[ParceLLA] Sample site type:', allSites[0]?.type, 'rti:', allSites[0]?.rti, 'isComp:', allSites[0]?.isComp);
+    console.log('[ParceLLA] Loaded first page', allSites.length, 'of', sitePageTotal, 'sites');
     applyFilters();
-    console.log('[ParceLLA] After filter:', filtered.length, 'sites visible');
   } catch (e) {
     g('rct').textContent = 'Could not load sites';
     g('albl').textContent = 'API issue';
@@ -715,26 +757,22 @@ async function loadSites() {
   }
 }
 
-async function fetchAllSitePages(baseQs, onProgress) {
-  const pageSize = 1000;
-  let offset = 0;
-  let total = Infinity;
-  const results = [];
-
-  while (results.length < total) {
-    const qs = new URLSearchParams(baseQs);
-    qs.set('limit', String(pageSize));
-    qs.set('offset', String(offset));
-    const data = await fetchJSONWithTimeout(API + '/api/sites?' + qs.toString(), {}, offset === 0 ? 45000 : 30000);
-    const page = data.results || [];
-    total = Number.isFinite(Number(data.total)) ? Number(data.total) : results.length + page.length;
-    results.push(...page);
-    if (typeof onProgress === 'function') onProgress({ loaded: results.length, total });
-    if (page.length < pageSize) break;
-    offset += page.length;
+async function loadMoreSites() {
+  if (allSites.length >= sitePageTotal) return;
+  const qs = new URLSearchParams(currentSiteQuery || buildSiteQueryParams(0).toString());
+  qs.set('offset', String(allSites.length));
+  qs.set('limit', String(sitePageLimit));
+  const btn = g('load-more');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
+  try {
+    const data = await fetchSitePage(qs);
+    const seen = new Set(allSites.map(s => String(s.id)));
+    allSites = allSites.concat(data.results.filter(s => !seen.has(String(s.id))));
+    sitePageTotal = data.total;
+    applyFilters();
+  } catch (e) {
+    alert('Could not load more sites: ' + (e.message || e));
   }
-
-  return results;
 }
 function applyFilters() {
   const hood = g('f-hood')?.value||'', zone = g('f-zone')?.value||'';
@@ -794,7 +832,8 @@ function applyFilters() {
   const planText = plan.key === 'auto' ? '' : ' - ' + plan.label;
   const settingsText = metricsCustomized() ? ' - custom assumptions' : '';
   updateHardCostOverrideUI();
-  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + (hcpsf ? ' - re-underwritten at $' + hcpsf.toLocaleString() + '/SF hard cost' : (planText || ' - pre-underwritten') + settingsText);
+  const totalText = sitePageTotal && sitePageTotal > allSites.length ? ' shown of ' + sitePageTotal.toLocaleString() + ' matches' : '';
+  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + totalText + (hcpsf ? ' - re-underwritten at $' + hcpsf.toLocaleString() + '/SF hard cost' : (planText || ' - pre-underwritten') + settingsText);
   renderCards();
 }
 
@@ -831,9 +870,15 @@ function updateHardCostOverrideUI() {
   if (planBox) planBox.classList.toggle('active', currentConstructionPlan().key !== 'auto');
 }
 
+function loadMoreHTML() {
+  return allSites.length < sitePageTotal
+    ? '<div class="loadmore"><button class="gb" id="load-more" onclick="loadMoreSites()">Load 50 more (' + allSites.length.toLocaleString() + ' of ' + sitePageTotal.toLocaleString() + ' loaded)</button></div>'
+    : '';
+}
+
 function renderCards() {
   const el = g('list');
-  if (!filtered.length) { el.innerHTML = '<div class="empty">No sites match your filters</div>'; return; }
+  if (!filtered.length) { el.innerHTML = '<div class="empty">No sites match your filters</div>' + loadMoreHTML(); return; }
   if (activeView === 'map') { renderMapView(); return; }
   const maxP = Math.max(...filtered.map(s => valuationForSite(s, costModelForSite(s)).netProfit || 0), 1);
   el.innerHTML = filtered.map(s => {
@@ -874,7 +919,7 @@ function renderCards() {
         <span class="pbv" style="color:${pc}">${fmtM(prof)}</span>
       </div>
     </div>`;
-  }).join('');
+  }).join('') + loadMoreHTML();
 }
 
 function renderMapView() {

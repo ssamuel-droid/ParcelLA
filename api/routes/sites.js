@@ -201,6 +201,64 @@ function getModelledSites(sites, overrides) {
   }
   return modelled;
 }
+
+function listParam(value) {
+  return String(value || '').split(',').map(v => v.trim()).filter(Boolean);
+}
+
+function hasModelOverrideParams(query) {
+  return ['exitCap', 'hcpsf', 'sc', 'ppu', 'psf', 'method'].some(key => query[key] !== undefined);
+}
+
+async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset) {
+  if (!process.env.SUPABASE_URL || queryParams.devStatus || hasModelOverrideParams(queryParams)) return null;
+
+  let query = supabase
+    .from('sites')
+    .select('*', { count: 'exact' })
+    .in('status', ['active', 'off-market'])
+    .not('net_profit', 'is', null);
+
+  const types = listParam(queryParams.types || queryParams.type);
+  if (types.length) query = query.in('project_type', types);
+  if (queryParams.hood) query = query.eq('neighborhood', queryParams.hood);
+  if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
+  if (queryParams.minUnits) query = query.gte('units', Number(queryParams.minUnits));
+  if (queryParams.maxUnits) query = query.lte('units', Number(queryParams.maxUnits));
+  if (queryParams.minPrice) query = query.gte('price', Number(queryParams.minPrice));
+  if (queryParams.maxPrice) query = query.lte('price', Number(queryParams.maxPrice));
+  if (queryParams.minProfit) query = query.gte('net_profit', Number(queryParams.minProfit));
+  if (queryParams.minIRR) query = query.gte('irr_v', Number(queryParams.minIRR));
+  if (queryParams.minSpread) query = query.gte('dev_spread_pct', Number(queryParams.minSpread));
+  if (queryParams.minCapoc) query = query.gte('cap_on_cost', Number(queryParams.minCapoc));
+
+  const listings = listParam(queryParams.listing);
+  if (listings.length) {
+    const clauses = [];
+    if (listings.includes('for_sale')) clauses.push('status.eq.active');
+    if (listings.includes('rti')) clauses.push('rti.eq.true');
+    if (listings.includes('off_market')) clauses.push('status.eq.off-market');
+    if (clauses.length) query = query.or(clauses.join(','));
+  }
+
+  const sort = queryParams.sort || 'profit';
+  const sortColumns = {
+    profit: 'net_profit',
+    irr: 'irr_v',
+    spread: 'dev_spread_pct',
+    capoc: 'cap_on_cost',
+    'price-a': 'price',
+    'price-d': 'price',
+    units: 'units',
+  };
+  const sortColumn = sortColumns[sort] || 'net_profit';
+  query = query.order(sortColumn, { ascending: sort === 'price-a', nullsFirst: false });
+  query = query.range(requestedOffset, requestedOffset + requestedLimit - 1);
+
+  const { data, error, count } = await query;
+  if (error) throw error;
+  return { sites: (data || []).map(mapSupabaseSite), total: count ?? (data || []).length };
+}
 router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
   try {
     const {
@@ -219,8 +277,24 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     // Primary source: real LADBS permits from Supabase (36,000+ records)
     // Fallback: 27 mock sites if permits table is empty
     let sites = [];
+    let fastTotal = null;
+    let usedFastPage = false;
 
     if (process.env.SUPABASE_URL) {
+      try {
+        const fastPage = await fetchSupabaseSitePage(req.query, requestedLimit, requestedOffset);
+        if (fastPage) {
+          sites = fastPage.sites;
+          fastTotal = fastPage.total;
+          usedFastPage = true;
+          console.log(`[sites] Loaded fast page ${sites.length}/${fastTotal} from Supabase`);
+        }
+      } catch (e) {
+        console.log('[sites] Fast Supabase page failed - falling back:', e.message);
+      }
+    }
+
+    if (!usedFastPage && process.env.SUPABASE_URL) {
       try {
         // Load pre-underwritten sites from Supabase (populated by GitHub Action)
         const { data: sbSites, error: sbErr } = await fetchAllUnderwrittenSites();
@@ -229,11 +303,11 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
           sites = sbSites.map(mapSupabaseSite);
           console.log(`[sites] Loaded ${sites.length} pre-underwritten sites from Supabase`);
         } else {
-          console.log('[sites] No pre-underwritten sites found — using mock sites');
+          console.log('[sites] No pre-underwritten sites found - using mock sites');
           sites = [...SITES];
         }
       } catch (e) {
-        console.log('[sites] Supabase failed — using mock sites:', e.message);
+        console.log('[sites] Supabase failed - using mock sites:', e.message);
         sites = [...SITES];
       }
     }
@@ -241,10 +315,10 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     // Re-run the current model for dashboard rows so valuation, income statement,
     // and user hard-cost overrides are consistent with the latest app logic.
     // Cache the result because the frontend loads multiple pages in sequence.
-    const modelled = getModelledSites(sites, overrides);
+    const modelled = usedFastPage ? sites : getModelledSites(sites, overrides);
 
     // Filter
-    let filtered = modelled.filter(s => {
+    let filtered = usedFastPage ? modelled : modelled.filter(s => {
       const m = s._m;
       if (type    && s.type  !== type)               return false;
       if (hood    && s.hood  !== hood)               return false;
@@ -274,10 +348,10 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       'price-d':(a,b) => (b.price??b._m.landCost) - (a.price??a._m.landCost),
       units:    (a,b) => b.units - a.units,
     };
-    if (SORTS[sort]) filtered.sort(SORTS[sort]);
+    if (!usedFastPage && SORTS[sort]) filtered.sort(SORTS[sort]);
 
-    const total = filtered.length;
-    const paginated = filtered.slice(requestedOffset, requestedOffset + requestedLimit);
+    const total = usedFastPage ? fastTotal : filtered.length;
+    const paginated = usedFastPage ? filtered : filtered.slice(requestedOffset, requestedOffset + requestedLimit);
 
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
