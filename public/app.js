@@ -1212,36 +1212,16 @@ function renderDetail(s) {
     [carryCost,'#ef9f27','Financing carry'],
   ].filter(x=>x[0]>0);
 
-  // Load comps async
+  // Load appraisal comps async
   setTimeout(async () => {
+    const appraisalEl = g('appraisal-' + s.id);
     const compsEl = g('comps-' + s.id);
-    if (!compsEl) return;
-    const comps = await loadComps(s);
-    if (!comps || comps.comps === 0) {
-      compsEl.innerHTML = '<span style="color:#aaa;font-size:10px">No recent sold comps in this submarket</span>';
-      return;
-    }
-    compsEl.innerHTML = `
-      <table style="width:100%;font-size:10px;border-collapse:collapse">
-        <tr style="color:#aaa"><td>Metric</td><td style="text-align:right">Avg</td><td style="text-align:right">Median</td></tr>
-        <tr style="border-top:0.5px solid #f0f0f0"><td>Cap rate</td>
-          <td style="text-align:right;font-weight:600">${comps.capRate?.avg ? (comps.capRate.avg*100).toFixed(2)+'%' : '—'}</td>
-          <td style="text-align:right">${comps.capRate?.median ? (comps.capRate.median*100).toFixed(2)+'%' : '—'}</td></tr>
-        <tr style="border-top:0.5px solid #f0f0f0"><td>Price/unit</td>
-          <td style="text-align:right;font-weight:600">${comps.pricePerUnit?.avg ? fmtD(comps.pricePerUnit.avg) : '—'}</td>
-          <td style="text-align:right">${comps.pricePerUnit?.median ? fmtD(comps.pricePerUnit.median) : '—'}</td></tr>
-        <tr style="border-top:0.5px solid #f0f0f0"><td style="color:#aaa">${comps.comps} comps · last 24 months</td><td></td><td></td></tr>
-      </table>
-      ${comps.recentComps?.length ? `
-      <div style="margin-top:6px;font-size:9px;color:#aaa;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Recent transactions</div>
-      ${comps.recentComps.slice(0,3).map(c => `
-        <div style="padding:4px 0;border-bottom:0.5px solid #f5f5f5;font-size:10px">
-          <span style="color:#333">${c.saleDate}</span>
-          <span style="float:right;font-weight:600">${fmtM(c.salePrice)}</span>
-          <span style="color:#aaa;float:right;margin-right:8px">${c.capRate ? (c.capRate*100).toFixed(2)+'% cap' : ''}</span>
-        </div>`).join('')}` : ''}`;
+    if (!appraisalEl && !compsEl) return;
+    const [comps, rentComps] = await Promise.all([loadComps(s), loadRentComps(s)]);
+    const appraisal = buildAppraisalEngine(s, comps, rentComps, costs, income, valuation);
+    if (appraisalEl) appraisalEl.innerHTML = appraisalDetailHTML(appraisal);
+    if (compsEl) compsEl.innerHTML = comparableEvidenceHTML(comps, rentComps, appraisal);
   }, 100);
-
   g('d-body').innerHTML = `
     <div class="ig">
       <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${s.hood}</div></div>
@@ -1293,6 +1273,8 @@ function renderDetail(s) {
       <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">−${fmtD(tc)}</td></tr>
       <tr class="tot"><td style="color:${pc}">Net profit</td><td style="color:${pc};font-size:14px">${fmtD(prof)}</td></tr>
     </table>
+    <div class="sh">Comp-driven appraisal</div>
+    <div id="appraisal-${s.id}" style="font-size:10px;color:#aaa">Loading appraisal comps...</div>
     <div class="sh">Income statement</div>
     <table class="ct">
       <tr><td>Gross potential rent</td><td>${fmtD(income.grossPotentialRent)}</td></tr>
@@ -1305,7 +1287,7 @@ function renderDetail(s) {
       <tr><td>Debt service</td><td style="color:#e24b4a">-${fmtD(income.debtService)}</td></tr>
       <tr class="tot"><td>Cash flow before tax</td><td>${fmtD(income.cfbt)}</td></tr>
     </table>
-    <div class="sh">Sold comps — ${s.hood}</div>
+    <div class="sh">Comparable evidence - ${s.hood}</div>
     <div id="comps-${s.id}" style="font-size:10px;color:#aaa">Loading comps...</div>
 
     <div class="sh">Assumption sources</div>
@@ -1328,6 +1310,15 @@ async function loadComps(siteOrHood) {
   } catch (e) { return null; }
 }
 
+async function loadRentComps(siteOrHood) {
+  try {
+    const hood = typeof siteOrHood === 'object' ? siteOrHood.hood : siteOrHood;
+    const qs = typeof siteOrHood === 'object' ? compQueryForSite(siteOrHood, 12) : '';
+    const r = await fetch(API + '/api/comps/rent/submarket/' + encodeURIComponent(hood) + qs);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) { return null; }
+}
 async function generateNarrative(id) {
   const el = g('narr-'+id);
   if (!el) return;
@@ -1463,6 +1454,419 @@ function compQueryForSite(s, limit = 12) {
   return q ? '?' + q : '';
 }
 
+function numberOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeCapRate(value) {
+  let n = numberOrNull(value);
+  if (!n) return null;
+  if (n > 1) n = n / 100;
+  return n >= 0.015 && n <= 0.12 ? n : null;
+}
+
+function monthsSince(value) {
+  if (!value) return null;
+  const t = new Date(String(value).slice(0, 10)).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.round((Date.now() - t) / 2629800000));
+}
+
+function recencyScore(value, maxMonths = 72) {
+  const months = monthsSince(value);
+  if (months === null) return 0.45;
+  return clampNumber(1 - (months / maxMonths) * 0.75, 0.25, 1);
+}
+
+function distanceScore(miles) {
+  const d = numberOrNull(miles);
+  if (d === null) return 0.55;
+  return clampNumber(1 - (d / 8) * 0.75, 0.25, 1);
+}
+
+function typeScore(subjectType, compType) {
+  const a = String(subjectType || '').toLowerCase();
+  const b = String(compType || '').toLowerCase();
+  if (!a || !b) return 0.7;
+  if (a === b) return 1;
+  const multifamilyLike = ['multifamily', 'mixed-use', 'apartment'];
+  if (multifamilyLike.some(x => a.includes(x)) && multifamilyLike.some(x => b.includes(x))) return 0.82;
+  if (a.includes('new house') && (b.includes('single') || b.includes('house') || b.includes('sfr'))) return 0.85;
+  return 0.62;
+}
+
+function sizeScore(subjectUnits, compUnits) {
+  const a = numberOrNull(subjectUnits);
+  const b = numberOrNull(compUnits);
+  if (!a || !b) return 0.6;
+  const ratio = Math.min(a, b) / Math.max(a, b);
+  return clampNumber(0.45 + ratio * 0.55, 0.45, 1);
+}
+
+function weightedValue(items, valueFn, weightFn) {
+  let total = 0;
+  let weight = 0;
+  (items || []).forEach(item => {
+    const value = numberOrNull(valueFn(item));
+    const w = numberOrNull(weightFn(item));
+    if (value && w && value > 0 && w > 0) {
+      total += value * w;
+      weight += w;
+    }
+  });
+  return weight ? total / weight : null;
+}
+
+function scoreSalesComp(comp, site) {
+  const capRateNorm = normalizeCapRate(comp.capRate);
+  const pricePerUnit = numberOrNull(comp.pricePerUnit);
+  const pricePerSf = numberOrNull(comp.pricePerSf);
+  const dataScore = (capRateNorm ? 0.35 : 0) + (pricePerUnit ? 0.30 : 0) + (pricePerSf ? 0.25 : 0) + (comp.salePrice ? 0.10 : 0);
+  const score =
+    distanceScore(comp.distanceMiles) * 0.30 +
+    recencyScore(comp.saleDate, 72) * 0.20 +
+    typeScore(site.type, comp.projectType) * 0.15 +
+    sizeScore(site.units, comp.units) * 0.15 +
+    clampNumber(dataScore, 0.35, 1) * 0.20;
+  return {
+    ...comp,
+    capRateNorm,
+    usablePricePerUnit: pricePerUnit,
+    usablePricePerSf: pricePerSf,
+    compMonthsOld: monthsSince(comp.saleDate),
+    compScore: Math.round(score * 1000) / 1000,
+    weightPct: 0,
+  };
+}
+
+function scoreRentComp(comp, site) {
+  const rentPerSf = numberOrNull(comp.rentPerSf) || (comp.monthlyRent && comp.unitSf ? Number(comp.monthlyRent) / Number(comp.unitSf) : null);
+  const monthlyRent = numberOrNull(comp.monthlyRent) || (rentPerSf && site.usf ? rentPerSf * site.usf : null);
+  const dataScore = (monthlyRent ? 0.45 : 0) + (rentPerSf ? 0.35 : 0) + (comp.unitSf ? 0.10 : 0) + (comp.amenities ? 0.10 : 0);
+  const score =
+    distanceScore(comp.distanceMiles) * 0.35 +
+    recencyScore(comp.period, 24) * 0.20 +
+    sizeScore(site.units, comp.propertyUnits) * 0.10 +
+    clampNumber(dataScore, 0.35, 1) * 0.35;
+  return {
+    ...comp,
+    usableMonthlyRent: monthlyRent,
+    usableRentPerSf: rentPerSf,
+    compMonthsOld: monthsSince(comp.period),
+    compScore: Math.round(score * 1000) / 1000,
+    weightPct: 0,
+  };
+}
+
+function assignCompWeights(items) {
+  const usable = (items || []).filter(item => item.compScore > 0);
+  const totalScore = usable.reduce((sum, item) => sum + item.compScore, 0) || 1;
+  return usable.map(item => ({
+    ...item,
+    weightPct: Math.round((item.compScore / totalScore) * 1000) / 10,
+  }));
+}
+
+function appraisalMoney(value) {
+  return Number.isFinite(Number(value)) && Number(value) > 0 ? fmtD(value) : 'n/a';
+}
+
+function appraisalPct(value) {
+  return Number.isFinite(Number(value)) && Number(value) > 0 ? (Number(value) * 100).toFixed(2) + '%' : 'n/a';
+}
+
+function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) {
+  const metrics = currentUserMetrics();
+  const sales = assignCompWeights((comps?.recentComps || []).map(c => scoreSalesComp(c, site)))
+    .sort((a, b) => b.compScore - a.compScore);
+  const rents = assignCompWeights((rentComps?.recentComps || []).map(c => scoreRentComp(c, site)))
+    .sort((a, b) => b.compScore - a.compScore);
+
+  const fallbackEntryCap = normalizeCapRate(comps?.capRate?.median) || normalizeCapRate(comps?.capRate?.avg) || normalizeCapRate(valuation.entryCap) || 0.0525;
+  const compEntryCap = weightedValue(sales, c => c.capRateNorm, c => c.compScore) || fallbackEntryCap;
+  const exitCap = compEntryCap + ((Number(metrics.exitCapSpreadBps) || 0) / 10000);
+  const weightedPpu = weightedValue(sales, c => c.usablePricePerUnit, c => c.compScore) || numberOrNull(comps?.pricePerUnit?.median) || numberOrNull(comps?.pricePerUnit?.avg);
+  const weightedPsf = weightedValue(sales, c => c.usablePricePerSf, c => c.compScore) || numberOrNull(comps?.pricePerSf?.median) || numberOrNull(comps?.pricePerSf?.avg);
+  const weightedMonthlyRent = weightedValue(rents, c => c.usableMonthlyRent, c => c.compScore);
+  const weightedRentPerSf = weightedValue(rents, c => c.usableRentPerSf, c => c.compScore);
+
+  const units = numberOrNull(site.units) || 0;
+  const totalSF = costs?.totalSF || units * (numberOrNull(site.usf) || 800);
+  const year5Noi = numberOrNull(valuation.year5Noi) || numberOrNull(income.noi) || 0;
+  const incomeApproach = exitCap ? year5Noi / exitCap : null;
+  const salesPpuValue = weightedPpu && units ? weightedPpu * units : null;
+  const salesPsfValue = weightedPsf && totalSF ? weightedPsf * totalSF : null;
+
+  let rentCompNoi = null;
+  let rentCompValue = null;
+  if (weightedMonthlyRent && units) {
+    const grossPotentialRent = Math.round(weightedMonthlyRent * units * 12 * (1 + (costs?.rentPremium || 0)));
+    const vacancyLoss = Math.round(grossPotentialRent * ((Number(metrics.vacancyPct) || 0) / 100));
+    const effectiveGrossIncome = grossPotentialRent - vacancyLoss + (numberOrNull(income.otherIncome) || 0);
+    const operatingExpenses = Math.round(effectiveGrossIncome * ((Number(metrics.expenseRatioPct) || 0) / 100));
+    rentCompNoi = Math.max(0, Math.round(effectiveGrossIncome - operatingExpenses));
+    const rentCompYear5Noi = Math.round(rentCompNoi * Math.pow(1 + ((Number(metrics.rentGrowthPct) || 0) / 100), 4));
+    rentCompValue = exitCap ? rentCompYear5Noi / exitCap : null;
+  }
+
+  const reconciliationInputs = [
+    { label: 'Income approach - current pro forma', value: incomeApproach, baseWeight: 45, note: 'Year-5 NOI capitalized at comp-driven exit cap' },
+    { label: 'Income approach - rent comp adjusted', value: rentCompValue, baseWeight: rents.length ? 20 : 0, note: 'Nearby rent comps recast through vacancy and expense assumptions' },
+    { label: 'Sales comparison - price per unit', value: salesPpuValue, baseWeight: weightedPpu ? 25 : 0, note: 'Weighted sold comps applied to subject unit count' },
+    { label: 'Sales comparison - price per SF', value: salesPsfValue, baseWeight: weightedPsf ? 10 : 0, note: 'Weighted sold comps applied to subject building area' },
+  ].filter(row => Number.isFinite(Number(row.value)) && Number(row.value) > 0 && row.baseWeight > 0);
+  const weightTotal = reconciliationInputs.reduce((sum, row) => sum + row.baseWeight, 0) || 1;
+  const reconciliation = reconciliationInputs.map(row => ({
+    ...row,
+    weightPct: Math.round((row.baseWeight / weightTotal) * 1000) / 10,
+  }));
+  const reconciled = reconciliation.reduce((sum, row) => sum + row.value * (row.weightPct / 100), 0) || incomeApproach || valuation.exitValue || 0;
+  const lowValue = reconciled ? reconciled * 0.92 : 0;
+  const highValue = reconciled ? reconciled * 1.08 : 0;
+  const appraisedProfit = reconciled - (costs?.totalCost || 0);
+  const confidence = sales.length >= 5 && rents.length >= 3 ? 'High' : sales.length >= 3 || rents.length >= 3 ? 'Medium' : 'Preliminary';
+
+  return {
+    siteId: site.id,
+    sales,
+    rents,
+    source: comps?.matchLabel || 'saved comparable sales database',
+    rentSource: rentComps?.matchLabel || rentComps?.source || 'rent comp database',
+    confidence,
+    entryCap: compEntryCap,
+    exitCap,
+    exitCapSpreadBps: Number(metrics.exitCapSpreadBps) || 0,
+    weightedPpu,
+    weightedPsf,
+    weightedMonthlyRent,
+    weightedRentPerSf,
+    rentCompNoi,
+    values: {
+      incomeApproach,
+      rentCompValue,
+      salesPpuValue,
+      salesPsfValue,
+      reconciled,
+      lowValue,
+      highValue,
+      appraisedProfit,
+    },
+    reconciliation,
+    notes: [
+      sales.length ? `${sales.length} sales comp(s) scored by distance, recency, type, size, and data quality.` : 'No property-level sales comps were returned; income approach receives the primary weight.',
+      rents.length ? `${rents.length} rent comp(s) scored by distance, recency, size, and data quality.` : 'No recent property-level rent comps were returned; rent-comp approach is excluded from reconciliation.',
+      `Exit cap is comp-driven at ${appraisalPct(exitCap)} (${appraisalPct(compEntryCap)} entry cap plus ${Number(metrics.exitCapSpreadBps) || 0} bps).`,
+    ],
+  };
+}
+
+function appraisalDetailHTML(appraisal) {
+  const v = appraisal.values || {};
+  return `
+    <table class="ct">
+      <tr><td>Reconciled appraised value</td><td>${appraisalMoney(v.reconciled)}</td></tr>
+      <tr><td>Value range</td><td>${appraisalMoney(v.lowValue)} - ${appraisalMoney(v.highValue)}</td></tr>
+      <tr><td>Comp-driven exit cap</td><td>${appraisalPct(appraisal.exitCap)}</td></tr>
+      <tr><td>Sales comp support</td><td>${appraisal.sales.length} scored comp(s)</td></tr>
+      <tr><td>Rent comp support</td><td>${appraisal.rents.length} scored comp(s)</td></tr>
+      <tr><td>Confidence</td><td>${escapeText(appraisal.confidence)}</td></tr>
+      <tr class="tot"><td>Appraised profit vs. cost</td><td style="color:${v.appraisedProfit >= 0 ? '#1d9e75' : '#e24b4a'}">${fmtD(v.appraisedProfit)}</td></tr>
+    </table>
+    <table class="ct">
+      <tr><td style="font-weight:700;color:#7f8a9a">Reconciliation method</td><td style="font-weight:700;color:#7f8a9a">Weight</td><td style="font-weight:700;color:#7f8a9a">Value</td></tr>
+      ${appraisal.reconciliation.map(row => `<tr><td>${escapeText(row.label)}</td><td>${row.weightPct}%</td><td>${appraisalMoney(row.value)}</td></tr>`).join('')}
+    </table>
+    <div style="font-size:9px;color:#6f7b8c;line-height:1.35;margin:5px 0 8px">${appraisal.notes.map(escapeText).join(' ')}</div>`;
+}
+
+function comparableEvidenceHTML(comps, rentComps, appraisal) {
+  const salesRows = appraisal.sales.slice(0, 6).map(c => `<tr>
+    <td>${escapeText(c.address || '')}<span style="display:block;color:#9aa3af;font-size:8px">${escapeText(c.neighborhood || '')}</span></td>
+    <td>${c.weightPct}%</td>
+    <td>${c.distanceMiles ?? 'n/a'}</td>
+    <td>${fmtCompDate(c.saleDate)}</td>
+    <td>${appraisalMoney(c.salePrice)}</td>
+    <td>${appraisalMoney(c.usablePricePerUnit)}</td>
+    <td>${c.capRateNorm ? appraisalPct(c.capRateNorm) : 'n/a'}</td>
+  </tr>`).join('');
+  const rentRows = appraisal.rents.slice(0, 6).map(c => `<tr>
+    <td>${escapeText(c.propertyName || c.address || '')}<span style="display:block;color:#9aa3af;font-size:8px">${escapeText(c.amenities || '')}</span></td>
+    <td>${c.weightPct}%</td>
+    <td>${c.distanceMiles ?? 'n/a'}</td>
+    <td>${fmtCompDate(c.period)}</td>
+    <td>${appraisalMoney(c.usableMonthlyRent)}</td>
+    <td>${c.usableRentPerSf ? fmtD(c.usableRentPerSf) + '/SF' : 'n/a'}</td>
+    <td>${escapeText(c.source || '')}</td>
+  </tr>`).join('');
+  return `
+    <div style="font-size:9px;color:#6f7b8c;margin-bottom:5px">Sales source: ${escapeText(appraisal.source)}. Rent source: ${escapeText(appraisal.rentSource)}.</div>
+    <table class="ct">
+      <tr><td style="font-weight:700;color:#7f8a9a">Sales comp</td><td style="font-weight:700;color:#7f8a9a">Weight</td><td style="font-weight:700;color:#7f8a9a">Mi</td><td style="font-weight:700;color:#7f8a9a">Date</td><td style="font-weight:700;color:#7f8a9a">Price</td><td style="font-weight:700;color:#7f8a9a">$/Unit</td><td style="font-weight:700;color:#7f8a9a">Cap</td></tr>
+      ${salesRows || `<tr><td colspan="7">${escapeText(comps?.message || 'No property-level sales comps returned.')}</td></tr>`}
+    </table>
+    <table class="ct">
+      <tr><td style="font-weight:700;color:#7f8a9a">Rent comp</td><td style="font-weight:700;color:#7f8a9a">Weight</td><td style="font-weight:700;color:#7f8a9a">Mi</td><td style="font-weight:700;color:#7f8a9a">Listed</td><td style="font-weight:700;color:#7f8a9a">Rent/mo</td><td style="font-weight:700;color:#7f8a9a">Rent/SF</td><td style="font-weight:700;color:#7f8a9a">Source</td></tr>
+      ${rentRows || `<tr><td colspan="7">${escapeText(rentComps?.message || 'No recent property-level rent comps returned.')}</td></tr>`}
+    </table>`;
+}
+
+function appraisalDetailRows(appraisal, s, costs, income, valuation) {
+  const v = appraisal.values || {};
+  const rows = [
+    xlsTitleRow('Appraisal Detail', s.addr),
+    xlsRow(['Conclusion Date', new Date().toISOString().slice(0, 10)]),
+    xlsRow(['Confidence', appraisal.confidence]),
+    xlsRow([''] ),
+    xlsSectionRow('Value Conclusion'),
+    xlsHeaderRow(['Metric', 'Value', 'Support', 'Notes']),
+    xlsRow(['Reconciled Appraised Value', cellMoney(Math.round(v.reconciled || 0)), appraisal.confidence, 'Weighted reconciliation of income, rent-comps, price/unit and price/SF']),
+    xlsRow(['Low Value Range', cellMoney(Math.round(v.lowValue || 0)), '92% of reconciled value', 'Preliminary valuation range']),
+    xlsRow(['High Value Range', cellMoney(Math.round(v.highValue || 0)), '108% of reconciled value', 'Preliminary valuation range']),
+    xlsRow(['Appraised Profit / Gap', cellMoneySigned(Math.round(v.appraisedProfit || 0)), 'Reconciled value less all-in cost', 'Positive means value above development basis']),
+    xlsRow(['All-In Development Cost', cellMoney(Math.round(costs.totalCost || 0)), 'Current underwriting', costs.planLabel || '']),
+    xlsRow([''] ),
+    xlsSectionRow('Cap Rate And Rent Evidence'),
+    xlsRow(['Comp-Driven Entry Cap', cellPct(Math.round((appraisal.entryCap || 0) * 10000) / 100), appraisal.sales.length + ' scored sales comps', appraisal.source]),
+    xlsRow(['Comp-Driven Exit Cap', cellPct(Math.round((appraisal.exitCap || 0) * 10000) / 100), 'Entry cap + ' + appraisal.exitCapSpreadBps + ' bps', 'Used for income approach']),
+    xlsRow(['Weighted Sales Price / Unit', cellMoney(Math.round(appraisal.weightedPpu || 0)), appraisal.sales.length + ' scored comps', 'Applied to subject units']),
+    xlsRow(['Weighted Sales Price / SF', cellMoney(Math.round(appraisal.weightedPsf || 0)), appraisal.sales.length + ' scored comps', 'Applied to subject total SF']),
+    xlsRow(['Weighted Rent / Month', cellMoney(Math.round(appraisal.weightedMonthlyRent || 0)), appraisal.rents.length + ' scored rent comps', appraisal.rentSource]),
+    xlsRow(['Weighted Rent / SF', appraisal.weightedRentPerSf ? cellMoney(Math.round(appraisal.weightedRentPerSf * 100) / 100) : '', appraisal.rents.length + ' scored rent comps', 'Monthly rent divided by unit SF']),
+    xlsRow(['Rent-Comp NOI', cellMoney(Math.round(appraisal.rentCompNoi || 0)), 'Rent comps through vacancy and expense assumptions', 'Excluded when no recent rent comps exist']),
+    xlsRow([''] ),
+    xlsSectionRow('Reconciliation'),
+    xlsHeaderRow(['Approach', 'Weight %', 'Value', 'Methodology']),
+  ];
+  appraisal.reconciliation.forEach(row => rows.push(xlsRow([
+    row.label,
+    cellPct(row.weightPct),
+    cellMoney(Math.round(row.value || 0)),
+    [row.note || '', 'String', 'note'],
+  ])));
+  rows.push(xlsRow(['']));
+  rows.push(xlsSectionRow('Sales Comp Scoring'));
+  rows.push(xlsHeaderRow(['Weight %', 'Score', 'Address', 'Distance mi', 'Neighborhood', 'Sale Date', 'Sale Price', 'Units', 'Year Built', 'Cap Rate %', 'Price / Unit', 'Price / SF', 'Source', 'Amenities / Notes']));
+  if (appraisal.sales.length) {
+    appraisal.sales.forEach(c => rows.push(xlsRow([
+      cellPct(c.weightPct),
+      cellNumber(c.compScore),
+      c.address || '',
+      cellNumber(c.distanceMiles),
+      c.neighborhood || '',
+      fmtCompDate(c.saleDate),
+      cellMoney(c.salePrice),
+      cellNumber(c.units),
+      cellNumber(c.yearBuilt),
+      c.capRateNorm ? cellPct(Math.round(c.capRateNorm * 10000) / 100) : '',
+      cellMoney(c.usablePricePerUnit),
+      cellMoney(c.usablePricePerSf),
+      c.source || '',
+      [c.amenities || c.notes || '', 'String', 'note'],
+    ])));
+  } else {
+    rows.push(xlsRow(['No property-level sales comps available for scoring.'], 'note'));
+  }
+  rows.push(xlsRow(['']));
+  rows.push(xlsSectionRow('Rent Comp Scoring'));
+  rows.push(xlsHeaderRow(['Weight %', 'Score', 'Property / Address', 'Distance mi', 'Listed Period', 'Beds', 'Baths', 'Monthly Rent', 'Unit SF', 'Rent / SF', 'Year Built', 'Property Units', 'Source', 'Amenities / Notes']));
+  if (appraisal.rents.length) {
+    appraisal.rents.forEach(c => rows.push(xlsRow([
+      cellPct(c.weightPct),
+      cellNumber(c.compScore),
+      c.propertyName ? c.propertyName + ' - ' + (c.address || '') : c.address || '',
+      cellNumber(c.distanceMiles),
+      fmtCompDate(c.period),
+      cellNumber(c.bedrooms),
+      cellNumber(c.bathrooms),
+      cellMoney(c.usableMonthlyRent),
+      cellNumber(c.unitSf),
+      c.usableRentPerSf ? cellMoney(Math.round(c.usableRentPerSf * 100) / 100) : '',
+      cellNumber(c.yearBuilt),
+      cellNumber(c.propertyUnits),
+      c.source || '',
+      [c.amenities || '', 'String', 'note'],
+    ])));
+  } else {
+    rows.push(xlsRow(['No recent property-level rent comps available for scoring.'], 'note'));
+  }
+  rows.push(xlsRow(['']));
+  rows.push(xlsSectionRow('Engine Notes'));
+  appraisal.notes.forEach(note => rows.push(xlsRow([[note, 'String', 'note']])));
+  return rows;
+}
+
+function pdfAppraisalReportHTML(appraisal) {
+  const v = appraisal.values || {};
+  const salesRows = appraisal.sales.slice(0, 8).map(c => `<tr>
+    <td>${escapeText(c.address || '')}</td>
+    <td>${escapeText(c.neighborhood || '')}</td>
+    <td>${c.weightPct}%</td>
+    <td>${c.distanceMiles ?? 'n/a'}</td>
+    <td>${fmtCompDate(c.saleDate)}</td>
+    <td>${appraisalMoney(c.salePrice)}</td>
+    <td>${appraisalMoney(c.usablePricePerUnit)}</td>
+    <td>${c.capRateNorm ? appraisalPct(c.capRateNorm) : 'n/a'}</td>
+  </tr>`).join('');
+  const rentRows = appraisal.rents.slice(0, 8).map(c => `<tr>
+    <td>${escapeText(c.propertyName || c.address || '')}</td>
+    <td>${c.weightPct}%</td>
+    <td>${c.distanceMiles ?? 'n/a'}</td>
+    <td>${fmtCompDate(c.period)}</td>
+    <td>${appraisalMoney(c.usableMonthlyRent)}</td>
+    <td>${c.usableRentPerSf ? fmtD(c.usableRentPerSf) + '/SF' : 'n/a'}</td>
+    <td>${escapeText(c.amenities || c.source || '')}</td>
+  </tr>`).join('');
+  return `
+<!-- COMP-DRIVEN APPRAISAL -->
+<h2>VIII. Comparable Evidence & Appraisal Reconciliation</h2>
+<div class="summary-box">
+  <div class="label">Reconciled Appraised Value</div>
+  <div class="value">${appraisalMoney(v.reconciled)}</div>
+  <div style="font-size:9px;margin-top:4px;color:rgba(255,255,255,0.75)">Range ${appraisalMoney(v.lowValue)} - ${appraisalMoney(v.highValue)} | ${appraisal.confidence} confidence | comp-driven exit cap ${appraisalPct(appraisal.exitCap)}</div>
+</div>
+<div class="two-col">
+  <div>
+    <h3>Valuation Reconciliation</h3>
+    <table>
+      <tr><th>Approach</th><th>Weight</th><th>Value</th></tr>
+      ${appraisal.reconciliation.map(row => `<tr><td>${escapeText(row.label)}</td><td>${row.weightPct}%</td><td>${appraisalMoney(row.value)}</td></tr>`).join('')}
+      <tr class="tot"><td>Reconciled Value</td><td>100%</td><td>${appraisalMoney(v.reconciled)}</td></tr>
+      <tr><td>All-In Development Cost</td><td></td><td>${appraisalMoney((v.reconciled || 0) - (v.appraisedProfit || 0))}</td></tr>
+      <tr class="tot"><td>Appraised Profit / Gap</td><td></td><td class="${v.appraisedProfit >= 0 ? 'green' : 'red'}">${fmtD(v.appraisedProfit)}</td></tr>
+    </table>
+  </div>
+  <div>
+    <h3>Comp Inputs</h3>
+    <table>
+      <tr><td>Sales comp source</td><td>${escapeText(appraisal.source)}</td></tr>
+      <tr><td>Rent comp source</td><td>${escapeText(appraisal.rentSource)}</td></tr>
+      <tr><td>Weighted entry cap</td><td>${appraisalPct(appraisal.entryCap)}</td></tr>
+      <tr><td>Exit cap spread</td><td>${appraisal.exitCapSpreadBps} bps</td></tr>
+      <tr><td>Weighted price / unit</td><td>${appraisalMoney(appraisal.weightedPpu)}</td></tr>
+      <tr><td>Weighted price / SF</td><td>${appraisal.weightedPsf ? fmtD(appraisal.weightedPsf) + '/SF' : 'n/a'}</td></tr>
+      <tr><td>Weighted rent / month</td><td>${appraisalMoney(appraisal.weightedMonthlyRent)}</td></tr>
+      <tr><td>Weighted rent / SF</td><td>${appraisal.weightedRentPerSf ? fmtD(appraisal.weightedRentPerSf) + '/SF' : 'n/a'}</td></tr>
+    </table>
+  </div>
+</div>
+<h3>Scored Sales Comparables</h3>
+<table>
+  <tr><th>Property</th><th>Submarket</th><th>Weight</th><th>Mi</th><th>Sale Date</th><th>Sale Price</th><th>$/Unit</th><th>Cap</th></tr>
+  ${salesRows || '<tr><td colspan="8">No property-level sales comps returned for this subject.</td></tr>'}
+</table>
+<h3>Scored Rent Comparables</h3>
+<table>
+  <tr><th>Property</th><th>Weight</th><th>Mi</th><th>Listed</th><th>Rent/mo</th><th>Rent/SF</th><th>Amenities / Source</th></tr>
+  ${rentRows || '<tr><td colspan="7">No recent property-level rent comps returned for this subject.</td></tr>'}
+</table>
+<div class="note"><strong>Methodology:</strong> ${appraisal.notes.map(escapeText).join(' ')}</div>
+`;
+}
 function mapOptionsRows(s) {
   const rows = [
     xlsTitleRow('Mapping & Location Research', s.addr),
@@ -1867,6 +2271,7 @@ async function exportExcel(id) {
   const costs = costModelForSite(s);
   const income = incomeStatementForSite(s, costs);
   const valuation = valuationForSite(s, costs, income);
+  const exportAppraisal = buildAppraisalEngine(s, comps, rentComps, costs, income, valuation);
   const metrics = currentUserMetrics();
   const tc = costs.totalCost || 0;
   const land = costs.land || siteAskPrice(s) || 0;
@@ -1915,6 +2320,9 @@ async function exportExcel(id) {
     xlsRow(['Lot SF', cellNumber(s.lot || 0)]),
     xlsRow(['Land Cost', cellMoney(Math.round(land))]),
     xlsRow(['All-In Cost', cellMoney(Math.round(tc))]),
+    xlsRow(['Reconciled Appraised Value', cellMoney(Math.round(exportAppraisal.values.reconciled || 0))]),
+    xlsRow(['Comp-Driven Exit Cap', cellPct(Math.round((exportAppraisal.exitCap || exitCap) * 10000) / 100)]),
+    xlsRow(['Appraised Profit / Gap', cellMoneySigned(Math.round(exportAppraisal.values.appraisedProfit || 0))]),
     xlsRow(['Net Profit', cellMoneySigned(Math.round(netProfit))]),
     xlsRow(['RTI', s.rti ? 'Yes' : 'No']),
     xlsRow(['Listing Status', siteListingStatus(s)]),
@@ -1998,6 +2406,7 @@ async function exportExcel(id) {
     xlsSheet('Plan Scenarios', scenarioRowsForExport(s), [180, 115, 90, 80, 90, 130, 120, 120, 130, 130, 100, 320]) +
     xlsSheet('Pencil Check', pencilCheckRows(s, { tc, land, noi, exitValue, netProfit, exitCap, hardCosts, hardPerSf, totalPerSf, totalPerUnit }), [190, 150, 130, 300]) +
     xlsSheet('Underwriting', underwritingRows, [190, 130, 120, 120, 280]) +
+    xlsSheet('Appraisal Detail', appraisalDetailRows(exportAppraisal, s, costs, income, valuation), [160, 100, 240, 100, 160, 100, 120, 90, 90, 100, 110, 110, 120, 320]) +
     xlsSheet('Income Statement', incomeStatementRows(s, income), [220, 130, 120, 110, 260]) +
     xlsSheet('Rent Roll', rentRows, [160, 120, 100, 120, 130, 130]) +
     xlsSheet('Rent Comps', rentCompPropertyRows(rentComps, s, submarket), [260, 80, 90, 70, 70, 120, 90, 90, 90, 100, 260, 100, 120, 220]) +
@@ -2010,7 +2419,7 @@ async function exportExcel(id) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
   downloadTextFile('ParceLLA_' + safeFileName(s.addr) + '_' + stamp + '_Underwriting.xls', workbook);
 }
-function exportPDF(id) {
+async function exportPDF(id) {
   if (!id) return;
   const s = allSites.find(x => x.id === id);
   if (!s) return;
@@ -2051,6 +2460,12 @@ function exportPDF(id) {
   const pdfDebtService = Math.round(pdfLoan * (metrics.interestRatePct / 100));
   const pdfRentGrowth = metrics.rentGrowthPct / 100;
   const pdfRentImpact = signedPlanPct(costs.rentPremium);
+  const pdfCompQuery = compQueryForSite(s, 12);
+  const [pdfComps, pdfRentComps] = await Promise.all([
+    fetchJSON('/api/comps/submarket/' + encodeURIComponent(s.hood) + pdfCompQuery).catch(() => null),
+    fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(s.hood) + pdfCompQuery).catch(() => null),
+  ]);
+  const pdfAppraisal = buildAppraisalEngine(s, pdfComps, pdfRentComps, costs, pdfIncome, valuation);
 
   win.document.write(`<!DOCTYPE html>
 <html>
@@ -2500,26 +2915,7 @@ function exportPDF(id) {
   </div>
 </div>
 
-<!-- COMPARABLE SALES -->
-<h2>VIII. Comparable Sales Analysis</h2>
-<table>
-  <tr>
-    <th>Property</th><th>Submarket</th><th>Sale Date</th><th>Units</th>
-    <th>Sale Price</th><th>$/Unit</th><th>Cap Rate</th>
-  </tr>
-  <tr><td>3421 Sunset Blvd</td><td>Silver Lake</td><td>Aug 2024</td><td>10</td><td>$4,200,000</td><td>$420,000</td><td>4.28%</td></tr>
-  <tr><td>1240 S Harvard Blvd</td><td>Koreatown</td><td>Jun 2024</td><td>18</td><td>$5,850,000</td><td>$325,000</td><td>4.52%</td></tr>
-  <tr><td>4810 York Blvd</td><td>Highland Park</td><td>Sep 2024</td><td>8</td><td>$3,100,000</td><td>$387,500</td><td>4.61%</td></tr>
-  <tr><td>6220 W 3rd St</td><td>Mid-Wilshire</td><td>Jul 2024</td><td>24</td><td>$8,400,000</td><td>$350,000</td><td>4.45%</td></tr>
-  <tr><td>5540 W Adams Blvd</td><td>West Adams</td><td>May 2024</td><td>12</td><td>$3,600,000</td><td>$300,000</td><td>4.72%</td></tr>
-  <tr class="tot"><td colspan="5">MARKET AVERAGE (24-month)</td><td>$356,500</td><td>4.52%</td></tr>
-  <tr style="background:#fffbf0;font-weight:600">
-    <td>${s.addr}</td><td>${s.hood||''}</td><td>Subject</td><td>${s.units}</td>
-    <td>${isOffMarketSite(s)?'Off-mkt':fmtD(siteAskPrice(s)||0)}</td>
-    <td>${fmtD(Math.round((siteAskPrice(s)||land)/s.units))}</td>
-    <td>${capoc}% (on cost)</td>
-  </tr>
-</table>
+${pdfAppraisalReportHTML(pdfAppraisal)}
 
 <!-- CONCLUSION -->
 <h2>IX. Conclusion & Recommendation</h2>
