@@ -295,24 +295,25 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/comps/submarket/:hood - cap rate stats + detailed recent comps
+// GET /api/comps/submarket/:hood - cap rate stats + detailed sales comps, limited to the last 3 years
 router.get('/submarket/:hood', async (req, res, next) => {
   try {
     const hood = decodeURIComponent(req.params.hood);
     const siteLat = asNumber(req.query.siteLat);
     const siteLng = asNumber(req.query.siteLng);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 25);
-    const exactCutoff = new Date(Date.now() - 730 * 86400000).toISOString().split('T')[0];
-    const fallbackCutoff = new Date(Date.now() - 1825 * 86400000).toISOString().split('T')[0];
+    const recencyDays = Math.min(Math.max(parseInt(req.query.recencyDays, 10) || 1095, 365), 1095);
+    const recencyMonths = Math.round((recencyDays / 365) * 12);
+    const cutoff = new Date(Date.now() - recencyDays * 86400000).toISOString().split('T')[0];
     const client = sb();
 
-    let matchType = 'exact_neighborhood_24_months';
-    let matchLabel = 'exact neighborhood, last 24 months';
+    let matchType = 'exact_neighborhood_recent';
+    let matchLabel = `exact neighborhood, last ${recencyMonths} months`;
     let { data, error } = await client
       .from('sold_comps')
       .select('*')
       .eq('neighborhood', hood)
-      .gte('sale_date', exactCutoff)
+      .gte('sale_date', cutoff)
       .order('sale_date', { ascending: false });
 
     if (error) throw error;
@@ -321,35 +322,26 @@ router.get('/submarket/:hood', async (req, res, next) => {
       const fallback = await client
         .from('sold_comps')
         .select('*')
-        .gte('sale_date', fallbackCutoff)
+        .gte('sale_date', cutoff)
         .order('sale_date', { ascending: false })
         .limit(100);
       if (fallback.error) throw fallback.error;
       data = fallback.data ?? [];
-      matchType = siteLat !== null && siteLng !== null ? 'nearest_available_60_months' : 'latest_citywide_60_months';
-      matchLabel = siteLat !== null && siteLng !== null ? 'nearest available comps, last 60 months' : 'latest citywide comps, last 60 months';
-    }
-
-    if (!data?.length) {
-      const fallback = await client
-        .from('sold_comps')
-        .select('*')
-        .order('sale_date', { ascending: false })
-        .limit(100);
-      if (fallback.error) throw fallback.error;
-      data = fallback.data ?? [];
-      matchType = siteLat !== null && siteLng !== null ? 'nearest_available_all_dates' : 'latest_citywide_all_dates';
-      matchLabel = siteLat !== null && siteLng !== null ? 'nearest available comps, all dates' : 'latest citywide comps, all dates';
+      matchType = siteLat !== null && siteLng !== null ? 'nearest_available_recent' : 'latest_citywide_recent';
+      matchLabel = siteLat !== null && siteLng !== null
+        ? `nearest available comps, last ${recencyMonths} months`
+        : `latest citywide comps, last ${recencyMonths} months`;
     }
 
     if (!data?.length) {
       return res.json({
         hood,
         comps: 0,
-        matchType: 'none',
-        matchLabel: 'no stored sales comps',
+        matchType: 'none_recent',
+        matchLabel: `no sales comps in the last ${recencyMonths} months`,
         fallback: false,
-        message: 'No stored sold comps are available yet.',
+        recencyDays,
+        message: `No stored sold comps are available within the last ${recencyMonths} months. Older sales comps are intentionally excluded.`,
         recentComps: [],
       });
     }
@@ -362,9 +354,10 @@ router.get('/submarket/:hood', async (req, res, next) => {
       comps: ranked.length,
       matchType,
       matchLabel,
-      fallback: matchType !== 'exact_neighborhood_24_months',
-      message: matchType === 'exact_neighborhood_24_months'
-        ? 'Exact neighborhood comps found.'
+      fallback: matchType !== 'exact_neighborhood_recent',
+      recencyDays,
+      message: matchType === 'exact_neighborhood_recent'
+        ? `Exact neighborhood comps found within the last ${recencyMonths} months.`
         : 'No exact recent neighborhood comps were stored, so the report is using ' + matchLabel + '.',
       ...stats,
       recentComps: ranked.slice(0, limit).map(d => mapSoldComp(d, siteLat, siteLng)),

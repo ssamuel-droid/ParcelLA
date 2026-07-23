@@ -1444,7 +1444,7 @@ async function fetchJSON(path) {
 
 function compQueryForSite(s, limit = 12) {
   const p = new URLSearchParams({ limit: String(limit) });
-  p.set('recencyDays', '365');
+  p.set('recencyDays', '1095');
   if (s?.lat && s?.lng) {
     p.set('siteLat', s.lat);
     p.set('siteLng', s.lng);
