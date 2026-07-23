@@ -1219,6 +1219,13 @@ function renderDetail(s) {
     if (!appraisalEl && !compsEl) return;
     const [comps, rentComps] = await Promise.all([loadComps(s), loadRentComps(s)]);
     const appraisal = buildAppraisalEngine(s, comps, rentComps, costs, income, valuation);
+    const compValuation = valuationWithAppraisal(valuation, appraisal, costs, income);
+    const valuationEl = g('valuation-' + s.id);
+    const pencilEl = g('pencil-' + s.id);
+    const capKpiEl = g('cap-kpi-source-' + s.id);
+    if (valuationEl) valuationEl.innerHTML = valuationTableHTML(compValuation, costs, appraisal.capRateSource);
+    if (pencilEl) pencilEl.innerHTML = pencilReadHTML(s, costs, income, compValuation);
+    if (capKpiEl) capKpiEl.textContent = 'vs ' + (compValuation.entryCap * 100).toFixed(2) + '% comp entry cap';
     if (appraisalEl) appraisalEl.innerHTML = appraisalDetailHTML(appraisal);
     if (compsEl) compsEl.innerHTML = comparableEvidenceHTML(comps, rentComps, appraisal);
   }, 100);
@@ -1239,14 +1246,14 @@ function renderDetail(s) {
     <div class="mbg">
       <div class="mb" style="border-left-color:${pc}"><div class="mbl">Net profit</div><div class="mbv" style="color:${pc}">${fmtM(prof)}</div><div class="mbs">exit − all-in</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">IRR (5-yr)</div><div class="mbv" style="color:${ic}">${Math.round(irr*10)/10}%</div><div class="mbs">${irrL(irr)}</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">Cap on cost</div><div class="mbv">${valuation.capOnCost||0}%</div><div class="mbs">vs ${(valuation.entryCap*100).toFixed(2)}% mkt</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">Cap on cost</div><div class="mbv">${valuation.capOnCost||0}%</div><div class="mbs" id="cap-kpi-source-${s.id}">loading comp cap</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">Dev spread</div><div class="mbv">${spd}%</div><div class="mbs">${fmtM(prof)} above cost</div></div>
     </div>
     <div class="sh">Cost waterfall</div>
     ${bars.map(([v,c,l])=>`<div class="wfr"><div class="wfl"><span>${l}</span><span>${fmtD(v)}</span></div><div class="wft"><div class="wff" style="width:${Math.round(v/tc*100)}%;background:${c}"></div></div></div>`).join('')}
     <div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid #e8e8e8;margin-top:4px;font-size:11px;font-weight:600"><span>Total all-in</span><span>${fmtD(tc)}</span></div>
     <div class="sh">Why this pencils</div>
-    ${pencilReadHTML(s, costs, income, valuation)}
+    <div id="pencil-${s.id}">${pencilReadHTML(s, costs, income, valuation)}</div>
     <div class="sh">Construction budget</div>
     <table class="ct">
       <tr><td>Construction plan</td><td>${costs.planLabel}</td></tr>
@@ -1264,15 +1271,7 @@ function renderDetail(s) {
     <div class="sh">Plan comparison</div>
     ${scenarioComparisonHTML(s)}
     <div class="sh">Valuation</div>
-    <table class="ct">
-      <tr><td>NOI (stabilized)</td><td>${fmtD(valuation.noi)}</td></tr>
-      <tr><td>Exit cap rate</td><td>${(valuation.exitCap*100).toFixed(2)}%</td></tr>
-      <tr><td>Year 5 NOI</td><td>${fmtD(valuation.year5Noi)}</td></tr>
-      <tr><td>Exit value</td><td>${fmtD(valuation.exitValue)}</td></tr>
-      <tr><td>Valuation formula</td><td>${fmtD(valuation.year5Noi)} / ${(valuation.exitCap*100).toFixed(2)}%</td></tr>
-      <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">−${fmtD(tc)}</td></tr>
-      <tr class="tot"><td style="color:${pc}">Net profit</td><td style="color:${pc};font-size:14px">${fmtD(prof)}</td></tr>
-    </table>
+    <div id="valuation-${s.id}">${valuationTableHTML(valuation, costs, 'Loading comp cap evidence...')}</div>
     <div class="sh">Comp-driven appraisal</div>
     <div id="appraisal-${s.id}" style="font-size:10px;color:#aaa">Loading appraisal comps...</div>
     <div class="sh">Income statement</div>
@@ -1523,10 +1522,14 @@ function weightedValue(items, valueFn, weightFn) {
 }
 
 function scoreSalesComp(comp, site) {
-  const capRateNorm = normalizeCapRate(comp.capRate);
+  const reportedCapRate = normalizeCapRate(comp.capRate);
+  const salePrice = numberOrNull(comp.salePrice);
+  const compNoi = numberOrNull(comp.noi);
+  const inferredCapRate = !reportedCapRate && salePrice && compNoi ? normalizeCapRate(compNoi / salePrice) : null;
+  const capRateNorm = reportedCapRate || inferredCapRate;
   const pricePerUnit = numberOrNull(comp.pricePerUnit);
   const pricePerSf = numberOrNull(comp.pricePerSf);
-  const dataScore = (capRateNorm ? 0.35 : 0) + (pricePerUnit ? 0.30 : 0) + (pricePerSf ? 0.25 : 0) + (comp.salePrice ? 0.10 : 0);
+  const dataScore = (capRateNorm ? 0.35 : 0) + (pricePerUnit ? 0.30 : 0) + (pricePerSf ? 0.25 : 0) + (salePrice ? 0.10 : 0);
   const score =
     distanceScore(comp.distanceMiles) * 0.30 +
     recencyScore(comp.saleDate, 72) * 0.20 +
@@ -1536,6 +1539,7 @@ function scoreSalesComp(comp, site) {
   return {
     ...comp,
     capRateNorm,
+    capRateSource: reportedCapRate ? 'reported cap rate' : inferredCapRate ? 'NOI / sale price' : '',
     usablePricePerUnit: pricePerUnit,
     usablePricePerSf: pricePerSf,
     compMonthsOld: monthsSince(comp.saleDate),
@@ -1580,6 +1584,38 @@ function appraisalPct(value) {
   return Number.isFinite(Number(value)) && Number(value) > 0 ? (Number(value) * 100).toFixed(2) + '%' : 'n/a';
 }
 
+function valuationWithAppraisal(base, appraisal, costs, income) {
+  const entryCap = appraisal?.entryCap || base.entryCap;
+  const exitCap = appraisal?.exitCap || base.exitCap;
+  const year5Noi = base.year5Noi || Math.round((income?.noi || 0) * Math.pow(1 + metricRate('rentGrowthPct'), 4));
+  const exitValue = exitCap ? Math.round(year5Noi / exitCap) : base.exitValue || 0;
+  const netProfit = exitValue - (costs?.totalCost || 0);
+  return {
+    ...base,
+    entryCap,
+    exitCap,
+    year5Noi,
+    exitValue,
+    netProfit,
+    devSpreadPct: costs?.totalCost ? (exitValue - costs.totalCost) / costs.totalCost : 0,
+    capRateSource: appraisal?.capRateSource || 'base market cap rate',
+  };
+}
+
+function valuationTableHTML(valuation, costs, sourceNote = '') {
+  const profitColor = (valuation.netProfit || 0) >= 0 ? '#1d9e75' : '#e24b4a';
+  return `<table class="ct">
+      <tr><td>NOI (stabilized)</td><td>${fmtD(valuation.noi)}</td></tr>
+      <tr><td>Entry cap rate</td><td>${(valuation.entryCap*100).toFixed(2)}%</td></tr>
+      <tr><td>Exit cap rate</td><td>${(valuation.exitCap*100).toFixed(2)}%</td></tr>
+      <tr><td>Cap source</td><td>${escapeText(sourceNote || valuation.capRateSource || 'base market cap rate')}</td></tr>
+      <tr><td>Year 5 NOI</td><td>${fmtD(valuation.year5Noi)}</td></tr>
+      <tr><td>Exit value</td><td>${fmtD(valuation.exitValue)}</td></tr>
+      <tr><td>Valuation formula</td><td>${fmtD(valuation.year5Noi)} / ${(valuation.exitCap*100).toFixed(2)}%</td></tr>
+      <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">-${fmtD(costs.totalCost || 0)}</td></tr>
+      <tr class="tot"><td style="color:${profitColor}">Net profit</td><td style="color:${profitColor};font-size:14px">${fmtD(valuation.netProfit)}</td></tr>
+    </table>`;
+}
 function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) {
   const metrics = currentUserMetrics();
   const sales = assignCompWeights((comps?.recentComps || []).map(c => scoreSalesComp(c, site)))
@@ -1588,8 +1624,7 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
     .sort((a, b) => b.compScore - a.compScore);
 
   const fallbackEntryCap = normalizeCapRate(comps?.capRate?.median) || normalizeCapRate(comps?.capRate?.avg) || normalizeCapRate(valuation.entryCap) || 0.0525;
-  const compEntryCap = weightedValue(sales, c => c.capRateNorm, c => c.compScore) || fallbackEntryCap;
-  const exitCap = compEntryCap + ((Number(metrics.exitCapSpreadBps) || 0) / 10000);
+  const weightedCapRate = weightedValue(sales, c => c.capRateNorm, c => c.compScore);
   const weightedPpu = weightedValue(sales, c => c.usablePricePerUnit, c => c.compScore) || numberOrNull(comps?.pricePerUnit?.median) || numberOrNull(comps?.pricePerUnit?.avg);
   const weightedPsf = weightedValue(sales, c => c.usablePricePerSf, c => c.compScore) || numberOrNull(comps?.pricePerSf?.median) || numberOrNull(comps?.pricePerSf?.avg);
   const weightedMonthlyRent = weightedValue(rents, c => c.usableMonthlyRent, c => c.compScore);
@@ -1597,10 +1632,21 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
 
   const units = numberOrNull(site.units) || 0;
   const totalSF = costs?.totalSF || units * (numberOrNull(site.usf) || 800);
-  const year5Noi = numberOrNull(valuation.year5Noi) || numberOrNull(income.noi) || 0;
-  const incomeApproach = exitCap ? year5Noi / exitCap : null;
   const salesPpuValue = weightedPpu && units ? weightedPpu * units : null;
   const salesPsfValue = weightedPsf && totalSF ? weightedPsf * totalSF : null;
+  const salesComparisonValue = salesPpuValue && salesPsfValue
+    ? (salesPpuValue * 0.70) + (salesPsfValue * 0.30)
+    : (salesPpuValue || salesPsfValue || null);
+  const impliedEntryCap = salesComparisonValue ? normalizeCapRate((numberOrNull(income.noi) || 0) / salesComparisonValue) : null;
+  const compEntryCap = weightedCapRate || impliedEntryCap || fallbackEntryCap;
+  const capRateSource = weightedCapRate
+    ? 'reported/NOI-derived sales comp cap rates'
+    : impliedEntryCap
+      ? 'subject NOI divided by weighted sales comp value'
+      : 'fallback neighborhood cap because comp cap evidence is missing';
+  const exitCap = compEntryCap + ((Number(metrics.exitCapSpreadBps) || 0) / 10000);
+  const year5Noi = numberOrNull(valuation.year5Noi) || numberOrNull(income.noi) || 0;
+  const incomeApproach = exitCap ? year5Noi / exitCap : null;
 
   let rentCompNoi = null;
   let rentCompValue = null;
@@ -1640,6 +1686,7 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
     confidence,
     entryCap: compEntryCap,
     exitCap,
+    capRateSource,
     exitCapSpreadBps: Number(metrics.exitCapSpreadBps) || 0,
     weightedPpu,
     weightedPsf,
@@ -1660,7 +1707,7 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
     notes: [
       sales.length ? `${sales.length} sales comp(s) scored by distance, recency, type, size, and data quality.` : 'No property-level sales comps were returned; income approach receives the primary weight.',
       rents.length ? `${rents.length} rent comp(s) scored by distance, recency, size, and data quality.` : 'No recent property-level rent comps were returned; rent-comp approach is excluded from reconciliation.',
-      `Exit cap is comp-driven at ${appraisalPct(exitCap)} (${appraisalPct(compEntryCap)} entry cap plus ${Number(metrics.exitCapSpreadBps) || 0} bps).`,
+      `Exit cap uses ${capRateSource} at ${appraisalPct(exitCap)} (${appraisalPct(compEntryCap)} entry cap plus ${Number(metrics.exitCapSpreadBps) || 0} bps).`,
     ],
   };
 }
@@ -2276,11 +2323,11 @@ async function exportExcel(id) {
   const tc = costs.totalCost || 0;
   const land = costs.land || siteAskPrice(s) || 0;
   const noi = valuation.noi || 0;
-  const exitValue = valuation.exitValue || 0;
-  const netProfit = valuation.netProfit || 0;
   const irr = valuation.leveragedIRR || 0;
-  const entryCap = valuation.entryCap || submarket?.entryCap || 0.0475;
-  const exitCap = valuation.exitCap || submarket?.exitCap || entryCap + 0.0025;
+  const entryCap = exportAppraisal.entryCap || valuation.entryCap || submarket?.entryCap || 0.0475;
+  const exitCap = exportAppraisal.exitCap || valuation.exitCap || submarket?.exitCap || entryCap + 0.0025;
+  const exitValue = exitCap ? Math.round((valuation.year5Noi || 0) / exitCap) : (valuation.exitValue || 0);
+  const netProfit = exitValue - tc;
   const loan = tc * (metrics.loanToCostPct / 100);
   const equity = tc - loan;
   const debtService = income.debtService || loan * (metrics.interestRatePct / 100);
@@ -2430,17 +2477,17 @@ async function exportPDF(id) {
   const valuation = valuationForSite(s, costs, pdfIncome);
   const metrics = currentUserMetrics();
   const irr  = valuation.leveragedIRR || 0;
-  const prof = valuation.netProfit || 0;
-  const pc   = prof > 0 ? '#1d9e75' : '#e24b4a';
+  let prof = valuation.netProfit || 0;
+  let pc   = prof > 0 ? '#1d9e75' : '#e24b4a';
   const ic   = irrC(irr);
   const tc   = costs.totalCost || 0;
   const land = costs.land || siteAskPrice(s) || 0;
   const noi  = valuation.noi || 0;
-  const exitV = valuation.exitValue || 0;
-  const entryCap = valuation.entryCap || 0.0475;
-  const exitCap  = valuation.exitCap || entryCap + 0.0025;
+  let exitV = valuation.exitValue || 0;
+  let entryCap = valuation.entryCap || 0.0475;
+  let exitCap  = valuation.exitCap || entryCap + 0.0025;
   const capoc    = valuation.capOnCost || 0;
-  const spread   = Math.round((valuation.devSpreadPct || 0) * 1000) / 10;
+  let spread   = Math.round((valuation.devSpreadPct || 0) * 1000) / 10;
   const today    = new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'});
   const pdfTotalSF = costs.totalSF;
   const pdfHardCosts = costs.hardCosts;
@@ -2466,6 +2513,12 @@ async function exportPDF(id) {
     fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(s.hood) + pdfCompQuery).catch(() => null),
   ]);
   const pdfAppraisal = buildAppraisalEngine(s, pdfComps, pdfRentComps, costs, pdfIncome, valuation);
+  entryCap = pdfAppraisal.entryCap || entryCap;
+  exitCap = pdfAppraisal.exitCap || exitCap;
+  exitV = exitCap ? Math.round((valuation.year5Noi || 0) / exitCap) : exitV;
+  prof = exitV - tc;
+  pc = prof > 0 ? '#1d9e75' : '#e24b4a';
+  spread = tc ? Math.round(((exitV - tc) / tc) * 1000) / 10 : spread;
 
   win.document.write(`<!DOCTYPE html>
 <html>
