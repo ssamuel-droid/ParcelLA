@@ -186,7 +186,8 @@ const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', watchlist = loadWatchlist(), userMetrics = null;
 let sitePageTotal = 0, sitePageLimit = 50, currentSiteQuery = '';
 const g = id => document.getElementById(id);
-const LA_MAP_BOUNDS = { minLat: 33.92, maxLat: 34.18, minLng: -118.48, maxLng: -118.16 };
+const LA_MAP_VIEW = { centerLat: 34.0522, centerLng: -118.2851, zoom: 10, width: 960, height: 620 };
+const LA_COORD_LIMITS = { minLat: 33.65, maxLat: 34.45, minLng: -119.05, maxLng: -117.55 };
 const MAP_TRANSIT_NODES = [
   { name:'Union Station', lat:34.0560, lng:-118.2365 },
   { name:'7th/Metro', lat:34.0483, lng:-118.2589 },
@@ -261,7 +262,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .ct{width:100%;font-size:11px;border-collapse:collapse}.ct td{padding:5px 0;border-bottom:0.5px solid #edf1f4}.ct td:last-child{text-align:right;font-weight:800}.ct tr.tot td{font-weight:900;border-top:1px solid #d8dee7;border-bottom:none;padding-top:6px}.wfr{margin-bottom:5px}.wfl{display:flex;justify-content:space-between;font-size:9px;color:#4d5969;margin-bottom:2px}.wft{height:8px;background:#edf1f5;border-radius:3px;overflow:hidden}.wff{height:100%;border-radius:3px}
 .nb{background:#fffbf0;border:1px solid #f0e0b0;border-left:3px solid var(--gold);border-radius:7px;padding:9px 11px;font-size:11px;line-height:1.55;color:#3f4a5a;margin-top:6px}.gb{padding:7px 12px;background:var(--gold);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-top:5px}.ab{width:100%;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:800;cursor:pointer;margin-top:6px}.ap{background:var(--navy);color:#fff}.as{background:#fff;color:var(--navy);border:1px solid var(--navy)}
 .maptabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:5px}.mapbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 4px;font-size:9px;font-weight:800;cursor:pointer}.mapbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.mapcard{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:5px;background:#fff;text-decoration:none}.mapcard img{width:100%;height:152px;object-fit:cover;display:block}.mapcap{padding:5px 8px;font-size:9px;color:#536071;background:#f8fafc;border-top:1px solid var(--line)}.maplinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:6px}.maplinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}.maplinks a:hover{border-color:var(--gold);background:#fffdf7}
-.viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:cover;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:5;transform:translate(-50%,-50%) scale(1.12)}.pin:after{display:none!important}.pintip{position:absolute;left:21px;top:-18px;width:224px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;box-shadow:0 10px 25px rgba(15,31,61,.2);text-align:left;color:var(--ink);font-size:10px;line-height:1.25;display:none;pointer-events:none}.pin:hover .pintip{display:block}.pintip b{display:block;font-size:11px;margin-bottom:2px;overflow-wrap:anywhere}.pintip em{display:block;font-style:normal;color:#6f7b8c;margin-bottom:6px}.pintip span{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #edf1f4;padding-top:4px;margin-top:4px}.pintip strong{font-size:10px}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}
+.viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:fill;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:5;transform:translate(-50%,-50%) scale(1.12)}.pin:after{display:none!important}.pintip{position:absolute;left:21px;top:-18px;width:224px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;box-shadow:0 10px 25px rgba(15,31,61,.2);text-align:left;color:var(--ink);font-size:10px;line-height:1.25;display:none;pointer-events:none}.pin:hover .pintip{display:block}.pintip b{display:block;font-size:11px;margin-bottom:2px;overflow-wrap:anywhere}.pintip em{display:block;font-style:normal;color:#6f7b8c;margin-bottom:6px}.pintip span{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #edf1f4;padding-top:4px;margin-top:4px}.pintip strong{font-size:10px}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}
 @media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.settings-grid{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}}
 @media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}}
 @media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg,.maplinks,.sourcelinks,.settings-grid{grid-template-columns:1fr}.viewtabs{width:100%;margin-left:0}.viewbtn{flex:1}}
@@ -572,12 +573,20 @@ function toggleWatch(id, ev) {
 }
 
 function cityMapURL(maptype='roadmap') {
-  return `https://maps.googleapis.com/maps/api/staticmap?size=960x620&scale=2&center=34.0522,-118.2851&zoom=10&maptype=${maptype}&key=${GMAPS_KEY}`;
+  return `https://maps.googleapis.com/maps/api/staticmap?size=${LA_MAP_VIEW.width}x${LA_MAP_VIEW.height}&scale=2&center=${LA_MAP_VIEW.centerLat},${LA_MAP_VIEW.centerLng}&zoom=${LA_MAP_VIEW.zoom}&maptype=${maptype}&key=${GMAPS_KEY}`;
+}
+
+function isValidLACoord(lat, lng) {
+  return Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= LA_COORD_LIMITS.minLat && lat <= LA_COORD_LIMITS.maxLat &&
+    lng >= LA_COORD_LIMITS.minLng && lng <= LA_COORD_LIMITS.maxLng;
 }
 
 function siteCoords(s) {
-  if (Number(s?.lat) && Number(s?.lng)) return { lat:Number(s.lat), lng:Number(s.lng) };
-  const base = HOOD_COORDS[s?.hood] || { lat:34.0522, lng:-118.2851 };
+  const lat = Number(s?.lat);
+  const lng = Number(s?.lng);
+  if (isValidLACoord(lat, lng)) return { lat, lng };
+  const base = HOOD_COORDS[s?.hood] || { lat:LA_MAP_VIEW.centerLat, lng:LA_MAP_VIEW.centerLng };
   const n = Number(s?.id || 0);
   return {
     lat: base.lat + (((n * 7) % 11) - 5) * 0.0025,
@@ -585,10 +594,25 @@ function siteCoords(s) {
   };
 }
 
+function mercatorPoint(lat, lng) {
+  const sinLat = Math.sin((Math.max(-85.05112878, Math.min(85.05112878, lat)) * Math.PI) / 180);
+  const scale = 256 * Math.pow(2, LA_MAP_VIEW.zoom);
+  return {
+    x: ((lng + 180) / 360) * scale,
+    y: (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * scale,
+  };
+}
+
 function mapPoint(lat, lng) {
-  const x = Math.max(3, Math.min(97, ((lng - LA_MAP_BOUNDS.minLng) / (LA_MAP_BOUNDS.maxLng - LA_MAP_BOUNDS.minLng)) * 100));
-  const y = Math.max(3, Math.min(97, (1 - ((lat - LA_MAP_BOUNDS.minLat) / (LA_MAP_BOUNDS.maxLat - LA_MAP_BOUNDS.minLat))) * 100));
-  return { x, y };
+  const center = mercatorPoint(LA_MAP_VIEW.centerLat, LA_MAP_VIEW.centerLng);
+  const point = mercatorPoint(Number(lat), Number(lng));
+  const x = ((point.x - center.x + (LA_MAP_VIEW.width / 2)) / LA_MAP_VIEW.width) * 100;
+  const y = ((point.y - center.y + (LA_MAP_VIEW.height / 2)) / LA_MAP_VIEW.height) * 100;
+  return {
+    x: Math.round(x * 100) / 100,
+    y: Math.round(y * 100) / 100,
+    inView: x >= 0 && x <= 100 && y >= 0 && y <= 100,
+  };
 }
 
 function siteMapPoint(s) {
@@ -939,11 +963,14 @@ function renderCards() {
 
 function renderMapView() {
   const el = g('list');
-  const visibleSites = filtered.filter(visibleOnMapLayer).slice(0, 250);
-  const pins = visibleSites.map(s => {
+  const visibleSites = filtered
+    .filter(visibleOnMapLayer)
+    .map(s => ({ s, pt: siteMapPoint(s) }))
+    .filter(row => row.pt.inView)
+    .slice(0, 250);
+  const pins = visibleSites.map(({ s, pt }) => {
     const costs = costModelForSite(s);
     const valuation = valuationForSite(s, costs);
-    const pt = siteMapPoint(s);
     const color = markerColorForSite(s, valuation);
     const label = `${s.addr} - ${fmtM(valuation.netProfit)}`.replace(/"/g, '');
     const price = isForSaleSite(s) ? fmtM(siteAskPrice(s)) : 'Not for sale';
@@ -961,9 +988,10 @@ function renderMapView() {
   }).join('');
   const transit = mapLayers.transit ? MAP_TRANSIT_NODES.map(node => {
     const pt = mapPoint(node.lat, node.lng);
+    if (!pt.inView) return '';
     return `<span class="transitdot" title="${node.name}" style="left:${pt.x}%;top:${pt.y}%"></span>`;
   }).join('') : '';
-  const topDeals = filtered.slice(0, 6).map(s => {
+  const topDeals = visibleSites.map(row => row.s).slice(0, 6).map(s => {
     const valuation = valuationForSite(s, costModelForSite(s));
     return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${s.addr}</b><span>${s.hood} - ${fmtM(valuation.netProfit)} - ${valuation.capOnCost||0}% cap on cost</span></div>`;
   }).join('');
