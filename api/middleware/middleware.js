@@ -39,8 +39,14 @@ export const modelLimiter = rateLimit({
 
 // ── Input validation ──────────────────────────────────────────────────────────
 export function validateSiteFilters(req, res, next) {
-  const { minIRR, maxPrice, minUnits, minProfit, minSpread, minCapoc } = req.query;
-  const numFields = { minIRR, maxPrice, minUnits, minProfit, minSpread, minCapoc };
+  const {
+    minIRR, minPrice, maxPrice, minUnits, maxUnits,
+    minProfit, minSpread, minCapoc, minCost, maxCost, rate,
+  } = req.query;
+  const numFields = {
+    minIRR, minPrice, maxPrice, minUnits, maxUnits,
+    minProfit, minSpread, minCapoc, minCost, maxCost, rate,
+  };
   for (const [key, val] of Object.entries(numFields)) {
     if (val !== undefined && isNaN(+val)) {
       return res.status(400).json({ error: `Invalid value for ${key}: must be a number` });

@@ -63,6 +63,62 @@ function fullAddress(addr) {
   return `${addr}, Los Angeles, CA`;
 }
 
+function canonicalAddress(value) {
+  return String(value || '').toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
+const KNOWN_ADDRESS_GROUPS = [
+  {
+    key: '6091 W PICO BLVD',
+    units: 138,
+    label: '6075-6099 W PICO BLVD',
+    aliases: [
+      '6075 W PICO BLVD', '6077 W PICO BLVD', '6079 W PICO BLVD', '6081 W PICO BLVD',
+      '6083 W PICO BLVD', '6085 W PICO BLVD', '6087 W PICO BLVD', '6089 W PICO BLVD',
+      '6091 W PICO BLVD', '6093 W PICO BLVD', '6095 W PICO BLVD', '6097 W PICO BLVD',
+      '6099 W PICO BLVD',
+    ],
+    note: 'Includes 6095 W Pico; PDIS DIR-2023-4054-TOC-SPR-VHCA',
+  },
+];
+
+function knownAddressGroup(s) {
+  const addr = canonicalAddress(s?.addr);
+  return KNOWN_ADDRESS_GROUPS.find(group =>
+    addr === group.key && (!group.units || Number(s?.units || 0) === group.units)
+  );
+}
+
+function siteAddressAliases(s) {
+  const aliases = Array.isArray(s?.addressAliases) ? s.addressAliases : [];
+  const group = knownAddressGroup(s);
+  return [...new Set([...(group?.aliases || []), ...aliases].map(canonicalAddress).filter(Boolean))];
+}
+
+function siteDisplayAddress(s) {
+  return s?.displayAddress || knownAddressGroup(s)?.label || s?.addr || '';
+}
+
+function siteAddressNote(s) {
+  const group = knownAddressGroup(s);
+  if (group?.note) return group.note;
+  const aliases = siteAddressAliases(s).filter(addr => addr !== canonicalAddress(s?.addr));
+  return aliases.length ? `Also covers ${aliases.slice(0, 4).join(', ')}${aliases.length > 4 ? ' +' + (aliases.length - 4) + ' more' : ''}` : '';
+}
+
+function siteSearchText(s) {
+  return [
+    s?.addr,
+    siteDisplayAddress(s),
+    siteAddressNote(s),
+    s?.permitNumber,
+    s?.permitStatus,
+    s?.developmentStatus,
+    s?.workDescription,
+    ...siteAddressAliases(s),
+  ].map(canonicalAddress).join(' ');
+}
+
 function addressQuery(addr) {
   return encodeURIComponent(fullAddress(addr));
 }
@@ -244,7 +300,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .sb2{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:5px}.sb2 input{width:100%;padding:5px 7px;border:1px solid var(--line);border-radius:6px;font-size:11px;background:#fff;text-align:right;color:var(--ink)}
 .sbf{padding:9px 12px;border-top:1px solid var(--line);background:#fff}.bp{width:100%;padding:8px;background:var(--navy);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;margin-bottom:5px}.bp:hover{background:var(--navy2)}
 .br{width:100%;padding:6px;background:#fff;color:#687485;border:1px solid var(--line);border-radius:6px;font-size:11px;cursor:pointer}.br:hover{border-color:#b8c2cf;color:var(--ink)}
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}.mfb{display:grid;grid-template-columns:repeat(6,minmax(118px,1fr));gap:6px;padding:8px 10px;background:#f8fafc;border-bottom:1px solid var(--line);flex-shrink:0}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}.mfb{display:grid;grid-template-columns:repeat(7,minmax(106px,1fr));gap:6px;padding:8px 10px;background:#f8fafc;border-bottom:1px solid var(--line);flex-shrink:0}
 .mf{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 8px}.mf.active{border-color:var(--gold);box-shadow:inset 0 0 0 1px rgba(185,139,47,.25);background:#fffdf7}.mfl{font-size:8px;color:#778397;text-transform:uppercase;letter-spacing:0;margin-bottom:4px;font-weight:800}.mfr{display:flex;align-items:center;gap:4px}.mfr input{flex:1;font-size:11px;padding:3px 4px;border:1px solid var(--line);border-radius:5px;background:#fff;text-align:right;min-width:0}.mfr span{font-size:9px;color:#8994a5;flex-shrink:0}.mfa{padding:4px 6px;border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:5px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.mfa.clear{border-color:var(--line);background:#fff;color:#687485}.override-note{font-size:10px;color:#7f8a9a;font-weight:700;margin-left:8px}
 .tb{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:#fff;border-bottom:1px solid var(--line);flex-shrink:0}.tbl{font-size:12px;font-weight:800;color:#243044}.ss{font-size:11px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
 .list{flex:1;overflow-y:auto;padding:8px 10px}.card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;transition:border-color 0.12s,box-shadow 0.12s,transform 0.12s;min-width:0}
@@ -275,6 +331,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 <div class="layout">
   <div class="sb">
     <div class="sb-body">
+      <h4>Search address / project</h4>
+      <input class="sbs" id="f-q" placeholder="5903, 6095, Pico, Riverside" onkeydown="if(event.key==='Enter')loadSites()">
       <h4>Listing type</h4>
       <label class="cb"><input type="checkbox" id="f-fs" checked> For sale</label>
       <label class="cb"><input type="checkbox" id="f-rti" checked> RTI / Entitled</label>
@@ -309,6 +367,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <div class="sb2"><input type="number" id="f-umin" placeholder="Min"><input type="number" id="f-umax" placeholder="Max"></div>
       <h4>Land price</h4>
       <div class="sb2"><input type="number" id="f-pmin" placeholder="Min $"><input type="number" id="f-pmax" placeholder="Max $"></div>
+      <h4>Project cost</h4>
+      <div class="sb2"><input type="number" id="f-cmin" placeholder="Min $"><input type="number" id="f-cmax" placeholder="Max $"></div>
     </div>
     <div class="sbf">
       <button class="bp" onclick="loadSites()">Search</button>
@@ -322,6 +382,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <div class="mf"><div class="mfl">Min dev spread</div><div class="mfr"><input type="number" id="mf-s" placeholder="0" step="1"><span>%</span></div></div>
       <div class="mf"><div class="mfl">Min cap on cost</div><div class="mfr"><input type="number" id="mf-c" placeholder="0" step="0.25"><span>%</span></div></div>
       <div class="mf" id="plan-box"><div class="mfl">Construction plan</div><select class="sbs" id="mf-plan" onchange="applyFilters()" style="margin:0;padding:3px 4px;font-size:10px"><option value="auto">Auto by type</option><option value="value">Value engineered</option><option value="typev">Type V wood frame</option><option value="modular">Modular / prefab</option><option value="podium">Type III podium</option><option value="luxury">Luxury finish</option><option value="concrete">Concrete / steel</option></select></div>
+      <div class="mf" id="rate-box"><div class="mfl">Interest rate</div><div class="mfr"><input type="number" id="mf-rate" placeholder="6.5" step="0.1"><span>%</span><button class="mfa" onclick="applyInterestOverride()">Run</button></div></div>
       <div class="mf" id="hc-box"><div class="mfl">Your hard cost / SF</div><div class="mfr"><span>$</span><input type="number" id="mf-hc" placeholder="RSMeans" step="5"><button class="mfa" onclick="applyHardCostOverride()">Run</button></div></div>
     </div>
     <div class="tb">
@@ -398,6 +459,11 @@ function currentHardCostOverride() {
   return val > 0 ? Math.round(val) : 0;
 }
 
+function currentInterestRateOverride() {
+  const val = Number(g('mf-rate')?.value || 0);
+  return val > 0 ? Math.round(val * 100) / 100 : 0;
+}
+
 function currentConstructionPlan() {
   const key = g('mf-plan')?.value || 'auto';
   return { key, ...(CONSTRUCTION_PLANS[key] || CONSTRUCTION_PLANS.auto) };
@@ -422,12 +488,18 @@ function loadUserMetrics() {
   }
 }
 
-function currentUserMetrics() {
+function baseUserMetrics() {
   return { ...DEFAULT_USER_METRICS, ...(userMetrics || {}) };
 }
 
+function currentUserMetrics() {
+  const metrics = baseUserMetrics();
+  const rate = currentInterestRateOverride();
+  return rate ? { ...metrics, interestRatePct: rate } : metrics;
+}
+
 function saveUserMetrics() {
-  localStorage.setItem('parcella_user_metrics', JSON.stringify(currentUserMetrics()));
+  localStorage.setItem('parcella_user_metrics', JSON.stringify(baseUserMetrics()));
 }
 
 function metricNumber(value, fallback, min, max) {
@@ -441,13 +513,18 @@ function metricsCustomized() {
   return Object.keys(DEFAULT_USER_METRICS).some(key => Number(m[key]) !== Number(DEFAULT_USER_METRICS[key]));
 }
 
+function savedMetricsCustomized() {
+  const m = baseUserMetrics();
+  return Object.keys(DEFAULT_USER_METRICS).some(key => Number(m[key]) !== Number(DEFAULT_USER_METRICS[key]));
+}
+
 function setSettingsField(id, value) {
   const el = g(id);
   if (el) el.value = value;
 }
 
 function populateSettingsForm() {
-  const m = currentUserMetrics();
+  const m = baseUserMetrics();
   setSettingsField('set-hc-mf', m.hardCostMultifamily);
   setSettingsField('set-hc-mx', m.hardCostMixedUse);
   setSettingsField('set-hc-cn', m.hardCostCondoTH);
@@ -480,7 +557,7 @@ function refreshUnderwritingViews() {
 }
 
 function saveSettings() {
-  const current = currentUserMetrics();
+  const current = baseUserMetrics();
   userMetrics = {
     hardCostMultifamily: metricNumber(g('set-hc-mf')?.value, current.hardCostMultifamily, 100, 1000),
     hardCostMixedUse: metricNumber(g('set-hc-mx')?.value, current.hardCostMixedUse, 100, 1000),
@@ -727,7 +804,10 @@ function checkedIds(ids) {
 }
 
 function buildSiteQueryParams(offset = 0) {
-  const qs = new URLSearchParams({ sort: g('srt')?.value || 'profit', limit: String(sitePageLimit), offset: String(offset) });
+  const search = (g('f-q')?.value || '').trim();
+  const pageLimit = search ? Math.max(sitePageLimit, 500) : sitePageLimit;
+  const qs = new URLSearchParams({ sort: g('srt')?.value || 'profit', limit: String(pageLimit), offset: String(offset) });
+  if (search) qs.set('q', search);
   const types = [];
   if (g('f-mf')?.checked) types.push('Multifamily');
   if (g('f-mx')?.checked) types.push('Mixed-Use');
@@ -751,7 +831,8 @@ function buildSiteQueryParams(offset = 0) {
 
   const pairs = [
     ['f-hood', 'hood'], ['f-zone', 'zone'], ['f-umin', 'minUnits'], ['f-umax', 'maxUnits'],
-    ['f-pmin', 'minPrice'], ['f-pmax', 'maxPrice'], ['mf-i', 'minIRR'], ['mf-s', 'minSpread'], ['mf-c', 'minCapoc'],
+    ['f-pmin', 'minPrice'], ['f-pmax', 'maxPrice'], ['f-cmin', 'minCost'], ['f-cmax', 'maxCost'],
+    ['mf-i', 'minIRR'], ['mf-s', 'minSpread'], ['mf-c', 'minCapoc'],
   ];
   pairs.forEach(([id, key]) => { const val = g(id)?.value; if (val) qs.set(key, val); });
   const minProfit = Number(g('mf-p')?.value || 0);
@@ -814,9 +895,11 @@ async function loadMoreSites() {
   }
 }
 function applyFilters() {
+  const search = canonicalAddress(g('f-q')?.value || '');
   const hood = g('f-hood')?.value||'', zone = g('f-zone')?.value||'';
   const umin = +g('f-umin')?.value||0, umax = +g('f-umax')?.value||Infinity;
   const pmin = +g('f-pmin')?.value||0, pmax = +g('f-pmax')?.value||Infinity;
+  const cmin = +g('f-cmin')?.value||0, cmax = +g('f-cmax')?.value||Infinity;
   const mfp = (+g('mf-p')?.value||0)*1000, mfi = +g('mf-i')?.value||0;
   const mfs = +g('mf-s')?.value||0, mfc = +g('mf-c')?.value||0;
   const srt = g('srt')?.value||'profit';
@@ -835,7 +918,9 @@ function applyFilters() {
   if (g('f-nh')?.checked) types.push('New House');
 
   filtered = allSites.filter(s => {
-    const valuation = valuationForSite(s, costModelForSite(s));
+    const costs = costModelForSite(s);
+    const valuation = valuationForSite(s, costs);
+    if (search && !siteSearchText(s).includes(search)) return false;
     const listingMatch = (ffs && isForSaleSite(s)) || (frti && s.rti) || (fcomp && isOffMarketSite(s));
     if (!listingMatch) return false;
     const devKey = developmentStatusKey(s);
@@ -849,6 +934,7 @@ function applyFilters() {
     if (s.units < umin || s.units > umax) return false;
     const ask = siteAskPrice(s);
     if (isForSaleSite(s) && ask && (ask < pmin || ask > pmax)) return false;
+    if ((costs.totalCost || 0) < cmin || (costs.totalCost || 0) > cmax) return false;
     if (mfp && (valuation.netProfit||0) < mfp) return false;
     if (mfi && (valuation.leveragedIRR||0) < mfi) return false;
     if (mfs && ((valuation.devSpreadPct||0)*100) < mfs) return false;
@@ -867,12 +953,18 @@ function applyFilters() {
   });
 
   const hcpsf = currentHardCostOverride();
+  const rateOverride = currentInterestRateOverride();
   const plan = currentConstructionPlan();
-  const planText = plan.key === 'auto' ? '' : ' - ' + plan.label;
+  const activeAssumptions = [];
+  if (plan.key !== 'auto') activeAssumptions.push(plan.label);
+  if (hcpsf) activeAssumptions.push('$' + hcpsf.toLocaleString() + '/SF hard cost');
+  if (rateOverride) activeAssumptions.push(rateOverride + '% interest');
   const settingsText = metricsCustomized() ? ' - custom assumptions' : '';
   updateHardCostOverrideUI();
   const totalText = sitePageTotal && sitePageTotal > allSites.length ? ' shown of ' + sitePageTotal.toLocaleString() + ' matches' : '';
-  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + totalText + (hcpsf ? ' - re-underwritten at $' + hcpsf.toLocaleString() + '/SF hard cost' : (planText || ' - pre-underwritten') + settingsText);
+  const searchText = search ? ' for "' + (g('f-q')?.value || '').trim() + '"' : '';
+  const modeText = activeAssumptions.length ? ' - re-underwritten: ' + activeAssumptions.join(', ') : ' - pre-underwritten' + settingsText;
+  g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + searchText + totalText + modeText;
   renderCards();
 }
 
@@ -892,19 +984,34 @@ async function applyHardCostOverride() {
     input.focus();
     return;
   }
-  await loadSites();
+  refreshUnderwritingViews();
+}
+
+function applyInterestOverride() {
+  const input = g('mf-rate');
+  const val = Number(input?.value || 0);
+  if (val && (val < 0.1 || val > 20)) {
+    alert('Enter an interest rate between 0.1% and 20%.');
+    input.focus();
+    return;
+  }
+  refreshUnderwritingViews();
 }
 
 async function clearHardCostOverride() {
   const input = g('mf-hc');
   if (input) input.value = '';
-  await loadSites();
+  refreshUnderwritingViews();
 }
 
 function updateHardCostOverrideUI() {
   const hcpsf = currentHardCostOverride();
   const box = g('hc-box');
   if (box) box.classList.toggle('active', !!hcpsf);
+  const rateInput = g('mf-rate');
+  if (rateInput && !rateInput.value) rateInput.placeholder = String(baseUserMetrics().interestRatePct || DEFAULT_USER_METRICS.interestRatePct);
+  const rateBox = g('rate-box');
+  if (rateBox) rateBox.classList.toggle('active', !!currentInterestRateOverride());
   const planBox = g('plan-box');
   if (planBox) planBox.classList.toggle('active', currentConstructionPlan().key !== 'auto');
 }
@@ -937,9 +1044,11 @@ function renderCards() {
     const priceMain = isForSaleSite(s) ? fmtM(ask) : 'Not for sale';
     const priceSub = offMarket ? 'imputed land ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
     const watched = isWatched(s.id);
+    const displayAddr = siteDisplayAddress(s);
+    const addrNote = siteAddressNote(s);
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
       <div class="ch">
-        <div><div class="ca">${s.addr}</div><div class="cm">${s.hood} &middot; ${s.zone} &middot; ${(s.lot||0).toLocaleString()} SF &middot; ${s.units} units</div></div>
+        <div><div class="ca">${escapeText(displayAddr)}</div><div class="cm">${addrNote ? escapeText(addrNote) + ' &middot; ' : ''}${s.hood} &middot; ${s.zone} &middot; ${(s.lot||0).toLocaleString()} SF &middot; ${s.units} units</div></div>
         <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div><button class="watchbtn ${watched?'on':''}" onclick="toggleWatch(${s.id}, event)">${watched?'Saved':'Save'}</button></div>
       </div>
       <div class="bdgs">
@@ -972,13 +1081,15 @@ function renderMapView() {
     const costs = costModelForSite(s);
     const valuation = valuationForSite(s, costs);
     const color = markerColorForSite(s, valuation);
-    const label = `${s.addr} - ${fmtM(valuation.netProfit)}`.replace(/"/g, '');
+    const displayAddr = siteDisplayAddress(s);
+    const addrNote = siteAddressNote(s);
+    const label = `${displayAddr} - ${fmtM(valuation.netProfit)}`.replace(/"/g, '');
     const price = isForSaleSite(s) ? fmtM(siteAskPrice(s)) : 'Not for sale';
     const profitColor = (valuation.netProfit || 0) >= 0 ? '#1d9e75' : '#e24b4a';
     return `<button class="pin" data-label="${xmlEscape(label)}" onclick="openDetail(${s.id})" style="left:${pt.x}%;top:${pt.y}%;background:${color}">
       <span class="pintip">
-        <b>${xmlEscape(s.addr)}</b>
-        <em>${xmlEscape(developmentStatusLabel(s))} · ${s.units || 0} units · ${xmlEscape(s.hood || '')}</em>
+        <b>${xmlEscape(displayAddr)}</b>
+        <em>${addrNote ? xmlEscape(addrNote) + ' · ' : ''}${xmlEscape(developmentStatusLabel(s))} · ${s.units || 0} units · ${xmlEscape(s.hood || '')}</em>
         <span><small>Price</small><strong>${price}</strong></span>
         <span><small>Net profit</small><strong style="color:${profitColor}">${fmtM(valuation.netProfit)}</strong></span>
         <span><small>Cap on cost</small><strong>${valuation.capOnCost || 0}%</strong></span>
@@ -993,7 +1104,7 @@ function renderMapView() {
   }).join('') : '';
   const topDeals = visibleSites.map(row => row.s).slice(0, 6).map(s => {
     const valuation = valuationForSite(s, costModelForSite(s));
-    return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${s.addr}</b><span>${s.hood} - ${fmtM(valuation.netProfit)} - ${valuation.capOnCost||0}% cap on cost</span></div>`;
+    return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${escapeText(siteDisplayAddress(s))}</b><span>${s.hood} - ${fmtM(valuation.netProfit)} - ${valuation.capOnCost||0}% cap on cost</span></div>`;
   }).join('');
   el.innerHTML = `<div class="mapview">
     <div class="mapstage">
@@ -1029,7 +1140,7 @@ function openDetail(id) {
   openId = id;
   const s = allSites.find(x => x.id===id);
   if (!s) return;
-  g('d-title').textContent = s.addr;
+  g('d-title').textContent = siteDisplayAddress(s);
   g('detail').classList.add('open');
   renderDetail(s);
   renderCards();
@@ -1129,17 +1240,18 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
   const storedHard = Math.round(s.hardCosts || 0);
   const storedHardPsf = totalSF ? Math.round(storedHard / totalSF) : 0;
   const modeledHardPsf = totalSF ? Math.round(modeledHard / totalSF) : 0;
-  const shouldRecast = override || plan.key !== 'auto' || metricsCustomized() || !storedHard || storedHardPsf > modeledHardPsf * 1.2;
+  const shouldRecastCosts = override || plan.key !== 'auto' || savedMetricsCustomized() || !storedHard || storedHardPsf > modeledHardPsf * 1.2;
+  const shouldRecastCarry = shouldRecastCosts || !!currentInterestRateOverride();
 
-  const hardCosts = shouldRecast ? modeledHard : storedHard;
+  const hardCosts = shouldRecastCosts ? modeledHard : storedHard;
   const softPct = Math.max(0, (metrics.baseSoftCostPct / 100) + ((plan.softPct ?? 0.18) - 0.18));
-  const softCosts = shouldRecast ? Math.round(hardCosts * softPct) : Math.round(s.softCosts ?? Math.max(0, ((s.totalCost || 0) - land) * 0.24));
+  const softCosts = shouldRecastCosts ? Math.round(hardCosts * softPct) : Math.round(s.softCosts ?? Math.max(0, ((s.totalCost || 0) - land) * 0.24));
   const preCarry = land + hardCosts + softCosts;
   const carryYears = (plan.months || 18) / 12;
   const ltc = metrics.loanToCostPct / 100;
   const interestRate = metrics.interestRatePct / 100;
-  const carryCost = shouldRecast ? Math.round(preCarry * ltc * interestRate * carryYears) : Math.round(s.carryCost ?? preCarry * ltc * interestRate * carryYears);
-  const totalCost = shouldRecast ? preCarry + carryCost : Math.round(s.totalCost || preCarry + carryCost);
+  const carryCost = shouldRecastCarry ? Math.round(preCarry * ltc * interestRate * carryYears) : Math.round(s.carryCost ?? preCarry * ltc * interestRate * carryYears);
+  const totalCost = shouldRecastCarry ? preCarry + carryCost : Math.round(s.totalCost || preCarry + carryCost);
 
   return {
     land,
@@ -2335,6 +2447,7 @@ function pencilCheckRows(s, m) {
 async function exportExcel(id) {
   const s = allSites.find(x => x.id === id);
   if (!s) return;
+  const displayAddr = siteDisplayAddress(s);
 
   const compQuery = compQueryForSite(s, 12);
   const [submarket, comps, rentComps] = await Promise.all([
@@ -2371,11 +2484,11 @@ async function exportExcel(id) {
   const totalPerUnit = costs.totalPerUnit;
 
   const summaryRows = [
-    xlsTitleRow('ParceLLA Comprehensive Underwriting', s.addr),
+    xlsTitleRow('ParceLLA Comprehensive Underwriting', siteDisplayAddress(s)),
     xlsRow(['Generated', today]),
     xlsRow(['']),
     xlsSectionRow('Property Summary'),
-    xlsRow(['Address', s.addr]),
+    xlsRow(['Address', siteDisplayAddress(s)]),
     xlsRow(['Neighborhood', s.hood]),
     xlsRow(['Zoning', s.zone]),
     xlsRow(['Project Type', s.type]),
@@ -2492,12 +2605,14 @@ async function exportExcel(id) {
     '</Workbook>';
 
   const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
-  downloadTextFile('ParceLLA_' + safeFileName(s.addr) + '_' + stamp + '_Underwriting.xls', workbook);
+  downloadTextFile('ParceLLA_' + safeFileName(displayAddr) + '_' + stamp + '_Underwriting.xls', workbook);
 }
 async function exportPDF(id) {
   if (!id) return;
   const s = allSites.find(x => x.id === id);
   if (!s) return;
+  const displayAddr = siteDisplayAddress(s);
+  const addrNote = siteAddressNote(s);
 
   const win = window.open('', '_blank');
   const costs = costModelForSite(s);
@@ -2551,7 +2666,7 @@ async function exportPDF(id) {
   win.document.write(`<!DOCTYPE html>
 <html>
 <head>
-  <title>ParceLLA Appraisal Report — ${s.addr}</title>
+  <title>ParceLLA Appraisal Report — ${displayAddr}</title>
   <style>
     @page { margin: 0.75in; size: letter; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2604,7 +2719,8 @@ async function exportPDF(id) {
 <div class="cover">
   <div class="logo">PARCEL<span>LA</span></div>
   <div style="font-size:10px;color:#c49a3c;letter-spacing:2px;margin:8px 0">DEVELOPMENT APPRAISAL REPORT</div>
-  <h1>${s.addr}</h1>
+  <h1>${displayAddr}</h1>
+  ${addrNote ? `<div class="sub">${escapeText(addrNote)}</div>` : ''}
   <div class="sub">${s.hood || ''}, Los Angeles, CA &nbsp;|&nbsp; ${s.zone || ''} Zoning &nbsp;|&nbsp; ${s.units}-Unit ${s.type || 'Multifamily'}</div>
   <div class="sub">${developmentStatusLabel(s)} &nbsp;|&nbsp; ${isOffMarketSite(s) ? 'Off-Market / Not For Sale' : 'Active Listing — For Sale'}</div>
   <div class="date">Report Date: ${today} &nbsp;|&nbsp; Prepared by ParceLLA Analytics Engine</div>
@@ -2637,7 +2753,7 @@ async function exportPDF(id) {
 </div>
 
 <div class="note">
-  <strong>Investment Summary:</strong> This analysis presents a ${s.units}-unit ${s.type || 'multifamily'} development opportunity located at ${s.addr} in ${s.hood || 'Los Angeles'}, CA. 
+  <strong>Investment Summary:</strong> This analysis presents a ${s.units}-unit ${s.type || 'multifamily'} development opportunity located at ${displayAddr} in ${s.hood || 'Los Angeles'}, CA.
   The subject property is zoned ${s.zone || 'R3'} with a ${(s.lot||5000).toLocaleString()} SF lot. 
   ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'submitted' ? 'The project has been submitted to the city and is awaiting plan check or approval.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
   Based on RSMeans 2024 construction cost data and CoStar Q3 2024 market cap rates, the projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF), 
@@ -2667,7 +2783,7 @@ async function exportPDF(id) {
   <div>
     <h3>Site Characteristics</h3>
     <table>
-      <tr><td>Street Address</td><td>${s.addr}</td></tr>
+      <tr><td>Street Address</td><td>${displayAddr}</td></tr>
       <tr><td>Neighborhood</td><td>${s.hood || 'Los Angeles'}</td></tr>
       <tr><td>City / County</td><td>Los Angeles, CA / LA County</td></tr>
       <tr><td>Zoning Classification</td><td>${s.zone || 'R3'}</td></tr>
@@ -3001,7 +3117,7 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
 <!-- CONCLUSION -->
 <h2>IX. Conclusion & Recommendation</h2>
 <div class="note">
-  <strong>Analyst Conclusion:</strong> Based on our underwriting analysis, the subject property at ${s.addr} represents 
+  <strong>Analyst Conclusion:</strong> Based on our underwriting analysis, the subject property at ${displayAddr} represents
   a ${irr >= 15 ? 'compelling' : irr >= 10 ? 'moderate' : 'marginal'} development opportunity in the ${s.hood || 'Los Angeles'} submarket.
   
   The project is projected to generate a ${Math.round(irr*10)/10}% levered IRR on a 5-year hold basis, 
@@ -3040,7 +3156,7 @@ function resetFilters() {
   ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-nh','f-d-submitted','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
   const watch=g('f-watch'); if(watch)watch.checked=false;
   ['f-hood','f-zone'].forEach(id=>{const el=g(id);if(el)el.value='';});
-  ['f-umin','f-umax','f-pmin','f-pmax','mf-p','mf-i','mf-s','mf-c','mf-hc'].forEach(id=>{const el=g(id);if(el)el.value='';});
+  ['f-q','f-umin','f-umax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c','mf-hc','mf-rate'].forEach(id=>{const el=g(id);if(el)el.value='';});
   const plan=g('mf-plan'); if(plan)plan.value='auto';
   loadSites();
 }

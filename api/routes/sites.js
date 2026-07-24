@@ -78,6 +78,7 @@ function buildOverrides(query) {
   const ov = {};
   if (query.exitCap)  ov.exitCap  = +query.exitCap;
   if (query.hcpsf) { ov.hcpsf = +query.hcpsf; ov.hardCostPerSF = +query.hcpsf; }
+  if (query.rate) { const rate = +query.rate; ov.rate = rate > 1 ? rate / 100 : rate; ov.interestRate = ov.rate; }
   if (query.sc)       ov.sc       = +query.sc;
   if (query.ppu)      ov.ppu      = +query.ppu;
   if (query.psf)      ov.psf      = +query.psf;
@@ -129,6 +130,7 @@ function modelFromSupabaseSite(s) {
 
 function mapSupabaseSite(s, i = 0) {
   const rawPermit = s.raw_permit_data || {};
+  const addressAliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
   const status = s.status || 'active';
   const offMarket = /off|not for sale/i.test(status);
   return {
@@ -150,8 +152,11 @@ function mapSupabaseSite(s, i = 0) {
     lat:          s.lat,
     lng:          s.lng,
     permitSourceId: s.permit_source_id,
+    permitNumber: rawPermit.permit_number || null,
     permitStatus: rawPermit.permit_status || rawPermit.status || null,
     developmentStatus: rawPermit.development_status || null,
+    workDescription: rawPermit.work_description || rawPermit.project_description || null,
+    addressAliases,
     underwrittenAt: s.underwritten_at,
     _precomputed: true,
     _m: modelFromSupabaseSite(s),
@@ -216,7 +221,57 @@ function listParam(value) {
 }
 
 function hasModelOverrideParams(query) {
-  return ['exitCap', 'hcpsf', 'sc', 'ppu', 'psf', 'method'].some(key => query[key] !== undefined);
+  return ['exitCap', 'hcpsf', 'rate', 'sc', 'ppu', 'psf', 'method'].some(key => query[key] !== undefined);
+}
+
+const PICO_6075_6099_ALIASES = [
+  '6075 W PICO BLVD', '6077 W PICO BLVD', '6079 W PICO BLVD', '6081 W PICO BLVD',
+  '6083 W PICO BLVD', '6085 W PICO BLVD', '6087 W PICO BLVD', '6089 W PICO BLVD',
+  '6091 W PICO BLVD', '6093 W PICO BLVD', '6095 W PICO BLVD', '6097 W PICO BLVD',
+  '6099 W PICO BLVD',
+];
+
+function cleanSearchTerm(value) {
+  return String(value || '').replace(/[,%()'"]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+}
+
+function searchVariants(value) {
+  const term = cleanSearchTerm(value);
+  if (!term) return [];
+  const variants = [term];
+  const upper = term.toUpperCase();
+  const looksLikePicoAlias = PICO_6075_6099_ALIASES.some(addr => {
+    const number = addr.split(' ')[0];
+    return upper.includes(addr) || upper === number || (upper.includes(number) && upper.includes('PICO'));
+  });
+  if (looksLikePicoAlias) variants.push('6091 W PICO');
+  return [...new Set(variants)];
+}
+
+function siteSearchHaystack(s) {
+  const aliases = Array.isArray(s.addressAliases) ? s.addressAliases : [];
+  const knownAliases = String(s.addr || '').toUpperCase() === '6091 W PICO BLVD' && Number(s.units || 0) === 138
+    ? PICO_6075_6099_ALIASES
+    : [];
+  return [
+    s.addr,
+    s.hood,
+    s.type,
+    s.zone,
+    s.permitNumber,
+    s.permitStatus,
+    s.developmentStatus,
+    s.workDescription,
+    ...aliases,
+    ...knownAliases,
+  ].map(v => String(v || '').toUpperCase()).join(' ');
+}
+
+function siteMatchesSearch(s, value) {
+  const term = cleanSearchTerm(value).toUpperCase();
+  if (!term) return true;
+  const haystack = siteSearchHaystack(s);
+  return haystack.includes(term) || searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
 }
 
 async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset) {
@@ -236,10 +291,22 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   if (queryParams.maxUnits) query = query.lte('units', Number(queryParams.maxUnits));
   if (queryParams.minPrice) query = query.gte('price', Number(queryParams.minPrice));
   if (queryParams.maxPrice) query = query.lte('price', Number(queryParams.maxPrice));
+  if (queryParams.minCost) query = query.gte('total_cost', Number(queryParams.minCost));
+  if (queryParams.maxCost) query = query.lte('total_cost', Number(queryParams.maxCost));
   if (queryParams.minProfit) query = query.gte('net_profit', Number(queryParams.minProfit));
   if (queryParams.minIRR) query = query.gte('irr_v', Number(queryParams.minIRR));
   if (queryParams.minSpread) query = query.gte('dev_spread_pct', Number(queryParams.minSpread));
   if (queryParams.minCapoc) query = query.gte('cap_on_cost', Number(queryParams.minCapoc));
+
+  const search = cleanSearchTerm(queryParams.q || queryParams.search);
+  if (search) {
+    const clauses = [];
+    for (const variant of searchVariants(search)) {
+      clauses.push(`address.ilike.%${variant}%`);
+      clauses.push(`permit_source_id.ilike.%${variant}%`);
+    }
+    if (clauses.length) query = query.or(clauses.join(','));
+  }
 
   const listings = listParam(queryParams.listing);
   if (listings.length) {
@@ -274,6 +341,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       type, hood, zone, rti, isComp,
       minUnits, maxUnits, minLot, maxLot,
       minPrice, maxPrice,
+      minCost, maxCost,
       minIRR, minProfit, minSpread, minCapoc,
       sort = 'profit',
       limit = 50, offset = 0,
@@ -329,6 +397,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     // Filter
     let filtered = usedFastPage ? modelled : modelled.filter(s => {
       const m = s._m;
+      if (!siteMatchesSearch(s, req.query.q || req.query.search)) return false;
       if (type    && s.type  !== type)               return false;
       if (hood    && s.hood  !== hood)               return false;
       if (zone    && s.zone  !== zone)               return false;
@@ -340,6 +409,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       if (maxLot  && s.lot   > +maxLot)              return false;
       if (minPrice && !s.isComp && (s.price ?? 0) < +minPrice) return false;
       if (maxPrice && !s.isComp && (s.price ?? Infinity) > +maxPrice) return false;
+      if (minCost && (m.totalCost ?? 0) < +minCost) return false;
+      if (maxCost && (m.totalCost ?? Infinity) > +maxCost) return false;
       if (minIRR   && m.leveragedIRR    < +minIRR)           return false;
       if (minProfit && m.netProfit < +minProfit)         return false;
       if (minSpread && m.devSpreadPct < +minSpread)   return false;
@@ -380,6 +451,9 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         rti:          s.rti,
         permitStatus: s.permitStatus,
         developmentStatus: s.developmentStatus,
+        permitNumber:  s.permitNumber,
+        workDescription: s.workDescription,
+        addressAliases: s.addressAliases || [],
         status:       s.status,
         listingStatus: s.listingStatus,
         isComp:       s.isComp ?? s.is_comp ?? false,

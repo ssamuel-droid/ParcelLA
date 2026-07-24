@@ -167,6 +167,29 @@ function residentialProject(units, ...values) {
   return Number(units || 0) > 0 || values.some(value => RESIDENTIAL_PROJECT_TEXT.test(String(value || '')));
 }
 
+function addressAliasesForPermit(p) {
+  const addr = String(p.address || '').toUpperCase();
+  const desc = String(p.work_description || '').toUpperCase();
+  if (addr === '6091 W PICO BLVD' && desc.includes('138 UNITS') && desc.includes('110,620')) {
+    return [
+      '6075 W PICO BLVD',
+      '6077 W PICO BLVD',
+      '6079 W PICO BLVD',
+      '6081 W PICO BLVD',
+      '6083 W PICO BLVD',
+      '6085 W PICO BLVD',
+      '6087 W PICO BLVD',
+      '6089 W PICO BLVD',
+      '6091 W PICO BLVD',
+      '6093 W PICO BLVD',
+      '6095 W PICO BLVD',
+      '6097 W PICO BLVD',
+      '6099 W PICO BLVD',
+    ];
+  }
+  return [];
+}
+
 function ptype(pt, st, u, desc = '') {
   const s = [st, desc].filter(Boolean).join(' ').toLowerCase();
   if (s.includes('adu')||s.includes('accessory')||/\baddition\b/.test(s)) return null;
@@ -244,7 +267,13 @@ function uw(p) {
     neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:800, lot_sf:5000,
     status:'off-market', data_source:'ladbs_permit', rti:p.is_rti||false,
     lat:p.lat, lng:p.lng,
-    raw_permit_data:{permit_status:p.status||null, development_status:devStatus},
+    raw_permit_data:{
+      permit_status:p.status||null,
+      development_status:devStatus,
+      permit_number:p.permit_number||null,
+      work_description:p.work_description||null,
+      address_aliases:addressAliasesForPermit(p),
+    },
     noi:Math.round(noi), total_cost:Math.round(total), exit_value:Math.round(exit),
     net_profit:Math.round(profit), irr_v:irrV,
     cap_on_cost:Math.round(noi/total*10000)/100,
@@ -259,7 +288,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;
