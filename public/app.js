@@ -1274,8 +1274,8 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
     months: plan.months || 18,
     rentPremium: plan.rentPremium || 0,
     storedHardPsf,
-    recast: !!shouldRecast,
-    source: override ? 'custom input' : plan.key !== 'auto' ? plan.label : metricsCustomized() ? 'user settings' : shouldRecast ? 'current base assumption' : 'stored model',
+    recast: !!shouldRecastCarry,
+    source: override ? 'custom hard cost' : plan.key !== 'auto' ? plan.label : savedMetricsCustomized() ? 'user settings' : currentInterestRateOverride() ? 'interest override' : shouldRecastCosts ? 'current base assumption' : 'stored model',
   };
 }
 
