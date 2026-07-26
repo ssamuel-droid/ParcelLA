@@ -260,6 +260,32 @@ const FRONTEND_CAP_RATES = {
   'West Adams':0.0525,'Boyle Heights':0.0575,'Hollywood':0.0500,'North Hollywood':0.0525,
   'Northridge':0.0550,'Van Nuys':0.0550,'Reseda':0.0575,'Panorama City':0.0600
 };
+const FRONTEND_RENTS = {
+  'Silver Lake':{studio:2600,one:3400,two:4400,three:5800},'Echo Park':{studio:2400,one:3100,two:4000,three:5300},
+  'Highland Park':{studio:2200,one:2850,two:3700,three:4900},'Los Feliz':{studio:2800,one:3600,two:4700,three:6200},
+  'Koreatown':{studio:2100,one:2700,two:3500,three:4600},'Mid-Wilshire':{studio:2500,one:3200,two:4100,three:5400},
+  'Culver City':{studio:2900,one:3700,two:4800,three:6300},'Mar Vista':{studio:2700,one:3500,two:4500,three:5900},
+  'West Adams':{studio:2300,one:2950,two:3800,three:5000},'Boyle Heights':{studio:1900,one:2450,two:3200,three:4200},
+  'Hollywood':{studio:2300,one:2950,two:3800,three:5000},'East Hollywood':{studio:2200,one:2800,two:3600,three:4800},
+  'Hollywood Hills':{studio:2800,one:3600,two:4700,three:6200},'North Hollywood':{studio:1900,one:2400,two:3100,three:4100},
+  'Van Nuys':{studio:1700,one:2150,two:2800,three:3700},'Northridge':{studio:1750,one:2200,two:2850,three:3750},
+  'Reseda':{studio:1650,one:2100,two:2700,three:3550},'Panorama City':{studio:1600,one:2050,two:2650,three:3500},
+  'Pacific Palisades':{studio:3200,one:4100,two:5300,three:7000},'Brentwood':{studio:2900,one:3800,two:4900,three:6400},
+  'Venice':{studio:2900,one:3700,two:4800,three:6300},'West LA':{studio:2600,one:3300,two:4300,three:5600},
+  'Playa Vista':{studio:3000,one:3900,two:5000,three:6500},'Westchester':{studio:2400,one:3100,two:4000,three:5300},
+  'Palms':{studio:2400,one:3100,two:4000,three:5200},'Sawtelle':{studio:2500,one:3200,two:4100,three:5400},
+  'Eagle Rock':{studio:2200,one:2800,two:3650,three:4800},'Atwater Village':{studio:2400,one:3100,two:4000,three:5300},
+  'Glassell Park':{studio:2100,one:2700,two:3500,three:4600},'Mount Washington':{studio:2100,one:2700,two:3500,three:4600},
+  'Lincoln Heights':{studio:1900,one:2400,two:3100,three:4100},'El Sereno':{studio:1850,one:2350,two:3000,three:3950},
+  'Hancock Park':{studio:2600,one:3300,two:4300,three:5700},'Larchmont':{studio:2500,one:3200,two:4100,three:5400},
+  'Studio City':{studio:2400,one:3100,two:4000,three:5300},'Sherman Oaks':{studio:2200,one:2800,two:3650,three:4800},
+  'Encino':{studio:2200,one:2800,two:3650,three:4800},'Tarzana':{studio:2000,one:2550,two:3300,three:4350},
+  'Woodland Hills':{studio:2000,one:2550,two:3300,three:4350},'Canoga Park':{studio:1700,one:2150,two:2800,three:3700},
+  'Granada Hills':{studio:1800,one:2300,two:2950,three:3900},'Pacoima':{studio:1550,one:1950,two:2550,three:3350},
+  'West Adams (Jefferson Park)':{studio:2100,one:2700,two:3500,three:4600},'Leimert Park':{studio:2000,one:2550,two:3300,three:4350},
+  'Hyde Park':{studio:1900,one:2400,two:3100,three:4100},
+};
+const DEFAULT_UNIT_MIX = { studio:0.25, one:0.50, two:0.20, three:0.05 };
 const DEFAULT_USER_METRICS = {
   hardCostMultifamily:285,
   hardCostMixedUse:320,
@@ -1201,7 +1227,8 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
   const storedNoi = Math.round(s.noi || 0);
   const opexRatio = metricRate('expenseRatioPct') || 0.35;
   const vacancyRate = metricRate('vacancyPct') || 0.05;
-  const baseGrossPotentialRent = Math.round(s.grossPotentialRent || (storedNoi ? storedNoi / Math.max(0.01, (1 - opexRatio) * (1 - vacancyRate)) : 0));
+  const unitMixGrossRent = grossPotentialRentFromUnitMix(s);
+  const baseGrossPotentialRent = Math.round(unitMixGrossRent || s.grossPotentialRent || (storedNoi ? storedNoi / Math.max(0.01, (1 - opexRatio) * (1 - vacancyRate)) : 0));
   const grossPotentialRent = Math.round(baseGrossPotentialRent * (1 + (plan.rentPremium || 0)));
   const vacancyLoss = Math.round(recastIncome ? grossPotentialRent * vacancyRate : (s.vacancyLoss ?? grossPotentialRent * vacancyRate));
   const otherIncome = Math.round(s.otherIncome ?? (s.units || 0) * 600);
@@ -1235,6 +1262,126 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
     debtService,
     cfbt: Math.round((planScenario || costs) ? noi - debtService : (s.cfbt ?? (noi - debtService))),
   };
+}
+
+function rentsForSite(s = {}, submarket = null) {
+  const apiRents = submarket?.rents || {};
+  const localRents = FRONTEND_RENTS[s.hood] || FRONTEND_RENTS.Koreatown || {};
+  return {
+    studio: Number(apiRents.studio ?? localRents.studio ?? 0),
+    one: Number(apiRents.one ?? localRents.one ?? 0),
+    two: Number(apiRents.two ?? localRents.two ?? 0),
+    three: Number(apiRents.three ?? localRents.three ?? 0),
+  };
+}
+
+function normalizedUnitMixForSite(s = {}) {
+  const raw = {
+    studio: Number(s.ms ?? s.unitMix?.studio ?? 0),
+    one: Number(s.mo ?? s.unitMix?.one ?? 0),
+    two: Number(s.mt ?? s.unitMix?.two ?? 0),
+    three: Number(s.mth ?? s.unitMix?.three ?? 0),
+  };
+  const sum = raw.studio + raw.one + raw.two + raw.three;
+  const fallback = s.type === 'New House'
+    ? { studio: 0, one: 0, two: 0, three: 1 }
+    : { ...DEFAULT_UNIT_MIX };
+  const mix = sum > 0
+    ? {
+        studio: raw.studio / sum,
+        one: raw.one / sum,
+        two: raw.two / sum,
+        three: raw.three / sum,
+      }
+    : fallback;
+  return {
+    mix,
+    source: s.unitMixSource || (sum > 0 ? 'Saved unit mix' : (s.type === 'New House' ? 'New house assumption' : 'Default market mix')),
+    counts: s.unitMixCounts || null,
+    parsedTotal: Number(s.unitMixParsedTotal || 0),
+  };
+}
+
+function unitMixCountsForSite(s = {}) {
+  const units = Math.max(0, Math.round(Number(s.units || 0)));
+  const { mix } = normalizedUnitMixForSite(s);
+  const keys = ['studio', 'one', 'two', 'three'];
+  const rows = keys.map(key => {
+    const exact = (Number(mix[key]) || 0) * units;
+    return { key, count: Math.floor(exact), remainder: exact - Math.floor(exact) };
+  });
+  let remaining = units - rows.reduce((sum, row) => sum + row.count, 0);
+  rows.slice().sort((a, b) => b.remainder - a.remainder).forEach(row => {
+    if (remaining > 0) {
+      row.count += 1;
+      remaining -= 1;
+    }
+  });
+  return Object.fromEntries(rows.map(row => [row.key, row.count]));
+}
+
+function grossPotentialRentFromUnitMix(s = {}, submarket = null) {
+  const units = Number(s.units || 0);
+  if (!units) return 0;
+  const rents = rentsForSite(s, submarket);
+  const { mix } = normalizedUnitMixForSite(s);
+  const blended = (
+    (Number(mix.studio) || 0) * rents.studio +
+    (Number(mix.one) || 0) * rents.one +
+    (Number(mix.two) || 0) * rents.two +
+    (Number(mix.three) || 0) * rents.three
+  );
+  return Math.round(blended * units * 12);
+}
+
+function unitMixDisplayRows(s = {}, submarket = null) {
+  const info = normalizedUnitMixForSite(s);
+  const counts = unitMixCountsForSite(s);
+  const rents = rentsForSite(s, submarket);
+  return [
+    ['studio', 'Studio'],
+    ['one', '1 Bedroom'],
+    ['two', '2 Bedroom'],
+    ['three', '3 Bedroom'],
+  ].map(([key, label]) => {
+    const unitCount = counts[key] || 0;
+    const rent = rents[key] || 0;
+    return {
+      key,
+      label,
+      mix: Number(info.mix[key]) || 0,
+      units: unitCount,
+      rent,
+      monthly: Math.round(unitCount * rent),
+      annual: Math.round(unitCount * rent * 12),
+    };
+  });
+}
+
+function unitMixSourceText(s = {}) {
+  const info = normalizedUnitMixForSite(s);
+  const parsed = info.parsedTotal ? `; parsed ${info.parsedTotal} referenced units` : '';
+  return `${info.source}${parsed}`;
+}
+
+function unitMixRowsHTML(s = {}) {
+  const rows = unitMixDisplayRows(s);
+  return `
+    <table class="ct">
+      <tr><td>Source</td><td>${escapeText(unitMixSourceText(s))}</td></tr>
+      ${rows.map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}% | ${row.units} units | ${fmtD(row.rent)}/mo | ${fmtD(row.annual)}/yr</td></tr>`).join('')}
+      <tr class="tot"><td>Gross potential rent</td><td>${fmtD(grossPotentialRentFromUnitMix(s))}</td></tr>
+    </table>`;
+}
+
+function unitMixPDFRows(s = {}) {
+  return `
+      <tr><td>Source</td><td colspan="3" style="text-align:left;font-weight:400;color:#666">${escapeText(unitMixSourceText(s))}</td></tr>
+      ${unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}%</td><td>${row.units}</td><td>${fmtD(row.rent)}/mo</td></tr>`).join('')}`;
+}
+
+function unitMixRentRollPDFRows(s = {}) {
+  return unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${row.units}</td><td>${fmtD(row.rent)}</td><td>${fmtD(row.annual)}</td></tr>`).join('');
 }
 
 function expenseRowsHTML(expenseDetail = {}) {
@@ -1457,6 +1604,8 @@ function renderDetail(s) {
     <div id="valuation-${s.id}">${valuationTableHTML(valuation, costs, 'Loading comp cap evidence...')}</div>
     <div class="sh">Comp-driven appraisal</div>
     <div id="appraisal-${s.id}" style="font-size:10px;color:#aaa">Loading appraisal comps...</div>
+    <div class="sh">Unit mix / rent roll</div>
+    ${unitMixRowsHTML(s)}
     <div class="sh">Income statement</div>
     <table class="ct">
       <tr><td>Gross potential rent</td><td>${fmtD(income.grossPotentialRent)}</td></tr>
@@ -2155,25 +2304,26 @@ function fmtCompDate(value) {
 }
 
 function rentRowsFromSubmarket(s, submarket) {
-  const rents = submarket?.rents || {};
-  const unitMix = [
-    ['Studio', s.ms ?? 0.25, rents.studio],
-    ['1 BR', s.mo ?? 0.50, rents.one],
-    ['2 BR', s.mt ?? 0.20, rents.two],
-    ['3 BR', s.mth ?? 0.05, rents.three],
-  ];
-  const units = s.units || 0;
+  const unitMix = unitMixDisplayRows(s, submarket);
   const rows = [
+    xlsRow(['Unit Mix Source', unitMixSourceText(s)]),
     xlsHeaderRow(['Unit Type', 'Mix %', 'Units', 'Rent / Month', 'Monthly Rent', 'Annual Rent']),
   ];
-  unitMix.forEach(([label, mix, rent]) => {
-    const unitCount = Math.round(units * mix * 10) / 10;
-    const monthly = Math.round(unitCount * (rent || 0));
-    rows.push(xlsRow([label, cellPct(Math.round(mix * 1000) / 10), cellNumber(unitCount), cellMoney(rent || 0), cellMoney(monthly), cellMoney(monthly * 12)]));
+  unitMix.forEach(row => {
+    rows.push(xlsRow([
+      row.label,
+      cellPct(Math.round(row.mix * 1000) / 10),
+      cellNumber(row.units),
+      cellMoney(row.rent),
+      cellMoney(row.monthly),
+      cellMoney(row.annual),
+    ]));
   });
-  const blended = unitMix.reduce((sum, [, mix, rent]) => sum + mix * (rent || 0), 0);
+  const annual = unitMix.reduce((sum, row) => sum + row.annual, 0);
+  const units = s.units || 0;
+  const blended = units ? Math.round(annual / 12 / units) : 0;
   rows.push(xlsRow(['']));
-  rows.push(xlsRow(['Blended Rent', '', '', cellMoney(Math.round(blended)), cellMoney(Math.round(blended * units)), cellMoney(Math.round(blended * units * 12))], 'section'));
+  rows.push(xlsRow(['Blended Rent', '', '', cellMoney(blended), cellMoney(Math.round(blended * units)), cellMoney(annual)], 'section'));
   return rows;
 }
 
@@ -2536,6 +2686,7 @@ async function exportExcel(id) {
     xlsRow(['Zoning', s.zone]),
     xlsRow(['Project Type', s.type]),
     xlsRow(['Construction Plan', costs.planLabel]),
+    xlsRow(['Unit Mix Source', unitMixSourceText(s)]),
     xlsRow(['Hard Cost / SF', cellMoney(hardPerSf)]),
     xlsRow(['Soft Cost % of Hard Cost', cellPct(Math.round((costs.softPct || 0) * 1000) / 10)]),
     xlsRow(['Loan-to-Cost', cellPct(metrics.loanToCostPct)]),
@@ -2572,6 +2723,7 @@ async function exportExcel(id) {
     xlsRow(['Soft Cost %', cellPct(Math.round((costs.softPct || 0) * 1000) / 10), '', '', 'Selected plan soft-cost assumption']),
     xlsRow(['Construction Months', cellNumber(costs.months || 18), '', '', 'Selected plan duration for carry cost']),
     xlsRow(['Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10), '', '', 'Selected plan rent adjustment applied to NOI']),
+    xlsRow(['Unit Mix Source', unitMixSourceText(s), '', '', 'Parsed from permit text when the city/project description lists bedrooms; otherwise explicit market default']),
     xlsRow(['Land Cost', cellMoney(Math.round(land)), totalSF ? cellMoney(Math.round(land / totalSF)) : '', s.units ? cellMoney(Math.round(land / s.units)) : '', landValueSourceNote(s)]),
     xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), 'Construction cost validation shown in Construction Costs tab']),
     xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(Math.round(softCosts / totalSF)) : '', s.units ? cellMoney(Math.round(softCosts / s.units)) : '', 'A&E, permits, fees, contingency, developer fee']),
@@ -2596,6 +2748,7 @@ async function exportExcel(id) {
     xlsRow(['Submarket', s.hood]),
     xlsRow(['Construction Plan', costs.planLabel]),
     xlsRow(['Plan Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10)]),
+    xlsRow(['Unit Mix Source', unitMixSourceText(s)]),
     xlsRow(['Implied Monthly Gross Rent', cellMoney(rentMonthly)]),
     xlsRow(['Implied Annual Gross Rent', cellMoney(rentMonthly * 12)]),
     xlsRow(['Vacancy', cellPct(metrics.vacancyPct)]),
@@ -2853,10 +3006,7 @@ async function exportPDF(id) {
     <h3>Unit Mix</h3>
     <table>
       <tr><th>Type</th><th>Mix</th><th>Units</th><th>Rent/mo</th></tr>
-      <tr><td>Studio</td><td>25%</td><td>${Math.round(s.units*0.25)}</td><td>Market</td></tr>
-      <tr><td>1 Bedroom</td><td>50%</td><td>${Math.round(s.units*0.50)}</td><td>Market</td></tr>
-      <tr><td>2 Bedroom</td><td>20%</td><td>${Math.round(s.units*0.20)}</td><td>Market</td></tr>
-      <tr><td>3 Bedroom</td><td>5%</td><td>${Math.round(s.units*0.05)}</td><td>Market</td></tr>
+      ${unitMixPDFRows(s)}
     </table>
 
     <h3>Location Research</h3>
@@ -2983,10 +3133,7 @@ async function exportPDF(id) {
     <h3>Rent Roll (Stabilized Year 1)</h3>
     <table>
       <tr><th>Unit Type</th><th>Units</th><th>Rent/mo</th><th>Annual</th></tr>
-      <tr><td>Studio</td><td>${Math.round(s.units*0.25)}</td><td>$2,600</td><td>${fmtD(Math.round(s.units*0.25)*2600*12)}</td></tr>
-      <tr><td>1 Bedroom</td><td>${Math.round(s.units*0.50)}</td><td>$3,400</td><td>${fmtD(Math.round(s.units*0.50)*3400*12)}</td></tr>
-      <tr><td>2 Bedroom</td><td>${Math.round(s.units*0.20)}</td><td>$4,400</td><td>${fmtD(Math.round(s.units*0.20)*4400*12)}</td></tr>
-      <tr><td>3 Bedroom</td><td>${Math.round(s.units*0.05)}</td><td>$5,800</td><td>${fmtD(Math.round(s.units*0.05)*5800*12)}</td></tr>
+      ${unitMixRentRollPDFRows(s)}
       <tr class="tot"><td colspan="3">Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
     </table>
 

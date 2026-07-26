@@ -183,6 +183,7 @@ function hood(lat, lng, addr) {
 const EXCLUDED_PROJECT_TEXT = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
 const RESIDENTIAL_PROJECT_TEXT = /(apartment|dwelling|residential|multifamily|multi-family|mixed[- ]use|\bhousing\b|\bunit\b|\bunits\b|duplex|townhouse|condo|single[- ]family|\bsfd\b)/i;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
+const DEFAULT_UNIT_MIX = { s: 0.25, o: 0.50, t: 0.20, th: 0.05 };
 
 function unitsFromText(value) {
   const text = String(value || '');
@@ -196,6 +197,63 @@ function excludedProject(...values) {
 
 function residentialProject(units, ...values) {
   return Number(units || 0) > 0 || values.some(value => RESIDENTIAL_PROJECT_TEXT.test(String(value || '')));
+}
+
+function normalizeUnitMix(mix = {}) {
+  const values = {
+    s: Number(mix.s ?? mix.studio ?? 0),
+    o: Number(mix.o ?? mix.one ?? 0),
+    t: Number(mix.t ?? mix.two ?? 0),
+    th: Number(mix.th ?? mix.three ?? 0),
+  };
+  const sum = values.s + values.o + values.t + values.th;
+  if (!Number.isFinite(sum) || sum <= 0) return { ...DEFAULT_UNIT_MIX };
+  return { s: values.s / sum, o: values.o / sum, t: values.t / sum, th: values.th / sum };
+}
+
+function addUnitMixMatches(text, key, patterns, counts) {
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const value = Number(String(match[1] || '').replace(/,/g, ''));
+      if (Number.isFinite(value) && value > 0) counts[key] += value;
+    }
+  }
+}
+
+function parseUnitMixFromText(...values) {
+  const text = values.map(value => String(value || '').toLowerCase()).join(' ');
+  if (!text.trim()) return null;
+  const counts = { s: 0, o: 0, t: 0, th: 0 };
+  addUnitMixMatches(text, 's', [
+    /(\d[\d,]*)\s*(?:x\s*)?(?:studio|studios|efficiency|efficiencies|bachelor|bachelors|sro|sros)\b/g,
+    /(?:studio|studios|efficiency|efficiencies|bachelor|bachelors|sro|sros)\s*[:=\-]?\s*(\d[\d,]*)\b/g,
+  ], counts);
+  addUnitMixMatches(text, 'o', [
+    /(\d[\d,]*)\s*(?:x\s*)?(?:1|one)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(\d[\d,]*)\s*(?:dwelling\s*)?units?\s*(?:of|as)?\s*(?:1|one)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(?:1|one)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\s*[:=\-]?\s*(\d[\d,]*)\b/g,
+  ], counts);
+  addUnitMixMatches(text, 't', [
+    /(\d[\d,]*)\s*(?:x\s*)?(?:2|two)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(\d[\d,]*)\s*(?:dwelling\s*)?units?\s*(?:of|as)?\s*(?:2|two)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(?:2|two)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\s*[:=\-]?\s*(\d[\d,]*)\b/g,
+  ], counts);
+  addUnitMixMatches(text, 'th', [
+    /(\d[\d,]*)\s*(?:x\s*)?(?:3|three)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(\d[\d,]*)\s*(?:dwelling\s*)?units?\s*(?:of|as)?\s*(?:3|three)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(?:3|three)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\s*[:=\-]?\s*(\d[\d,]*)\b/g,
+  ], counts);
+  const parsedTotal = counts.s + counts.o + counts.t + counts.th;
+  return parsedTotal > 0 ? { counts, mix: normalizeUnitMix(counts), parsedTotal } : null;
+}
+
+function unitMixForPermit(p, type) {
+  if (type === 'New House') {
+    return { mix: { s: 0, o: 0, t: 0, th: 1 }, counts: null, parsedTotal: 0, source: 'New house assumption' };
+  }
+  const parsed = parseUnitMixFromText(p.work_description, p.use_desc, p.permit_type, p.permit_subtype);
+  if (parsed) return { ...parsed, source: 'Parsed from permit text' };
+  return { mix: { ...DEFAULT_UNIT_MIX }, counts: null, parsedTotal: 0, source: 'Default market mix' };
 }
 
 function addressAliasesForPermit(p) {
@@ -275,7 +333,8 @@ function uw(p) {
   const R = RENTS[h]||RENTS['Koreatown'];
   const cap = CAPS[h]||0.0525;
   const hc = HC[t]||285;
-  const blend = R.s*0.25+R.o*0.50+R.t*0.20+R.th*0.05;
+  const unitMix = unitMixForPermit(p, t);
+  const blend = R.s*unitMix.mix.s+R.o*unitMix.mix.o+R.t*unitMix.mix.t+R.th*unitMix.mix.th;
   const grossRent = blend*12*u;
   const otherIncome = u*600;
   const egi = grossRent*0.95 + otherIncome;
@@ -314,6 +373,10 @@ function uw(p) {
       permit_number:p.permit_number||null,
       work_description:p.work_description||null,
       address_aliases:addressAliasesForPermit(p),
+      unit_mix:unitMix.mix,
+      unit_mix_counts:unitMix.counts,
+      unit_mix_source:unitMix.source,
+      unit_mix_parsed_total:unitMix.parsedTotal,
       land_value_source:doorLand ? 'default_market_per_door' : (compLand?.source || 'permit_valuation_fallback'),
       land_value_metric:doorLand ? 'price per door' : (compLand?.metricLabel || (p.valuation>hard ? 'permit valuation' : 'hard cost percentage fallback')),
       land_value_metric_value:doorLand ? DEFAULT_MARKET_LAND_PER_DOOR : (compLand?.metricValue ? Math.round(compLand.metricValue) : null),

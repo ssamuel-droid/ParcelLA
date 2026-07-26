@@ -44,10 +44,10 @@ export function normalizeSite(s) {
     avgUnitSF: s.avgUnitSF ?? s.usf ?? 800,
     hasDemo:   s.hasDemo   ?? s.demo ?? false,
     unitMix: s.unitMix ?? {
-      studio: s.ms  ?? 0,
-      one:    s.mo  ?? 0.5,
-      two:    s.mt  ?? 0.3,
-      three:  s.mth ?? 0.2,
+      studio: s.ms  ?? 0.25,
+      one:    s.mo  ?? 0.50,
+      two:    s.mt  ?? 0.20,
+      three:  s.mth ?? 0.05,
     },
   };
 }

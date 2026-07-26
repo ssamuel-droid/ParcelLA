@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel, runScenarios } from '../../src/model/financialModel.js';
+import { RENTS } from '../../src/data/submarkets.js';
 import { enrichSite }    from '../../src/data/laOpenData.js';
 import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/DemandScore.js';
 import { requireAuth, optionalAuth } from '../middleware/auth.js';
@@ -81,6 +82,85 @@ function perDoorLandBasis(type, units) {
   };
 }
 
+const DEFAULT_UNIT_MIX = { studio: 0.25, one: 0.50, two: 0.20, three: 0.05 };
+
+function normalizeUnitMix(mix = {}) {
+  const values = {
+    studio: Number(mix.studio ?? mix.s ?? 0),
+    one: Number(mix.one ?? mix.o ?? 0),
+    two: Number(mix.two ?? mix.t ?? 0),
+    three: Number(mix.three ?? mix.th ?? 0),
+  };
+  const sum = values.studio + values.one + values.two + values.three;
+  if (!Number.isFinite(sum) || sum <= 0) return { ...DEFAULT_UNIT_MIX };
+  return {
+    studio: values.studio / sum,
+    one: values.one / sum,
+    two: values.two / sum,
+    three: values.three / sum,
+  };
+}
+
+function addUnitMixMatches(text, key, patterns, counts) {
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const value = Number(String(match[1] || '').replace(/,/g, ''));
+      if (Number.isFinite(value) && value > 0) counts[key] += value;
+    }
+  }
+}
+
+function parseUnitMixFromText(...values) {
+  const text = values.map(value => String(value || '').toLowerCase()).join(' ');
+  if (!text.trim()) return null;
+  const counts = { studio: 0, one: 0, two: 0, three: 0 };
+  addUnitMixMatches(text, 'studio', [
+    /(\d[\d,]*)\s*(?:x\s*)?(?:studio|studios|efficiency|efficiencies|bachelor|bachelors|sro|sros)\b/g,
+    /(?:studio|studios|efficiency|efficiencies|bachelor|bachelors|sro|sros)\s*[:=\-]?\s*(\d[\d,]*)\b/g,
+  ], counts);
+  addUnitMixMatches(text, 'one', [
+    /(\d[\d,]*)\s*(?:x\s*)?(?:1|one)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(\d[\d,]*)\s*(?:dwelling\s*)?units?\s*(?:of|as)?\s*(?:1|one)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(?:1|one)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\s*[:=\-]?\s*(\d[\d,]*)\b/g,
+  ], counts);
+  addUnitMixMatches(text, 'two', [
+    /(\d[\d,]*)\s*(?:x\s*)?(?:2|two)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(\d[\d,]*)\s*(?:dwelling\s*)?units?\s*(?:of|as)?\s*(?:2|two)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(?:2|two)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\s*[:=\-]?\s*(\d[\d,]*)\b/g,
+  ], counts);
+  addUnitMixMatches(text, 'three', [
+    /(\d[\d,]*)\s*(?:x\s*)?(?:3|three)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(\d[\d,]*)\s*(?:dwelling\s*)?units?\s*(?:of|as)?\s*(?:3|three)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\b/g,
+    /(?:3|three)[-\s]?(?:bed|beds|bedroom|bedrooms|br|bd|bdrm|bdrms)\s*[:=\-]?\s*(\d[\d,]*)\b/g,
+  ], counts);
+  const parsedTotal = counts.studio + counts.one + counts.two + counts.three;
+  return parsedTotal > 0 ? { counts, mix: normalizeUnitMix(counts), parsedTotal } : null;
+}
+
+function unitMixForSite(raw = {}, site = {}, type = site.project_type ?? site.type) {
+  if (type === 'New House') {
+    return { mix: { studio: 0, one: 0, two: 0, three: 1 }, counts: null, parsedTotal: 0, source: 'New house assumption' };
+  }
+  if (raw.unit_mix && typeof raw.unit_mix === 'object') {
+    return {
+      mix: normalizeUnitMix(raw.unit_mix),
+      counts: raw.unit_mix_counts || null,
+      parsedTotal: Number(raw.unit_mix_parsed_total || 0),
+      source: raw.unit_mix_source || 'Stored unit mix',
+    };
+  }
+  const parsed = parseUnitMixFromText(
+    raw.unit_mix_text,
+    raw.work_description,
+    raw.project_description,
+    raw.use_desc,
+    raw.scope,
+    site.description
+  );
+  if (parsed) return { ...parsed, source: 'Parsed from permit text' };
+  return { mix: { ...DEFAULT_UNIT_MIX }, counts: null, parsedTotal: 0, source: 'Default market mix' };
+}
+
 // ── Shared underwriting defaults ───────────────────────────────────────────────
 const DEFAULT_GLOBALS = {
   exitCapSpread: 0.0025,
@@ -142,6 +222,15 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const type = s.project_type ?? s.type ?? 'Multifamily';
   const units = Number(s.units || 0);
   const avgUnitSf = Number(s.avg_unit_sf || s.usf || 800);
+  const unitMix = unitMixForSite(rawPermit, s, type);
+  const rents = RENTS[s.neighborhood ?? s.hood] || RENTS.Koreatown;
+  const blendedRent = (
+    unitMix.mix.studio * (rents.studio || 0) +
+    unitMix.mix.one * (rents.one || 0) +
+    unitMix.mix.two * (rents.two || 0) +
+    unitMix.mix.three * (rents.three || 0)
+  );
+  const grossPotentialRent = Math.round(blendedRent * 12 * units);
   const totalSf = units * avgUnitSf;
   const hardPsf = { 'Multifamily':285, 'Mixed-Use':320, 'Condo/TH':340, 'New House':275 }[type] || 285;
   let hardFallback = totalSf > 0 ? hardPsf * totalSf : Math.max(0, preCarryCost - price) / 1.18;
@@ -174,7 +263,9 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const recastCarry = usedDynamicLand ? Math.round((landCost + hardCosts + softCosts) * interestCarryPct) : carryCost;
   const recastTotalCost = usedDynamicLand ? landCost + hardCosts + softCosts + recastCarry : totalCost;
   const exitValue = s.exit_value || 0;
-  const noi = s.noi || 0;
+  const noi = unitMix.source === 'Parsed from permit text'
+    ? Math.round(((grossPotentialRent * 0.95) + (units * 600)) * 0.65)
+    : (s.noi || 0);
   const netProfit = usedDynamicLand && exitValue ? exitValue - recastTotalCost : (s.net_profit || 0);
 
   return {
@@ -192,6 +283,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     exitValue,
     exitProceeds:  netProfit,
     netProfit,
+    grossPotentialRent: unitMix.source === 'Parsed from permit text' ? grossPotentialRent : undefined,
     leveragedIRR:  s.irr_v        || 0,
     capRateOnCost: recastTotalCost ? noi / recastTotalCost : (s.cap_on_cost || 0) / 100,
     devSpreadPct:  recastTotalCost ? (exitValue - recastTotalCost) / recastTotalCost : (s.dev_spread_pct || 0) / 100,
@@ -212,6 +304,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const status = s.status || 'active';
   const offMarket = /off|not for sale/i.test(status);
   const model = modelFromSupabaseSite(s, landCompBenchmarks);
+  const unitMix = unitMixForSite(rawPermit, s, s.project_type ?? s.type);
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
@@ -236,10 +329,16 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     developmentStatus: rawPermit.development_status || null,
     workDescription: rawPermit.work_description || rawPermit.project_description || null,
     addressAliases,
+    unitMixSource: unitMix.source,
+    unitMixCounts: unitMix.counts,
+    unitMixParsedTotal: unitMix.parsedTotal,
     underwrittenAt: s.underwritten_at,
     _precomputed: true,
     _m: model,
-    ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
+    ms: unitMix.mix.studio,
+    mo: unitMix.mix.one,
+    mt: unitMix.mix.two,
+    mth: unitMix.mix.three,
   };
 }
 
@@ -543,6 +642,13 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         permitNumber:  s.permitNumber,
         workDescription: s.workDescription,
         addressAliases: s.addressAliases || [],
+        ms:           s.ms,
+        mo:           s.mo,
+        mt:           s.mt,
+        mth:          s.mth,
+        unitMixSource: s.unitMixSource,
+        unitMixCounts: s.unitMixCounts,
+        unitMixParsedTotal: s.unitMixParsedTotal,
         status:       s.status,
         listingStatus: s.listingStatus,
         isComp:       s.isComp ?? s.is_comp ?? false,
