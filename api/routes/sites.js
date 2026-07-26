@@ -16,6 +16,11 @@ import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/D
 import { requireAuth, optionalAuth } from '../middleware/auth.js';
 import { validateSiteFilters, validateModelOverrides } from '../middleware/middleware.js';
 import { supabase } from '../../src/data/supabase.js';
+import {
+  LAND_COMP_RECENCY_DAYS,
+  buildLandCompBenchmarks,
+  estimateLandBasisFromComps,
+} from '../../src/data/landValue.js';
 
 const router = Router();
 
@@ -23,6 +28,8 @@ const router = Router();
 let _siteCache = null;
 let _cacheTime = 0;
 const _modelCache = new Map();
+let _landCompCache = null;
+let _landCompCacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
@@ -86,7 +93,31 @@ function buildOverrides(query) {
   return ov;
 }
 
-function modelFromSupabaseSite(s) {
+async function getLandCompBenchmarks() {
+  const now = Date.now();
+  if (_landCompCache && now - _landCompCacheTime < CACHE_TTL) return _landCompCache;
+  if (!process.env.SUPABASE_URL) return null;
+
+  const cutoff = new Date(Date.now() - LAND_COMP_RECENCY_DAYS * 86400000).toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from('sold_comps')
+    .select('address,neighborhood,project_type,units,avg_unit_sf,sale_price,sale_date,price_per_unit,price_per_sf,source,recorder_document_number')
+    .gte('sale_date', cutoff)
+    .order('sale_date', { ascending: false })
+    .limit(5000);
+
+  if (error) {
+    console.warn('[sites] Land comp benchmarks unavailable:', error.message);
+    return null;
+  }
+
+  _landCompCache = buildLandCompBenchmarks(data || [], { recencyDays: LAND_COMP_RECENCY_DAYS });
+  _landCompCacheTime = now;
+  return _landCompCache;
+}
+
+function modelFromSupabaseSite(s, landCompBenchmarks = null) {
+  const rawPermit = s.raw_permit_data || {};
   const totalCost = s.total_cost || 0;
   const price = s.price || 0;
   const interestCarryPct = 0.65 * 0.065 * 1.5; // 65% LTC, 6.5%, 18 months
@@ -105,30 +136,58 @@ function modelFromSupabaseSite(s) {
   const hardCosts = s.hard_costs ?? s.hardCosts ?? hardFallback;
   const softCosts = s.soft_costs ?? s.softCosts ?? softFallback;
   const carryCost = s.carry_cost ?? s.carryCost ?? carryFallback;
-  const landCost = price || Math.max(0, Math.round(preCarryCost - hardCosts - softCosts));
+  const fallbackLandCost = Math.max(0, Math.round(preCarryCost - hardCosts - softCosts));
+  const offMarket = /off|not for sale/i.test(String(s.status || ''));
+  const compLand = offMarket ? estimateLandBasisFromComps({
+    neighborhood: s.neighborhood ?? s.hood,
+    project_type: type,
+    units,
+    avg_unit_sf: avgUnitSf,
+    lot_sf: s.lot_sf ?? s.lot,
+    totalSF: totalSf,
+    lat: s.lat,
+    lng: s.lng,
+  }, landCompBenchmarks) : null;
+  const landCost = offMarket
+    ? (compLand?.value || price || fallbackLandCost)
+    : (price || fallbackLandCost);
+  const usedDynamicCompLand = offMarket && compLand?.value && !price;
+  const recastCarry = usedDynamicCompLand ? Math.round((landCost + hardCosts + softCosts) * interestCarryPct) : carryCost;
+  const recastTotalCost = usedDynamicCompLand ? landCost + hardCosts + softCosts + recastCarry : totalCost;
+  const exitValue = s.exit_value || 0;
+  const noi = s.noi || 0;
+  const netProfit = usedDynamicCompLand && exitValue ? exitValue - recastTotalCost : (s.net_profit || 0);
 
   return {
-    noi:           s.noi          || 0,
-    totalCost,
+    noi,
+    totalCost: recastTotalCost,
     landCost,
-    exitValue:     s.exit_value   || 0,
-    exitProceeds:  s.net_profit   || 0,
-    netProfit:     s.net_profit   || 0,
+    landValueSource: rawPermit.land_value_source || compLand?.source || (offMarket ? 'permit_valuation_fallback' : 'asking_price'),
+    landValueMetric: rawPermit.land_value_metric || compLand?.metricLabel || null,
+    landValueMetricValue: rawPermit.land_value_metric_value || compLand?.metricValue || null,
+    landValueBasisQuantity: rawPermit.land_value_basis_quantity || compLand?.basisQuantity || null,
+    landValueCompCount: rawPermit.land_value_comp_count || compLand?.compCount || 0,
+    landValueMatch: rawPermit.land_value_match || compLand?.matchLabel || null,
+    landValueRecencyDays: rawPermit.land_value_recency_days || compLand?.recencyDays || LAND_COMP_RECENCY_DAYS,
+    landValueComps: rawPermit.land_value_comps || compLand?.comps || [],
+    exitValue,
+    exitProceeds:  netProfit,
+    netProfit,
     leveragedIRR:  s.irr_v        || 0,
-    capRateOnCost: (s.cap_on_cost   || 0) / 100,
-    devSpreadPct:  (s.dev_spread_pct || 0) / 100,
+    capRateOnCost: recastTotalCost ? noi / recastTotalCost : (s.cap_on_cost || 0) / 100,
+    devSpreadPct:  recastTotalCost ? (exitValue - recastTotalCost) / recastTotalCost : (s.dev_spread_pct || 0) / 100,
     marketCapRate: 0.0500,
     price,
     hardCosts,
     softCosts,
-    carryCost,
-    loanAmount:    totalCost * 0.65,
-    equity:        totalCost * 0.35,
-    equityMultiple: totalCost > 0 ? ((s.exit_value || 0) / (totalCost * 0.35)) : 0,
+    carryCost: recastCarry,
+    loanAmount:    recastTotalCost * 0.65,
+    equity:        recastTotalCost * 0.35,
+    equityMultiple: recastTotalCost > 0 ? (exitValue / (recastTotalCost * 0.35)) : 0,
   };
 }
 
-function mapSupabaseSite(s, i = 0) {
+function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const rawPermit = s.raw_permit_data || {};
   const addressAliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
   const status = s.status || 'active';
@@ -159,7 +218,7 @@ function mapSupabaseSite(s, i = 0) {
     addressAliases,
     underwrittenAt: s.underwritten_at,
     _precomputed: true,
-    _m: modelFromSupabaseSite(s),
+    _m: modelFromSupabaseSite(s, landCompBenchmarks),
     ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
   };
 }
@@ -333,7 +392,8 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
 
   const { data, error, count } = await query;
   if (error) throw error;
-  return { sites: (data || []).map(mapSupabaseSite), total: count ?? (data || []).length };
+  const landCompBenchmarks = await getLandCompBenchmarks();
+  return { sites: (data || []).map((row, i) => mapSupabaseSite(row, i, landCompBenchmarks)), total: count ?? (data || []).length };
 }
 router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
   try {
@@ -377,7 +437,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         const { data: sbSites, error: sbErr } = await fetchAllUnderwrittenSites();
 
         if (!sbErr && sbSites?.length > 0) {
-          sites = sbSites.map(mapSupabaseSite);
+          const landCompBenchmarks = await getLandCompBenchmarks();
+          sites = sbSites.map((row, i) => mapSupabaseSite(row, i, landCompBenchmarks));
           console.log(`[sites] Loaded ${sites.length} pre-underwritten sites from Supabase`);
         } else {
           console.log('[sites] No pre-underwritten sites found - using mock sites');
@@ -481,6 +542,14 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         capOnCost:    Math.round(s._m.capRateOnCost * 10000) / 100,
         devSpreadPct: s._m.devSpreadPct,
         landCost:     s._m.landCost ?? s._m.price ?? s.price ?? s.askPrice ?? null,
+        landValueSource: s._m.landValueSource,
+        landValueMetric: s._m.landValueMetric,
+        landValueMetricValue: s._m.landValueMetricValue,
+        landValueBasisQuantity: s._m.landValueBasisQuantity,
+        landValueCompCount: s._m.landValueCompCount,
+        landValueMatch: s._m.landValueMatch,
+        landValueRecencyDays: s._m.landValueRecencyDays,
+        landValueComps: s._m.landValueComps,
         entryCap:     s._m.marketCapRate,
         exitCap:      s._m.exitCapRate ?? (s._m.marketCapRate + 0.0025),
         debtService:  s._m.debtService,

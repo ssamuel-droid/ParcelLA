@@ -43,6 +43,33 @@ function req(method, path, body) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+async function loadRecentSoldComps(recencyDays = LAND_COMP_RECENCY_DAYS) {
+  const cutoff = new Date(Date.now() - recencyDays * 86400000).toISOString().slice(0, 10);
+  const select = [
+    'address','neighborhood','project_type','units','avg_unit_sf',
+    'sale_price','sale_date','price_per_unit','price_per_sf',
+    'source','recorder_document_number'
+  ].join(',');
+  const rows = [];
+  let off = 0;
+
+  while (true) {
+    const path = `/rest/v1/sold_comps?select=${select}&sale_date=gte.${cutoff}&limit=1000&offset=${off}&order=sale_date.desc`;
+    const r = await req('GET', path);
+    if (r.status >= 400) {
+      console.log('Recent sold comps unavailable; using permit valuation fallback:', typeof r.data === 'string' ? r.data.slice(0, 180) : JSON.stringify(r.data).slice(0, 180));
+      return rows;
+    }
+    if (!Array.isArray(r.data) || !r.data.length) break;
+    rows.push(...r.data);
+    if (r.data.length < 1000) break;
+    off += 1000;
+    await sleep(100);
+  }
+
+  return rows;
+}
+
 const RENTS = {
   'Silver Lake': {s:2600,o:3400,t:4400,th:5800}, 'Los Feliz': {s:2800,o:3600,t:4700,th:6200},
   'Echo Park': {s:2400,o:3100,t:4000,th:5300}, 'Atwater Village': {s:2400,o:3100,t:4000,th:5300},
@@ -77,6 +104,9 @@ const CAPS = {
   'Panorama City':0.0600,'Pacoima':0.0625,'Chatsworth':0.0525,
 };
 const HC = {'Multifamily':285,'Mixed-Use':320,'Condo/TH':340,'New House':275};
+let LAND_BENCHMARKS = null;
+let estimateLandBasisFromComps = () => null;
+let LAND_COMP_RECENCY_DAYS = 1095;
 
 const BOXES = [
   {h:'Silver Lake',lat0:34.070,lat1:34.105,lng0:-118.290,lng1:-118.250},
@@ -249,9 +279,15 @@ function uw(p) {
   const otherIncome = u*600;
   const egi = grossRent*0.95 + otherIncome;
   const noi = egi*0.65;
-  const hard = hc*800*u;
+  const totalSF = 800*u;
+  const hard = hc*totalSF;
   const soft = hard*0.18;
-  const land = p.valuation>hard ? p.valuation : hard*0.45;
+  const fallbackLand = p.valuation>hard ? p.valuation : hard*0.45;
+  const compLand = estimateLandBasisFromComps({
+    neighborhood:h, project_type:t, units:u, avg_unit_sf:800, lot_sf:5000,
+    totalSF, lat:p.lat, lng:p.lng,
+  }, LAND_BENCHMARKS);
+  const land = compLand?.value || fallbackLand;
   const pre = land+hard+soft;
   const loan = pre*0.65;
   const carry = loan*0.065*1.5;
@@ -265,6 +301,7 @@ function uw(p) {
   const irrV = eq>500 ? Math.min(Math.max(irr([-eq,cf,cf,cf,cf,cf+exit-loan]),-50),100) : 0;
   return {
     neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:800, lot_sf:5000,
+    price:Math.round(land),
     status:'off-market', data_source:'ladbs_permit', rti:p.is_rti||false,
     lat:p.lat, lng:p.lng,
     raw_permit_data:{
@@ -273,6 +310,14 @@ function uw(p) {
       permit_number:p.permit_number||null,
       work_description:p.work_description||null,
       address_aliases:addressAliasesForPermit(p),
+      land_value_source:compLand?.source || 'permit_valuation_fallback',
+      land_value_metric:compLand?.metricLabel || (p.valuation>hard ? 'permit valuation' : 'hard cost percentage fallback'),
+      land_value_metric_value:compLand?.metricValue ? Math.round(compLand.metricValue) : null,
+      land_value_basis_quantity:compLand?.basisQuantity ? Math.round(compLand.basisQuantity) : null,
+      land_value_comp_count:compLand?.compCount || 0,
+      land_value_match:compLand?.matchLabel || null,
+      land_value_recency_days:compLand?.recencyDays || LAND_COMP_RECENCY_DAYS,
+      land_value_comps:compLand?.comps || [],
     },
     noi:Math.round(noi), total_cost:Math.round(total), exit_value:Math.round(exit),
     net_profit:Math.round(profit), irr_v:irrV,
@@ -284,6 +329,14 @@ function uw(p) {
 }
 
 async function main() {
+  const landValue = await import('../../src/data/landValue.js');
+  estimateLandBasisFromComps = landValue.estimateLandBasisFromComps;
+  LAND_COMP_RECENCY_DAYS = landValue.LAND_COMP_RECENCY_DAYS || LAND_COMP_RECENCY_DAYS;
+
+  const recentSoldComps = await loadRecentSoldComps(LAND_COMP_RECENCY_DAYS);
+  LAND_BENCHMARKS = landValue.buildLandCompBenchmarks(recentSoldComps, { recencyDays: LAND_COMP_RECENCY_DAYS });
+  console.log(`Loaded ${recentSoldComps.length} recent sold comp(s) for land value benchmarks.`);
+
   // Load permits in pages
   console.log('Loading permits...');
   let all=[], off=0;

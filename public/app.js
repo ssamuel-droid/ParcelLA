@@ -600,6 +600,20 @@ function isOffMarketSite(s) {
   return !!(s?.isComp || s?.offMarket || status.includes('off') || status.includes('not for sale') || !siteAskPrice(s));
 }
 
+function landValueSourceNote(s) {
+  if (!isOffMarketSite(s)) return 'Used as land basis in underwriting';
+  if (s?.landValueSource === 'recent_sales_comps') {
+    const metric = s.landValueMetric || 'sales comp metric';
+    const metricValue = Number(s.landValueMetricValue || 0);
+    const count = Number(s.landValueCompCount || 0);
+    const match = s.landValueMatch || 'recent sales';
+    const suffix = /unit/i.test(metric) ? '/unit' : '/SF';
+    const metricText = metricValue ? fmtD(metricValue) + suffix : metric;
+    return `Recent land sales comps: ${metricText}, ${count || 'saved'} comp${count===1?'':'s'}, ${match}`;
+  }
+  return 'Permit valuation fallback; recent land sales comps were not available';
+}
+
 function siteListingStatus(s) {
   if (isOffMarketSite(s)) return 'Off-market / not for sale';
   return 'For sale';
@@ -1042,7 +1056,7 @@ function renderCards() {
     const status = siteListingStatus(s);
     const devStatus = developmentStatusLabel(s);
     const priceMain = isForSaleSite(s) ? fmtM(ask) : 'Not for sale';
-    const priceSub = offMarket ? 'imputed land ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
+    const priceSub = offMarket ? 'land basis ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
     const watched = isWatched(s.id);
     const displayAddr = siteDisplayAddress(s);
     const addrNote = siteAddressNote(s);
@@ -1329,7 +1343,7 @@ function renderDetail(s) {
   const devStatus = developmentStatusLabel(s);
   const offMarket = isOffMarketSite(s);
   const landLabel=offMarket?'Imputed land value':'Asking price';
-  const landNote=offMarket?'Estimated from comparable land basis or permit data':'Used as land basis in underwriting';
+  const landNote=landValueSourceNote(s);
   const metrics = currentUserMetrics();
   const vacancyLabel = Math.round(metrics.vacancyPct * 10) / 10;
   const totalSF=(s.units||0)*(s.usf||800);
@@ -2391,7 +2405,7 @@ function constructionCostRows(s, tc, land) {
     xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current plan budget, not a contractor bid. Replace with GC pricing when available.' + (currentHardCostOverride() ? ' User hard-cost override applied across all deals: $' + currentHardCostOverride().toLocaleString() + '/SF.' : ''), 'String', 'note']]),
     xlsRow(['']),
     xlsHeaderRow(['Budget Category', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
-    xlsRow([isOffMarketSite(s) ? 'Imputed Land Value' : 'Asking Price / Land Basis', cellMoney(Math.round(landBasis)), totalSF ? cellMoney(costPerSf(landBasis, totalSF)) : '', units ? cellMoney(costPerUnit(landBasis, units)) : '', totalCost ? cellPct(costPct(landBasis, totalCost)) : '', isOffMarketSite(s) ? 'Estimated off-market / not-for-sale land basis' : 'For-sale asking price used as land basis']),
+    xlsRow([isOffMarketSite(s) ? 'Imputed Land Value' : 'Asking Price / Land Basis', cellMoney(Math.round(landBasis)), totalSF ? cellMoney(costPerSf(landBasis, totalSF)) : '', units ? cellMoney(costPerUnit(landBasis, units)) : '', totalCost ? cellPct(costPct(landBasis, totalCost)) : '', landValueSourceNote(s)]),
     xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), totalCost ? cellPct(costPct(hardCosts, totalCost)) : '', 'Detailed schedule below: HVAC, framing, plumbing, electrical, etc.']),
     xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(softPerSf) : '', units ? cellMoney(softPerUnit) : '', totalCost ? cellPct(costPct(softCosts, totalCost)) : '', 'A&E, permits, fees, legal, developer fee, contingency']),
     xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(carryPerSf) : '', units ? cellMoney(carryPerUnit) : '', totalCost ? cellPct(costPct(carryCost, totalCost)) : '', 'Interest reserve, loan fees, taxes and lease-up carry']),
@@ -2872,6 +2886,7 @@ async function exportPDF(id) {
     <table>
       <tr><th colspan="2">LAND & ACQUISITION</th></tr>
       <tr><td>${isOffMarketSite(s)?'Imputed Land Value':'Asking Price / Land Basis'}</td><td>${fmtD(land)}${isOffMarketSite(s)?' (estimated)':''}</td></tr>
+      <tr><td>Land Basis Source</td><td>${escapeText(landValueSourceNote(s))}</td></tr>
       <tr><td>Title, Escrow & Legal (est.)</td><td>${fmtD(land*0.015+25000)}</td></tr>
       <tr class="tot"><td>Land Subtotal</td><td>${fmtD(land*1.015+25000)}</td></tr>
 
