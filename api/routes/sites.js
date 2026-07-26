@@ -33,6 +33,9 @@ let _landCompCacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
+const AFFORDABLE_TEXT = /(affordable|income[- ]restricted|income restricted|low income|very low|extremely low|moderate income|\bed1\b|executive directive 1|100%\s*affordable|vhca|hca|density bonus)/i;
+const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
+const DEFAULT_AFFORDABLE_LAND_PER_DOOR = 30000;
 
 // Guess project type from permit data
 function guessType(permitType, subType, units) {
@@ -62,6 +65,51 @@ function guessHood(address, zone) {
   if (addr.includes('MID-WILSHIRE') || addr.includes('WILSHIRE')) return 'Mid-Wilshire';
   // Guess by zip or street
   return 'Koreatown';  // default fallback
+}
+
+function permitProgramText(raw = {}, site = {}) {
+  return [
+    raw.housing_program,
+    raw.affordability,
+    raw.work_description,
+    raw.project_description,
+    raw.use_desc,
+    raw.permit_status,
+    raw.status,
+    raw.permit_number,
+    site.address,
+    site.addr,
+    ...(Array.isArray(raw.address_aliases) ? raw.address_aliases : []),
+  ].map(v => String(v || '')).join(' ');
+}
+
+function rawAffordable(raw = {}, site = {}) {
+  if (raw.is_affordable === true || raw.income_restricted === true) return true;
+  if (String(raw.is_affordable).toLowerCase() === 'true' || String(raw.income_restricted).toLowerCase() === 'true') return true;
+  return AFFORDABLE_TEXT.test(permitProgramText(raw, site));
+}
+
+function housingProgramFromRaw(raw = {}, site = {}) {
+  const text = permitProgramText(raw, site);
+  if (!rawAffordable(raw, site)) return null;
+  if (/\bed1\b|executive directive 1/i.test(text)) return 'Affordable / ED1';
+  return 'Affordable';
+}
+
+function perDoorLandBasis(type, units, affordable) {
+  if (!['Multifamily', 'Mixed-Use'].includes(type) || !Number(units || 0)) return null;
+  const perDoor = affordable ? DEFAULT_AFFORDABLE_LAND_PER_DOOR : DEFAULT_MARKET_LAND_PER_DOOR;
+  return {
+    value: Math.round(perDoor * Number(units || 0)),
+    source: affordable ? 'default_affordable_per_door' : 'default_market_per_door',
+    metricLabel: 'price per door',
+    metricValue: perDoor,
+    basisQuantity: Number(units || 0),
+    compCount: 0,
+    matchLabel: affordable ? 'Affordable / ED1 default' : 'market-rate default',
+    recencyDays: LAND_COMP_RECENCY_DAYS,
+    comps: [],
+  };
 }
 
 // ── Shared underwriting defaults ───────────────────────────────────────────────
@@ -138,6 +186,9 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const carryCost = s.carry_cost ?? s.carryCost ?? carryFallback;
   const fallbackLandCost = Math.max(0, Math.round(preCarryCost - hardCosts - softCosts));
   const offMarket = /off|not for sale/i.test(String(s.status || ''));
+  const affordable = rawAffordable(rawPermit, s);
+  const housingProgram = housingProgramFromRaw(rawPermit, s);
+  const doorLand = offMarket ? perDoorLandBasis(type, units, affordable) : null;
   const compLand = offMarket ? estimateLandBasisFromComps({
     neighborhood: s.neighborhood ?? s.hood,
     project_type: type,
@@ -149,27 +200,30 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     lng: s.lng,
   }, landCompBenchmarks) : null;
   const landCost = offMarket
-    ? (compLand?.value || price || fallbackLandCost)
+    ? (doorLand?.value || compLand?.value || price || fallbackLandCost)
     : (price || fallbackLandCost);
-  const usedDynamicCompLand = offMarket && compLand?.value && !price;
-  const recastCarry = usedDynamicCompLand ? Math.round((landCost + hardCosts + softCosts) * interestCarryPct) : carryCost;
-  const recastTotalCost = usedDynamicCompLand ? landCost + hardCosts + softCosts + recastCarry : totalCost;
+  const usedDynamicLand = offMarket && !!(doorLand?.value || (compLand?.value && !price));
+  const landMeta = doorLand || compLand || {};
+  const recastCarry = usedDynamicLand ? Math.round((landCost + hardCosts + softCosts) * interestCarryPct) : carryCost;
+  const recastTotalCost = usedDynamicLand ? landCost + hardCosts + softCosts + recastCarry : totalCost;
   const exitValue = s.exit_value || 0;
   const noi = s.noi || 0;
-  const netProfit = usedDynamicCompLand && exitValue ? exitValue - recastTotalCost : (s.net_profit || 0);
+  const netProfit = usedDynamicLand && exitValue ? exitValue - recastTotalCost : (s.net_profit || 0);
 
   return {
+    isAffordable: affordable,
+    housingProgram,
     noi,
     totalCost: recastTotalCost,
     landCost,
-    landValueSource: rawPermit.land_value_source || compLand?.source || (offMarket ? 'permit_valuation_fallback' : 'asking_price'),
-    landValueMetric: rawPermit.land_value_metric || compLand?.metricLabel || null,
-    landValueMetricValue: rawPermit.land_value_metric_value || compLand?.metricValue || null,
-    landValueBasisQuantity: rawPermit.land_value_basis_quantity || compLand?.basisQuantity || null,
-    landValueCompCount: rawPermit.land_value_comp_count || compLand?.compCount || 0,
-    landValueMatch: rawPermit.land_value_match || compLand?.matchLabel || null,
-    landValueRecencyDays: rawPermit.land_value_recency_days || compLand?.recencyDays || LAND_COMP_RECENCY_DAYS,
-    landValueComps: rawPermit.land_value_comps || compLand?.comps || [],
+    landValueSource: landMeta.source || rawPermit.land_value_source || (offMarket ? 'permit_valuation_fallback' : 'asking_price'),
+    landValueMetric: landMeta.metricLabel || rawPermit.land_value_metric || null,
+    landValueMetricValue: landMeta.metricValue || rawPermit.land_value_metric_value || null,
+    landValueBasisQuantity: landMeta.basisQuantity || rawPermit.land_value_basis_quantity || null,
+    landValueCompCount: landMeta.compCount || rawPermit.land_value_comp_count || 0,
+    landValueMatch: landMeta.matchLabel || rawPermit.land_value_match || null,
+    landValueRecencyDays: landMeta.recencyDays || rawPermit.land_value_recency_days || LAND_COMP_RECENCY_DAYS,
+    landValueComps: landMeta.comps || rawPermit.land_value_comps || [],
     exitValue,
     exitProceeds:  netProfit,
     netProfit,
@@ -192,6 +246,9 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const addressAliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
   const status = s.status || 'active';
   const offMarket = /off|not for sale/i.test(status);
+  const isAffordable = rawAffordable(rawPermit, s);
+  const housingProgram = housingProgramFromRaw(rawPermit, s);
+  const model = modelFromSupabaseSite(s, landCompBenchmarks);
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
@@ -206,7 +263,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     listingStatus: offMarket ? 'Off-market / not for sale' : 'For sale',
     forSale:      !offMarket,
     isComp:       s.is_comp ?? false,
-    price:        s.price ?? null,
+    price:        s.price ?? model.landCost ?? null,
     demo:         s.has_demo ?? false,
     lat:          s.lat,
     lng:          s.lng,
@@ -215,10 +272,12 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     permitStatus: rawPermit.permit_status || rawPermit.status || null,
     developmentStatus: rawPermit.development_status || null,
     workDescription: rawPermit.work_description || rawPermit.project_description || null,
+    isAffordable,
+    housingProgram,
     addressAliases,
     underwrittenAt: s.underwritten_at,
     _precomputed: true,
-    _m: modelFromSupabaseSite(s, landCompBenchmarks),
+    _m: model,
     ms: 0.25, mo: 0.50, mt: 0.20, mth: 0.05,
   };
 }
@@ -262,10 +321,20 @@ function getModelledSites(sites, overrides) {
   const key = modelCacheKey(overrides, sites.length);
   if (_modelCache.has(key)) return _modelCache.get(key);
 
-  const modelled = sites.map(s => ({
-    ...s,
-    _m: runModel(normalizeSite(s), overrides),
-  }));
+  const modelled = sites.map(s => {
+    const baseModel = s._m || {};
+    const model = runModel(normalizeSite(s), overrides);
+    return {
+      ...s,
+      _m: {
+        ...baseModel,
+        ...model,
+        isAffordable: s.isAffordable ?? baseModel.isAffordable ?? false,
+        housingProgram: s.housingProgram ?? baseModel.housingProgram ?? null,
+        landCost: baseModel.landCost ?? model.price ?? s.price ?? null,
+      },
+    };
+  });
 
   _modelCache.set(key, modelled);
   if (_modelCache.size > MODEL_CACHE_LIMIT) {
@@ -334,7 +403,7 @@ function siteMatchesSearch(s, value) {
 }
 
 async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset) {
-  if (!process.env.SUPABASE_URL || queryParams.devStatus || hasModelOverrideParams(queryParams)) return null;
+  if (!process.env.SUPABASE_URL || queryParams.devStatus || queryParams.affordable || hasModelOverrideParams(queryParams)) return null;
 
   let query = supabase
     .from('sites')
@@ -462,6 +531,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       if (type    && s.type  !== type)               return false;
       if (hood    && s.hood  !== hood)               return false;
       if (zone    && s.zone  !== zone)               return false;
+      if (req.query.affordable === 'true' && !s.isAffordable) return false;
       if (rti     !== undefined && s.rti !== (rti === 'true'))  return false;
       if (isComp  !== undefined && s.isComp !== (isComp === 'true')) return false;
       if (minUnits && s.units < +minUnits)            return false;
@@ -514,6 +584,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         developmentStatus: s.developmentStatus,
         permitNumber:  s.permitNumber,
         workDescription: s.workDescription,
+        isAffordable: s.isAffordable ?? s._m.isAffordable ?? false,
+        housingProgram: s.housingProgram ?? s._m.housingProgram ?? null,
         addressAliases: s.addressAliases || [],
         status:       s.status,
         listingStatus: s.listingStatus,

@@ -182,6 +182,10 @@ function hood(lat, lng, addr) {
 
 const EXCLUDED_PROJECT_TEXT = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
 const RESIDENTIAL_PROJECT_TEXT = /(apartment|dwelling|residential|multifamily|multi-family|mixed[- ]use|affordable housing|\bunit\b|\bunits\b|duplex|townhouse|condo|single[- ]family|\bsfd\b)/i;
+const AFFORDABLE_TEXT = /(affordable|income[- ]restricted|income restricted|low income|very low|extremely low|moderate income|\bed1\b|executive directive 1|100%\s*affordable|vhca|hca|density bonus)/i;
+const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
+const DEFAULT_AFFORDABLE_LAND_PER_DOOR = 30000;
+const DEFAULT_AFFORDABLE_RENT_RATIO = 0.65;
 
 function unitsFromText(value) {
   const text = String(value || '');
@@ -195,6 +199,17 @@ function excludedProject(...values) {
 
 function residentialProject(units, ...values) {
   return Number(units || 0) > 0 || values.some(value => RESIDENTIAL_PROJECT_TEXT.test(String(value || '')));
+}
+
+function affordableProject(...values) {
+  return values.some(value => AFFORDABLE_TEXT.test(String(value || '')));
+}
+
+function housingProgram(...values) {
+  const text = values.map(value => String(value || '')).join(' ');
+  if (!AFFORDABLE_TEXT.test(text)) return null;
+  if (/\bed1\b|executive directive 1/i.test(text)) return 'Affordable / ED1';
+  return 'Affordable';
 }
 
 function addressAliasesForPermit(p) {
@@ -267,6 +282,8 @@ function uw(p) {
   const t = ptype(p.permit_type, p.permit_subtype, actualUnits, p.work_description);
   if (!t) return null;
   const devStatus = developmentStatus(p.status, p.is_rti);
+  const isAffordable = affordableProject(p.permit_type, p.permit_subtype, p.use_desc, p.status, p.work_description);
+  const program = housingProgram(p.permit_type, p.permit_subtype, p.use_desc, p.status, p.work_description);
   // Estimate units from valuation if not available
   const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='New House'?220000:228000;
   const estimatedUnits = Math.max(Math.round((p.valuation||228000)/costPerUnit), t==='New House' ? 1 : 2);
@@ -274,7 +291,8 @@ function uw(p) {
   const R = RENTS[h]||RENTS['Koreatown'];
   const cap = CAPS[h]||0.0525;
   const hc = HC[t]||285;
-  const blend = R.s*0.25+R.o*0.50+R.t*0.20+R.th*0.05;
+  const marketBlend = R.s*0.25+R.o*0.50+R.t*0.20+R.th*0.05;
+  const blend = isAffordable ? marketBlend * DEFAULT_AFFORDABLE_RENT_RATIO : marketBlend;
   const grossRent = blend*12*u;
   const otherIncome = u*600;
   const egi = grossRent*0.95 + otherIncome;
@@ -287,7 +305,10 @@ function uw(p) {
     neighborhood:h, project_type:t, units:u, avg_unit_sf:800, lot_sf:5000,
     totalSF, lat:p.lat, lng:p.lng,
   }, LAND_BENCHMARKS);
-  const land = compLand?.value || fallbackLand;
+  const doorLand = ['Multifamily','Mixed-Use'].includes(t)
+    ? u * (isAffordable ? DEFAULT_AFFORDABLE_LAND_PER_DOOR : DEFAULT_MARKET_LAND_PER_DOOR)
+    : 0;
+  const land = doorLand || compLand?.value || fallbackLand;
   const pre = land+hard+soft;
   const loan = pre*0.65;
   const carry = loan*0.065*1.5;
@@ -310,14 +331,19 @@ function uw(p) {
       permit_number:p.permit_number||null,
       work_description:p.work_description||null,
       address_aliases:addressAliasesForPermit(p),
-      land_value_source:compLand?.source || 'permit_valuation_fallback',
-      land_value_metric:compLand?.metricLabel || (p.valuation>hard ? 'permit valuation' : 'hard cost percentage fallback'),
-      land_value_metric_value:compLand?.metricValue ? Math.round(compLand.metricValue) : null,
-      land_value_basis_quantity:compLand?.basisQuantity ? Math.round(compLand.basisQuantity) : null,
-      land_value_comp_count:compLand?.compCount || 0,
-      land_value_match:compLand?.matchLabel || null,
-      land_value_recency_days:compLand?.recencyDays || LAND_COMP_RECENCY_DAYS,
-      land_value_comps:compLand?.comps || [],
+      is_affordable:isAffordable,
+      income_restricted:isAffordable,
+      housing_program:program,
+      affordable_rent_pct_of_market:isAffordable ? Math.round(DEFAULT_AFFORDABLE_RENT_RATIO * 100) : null,
+      market_gross_potential_rent:Math.round(marketBlend*12*u),
+      land_value_source:doorLand ? (isAffordable ? 'default_affordable_per_door' : 'default_market_per_door') : (compLand?.source || 'permit_valuation_fallback'),
+      land_value_metric:doorLand ? 'price per door' : (compLand?.metricLabel || (p.valuation>hard ? 'permit valuation' : 'hard cost percentage fallback')),
+      land_value_metric_value:doorLand ? (isAffordable ? DEFAULT_AFFORDABLE_LAND_PER_DOOR : DEFAULT_MARKET_LAND_PER_DOOR) : (compLand?.metricValue ? Math.round(compLand.metricValue) : null),
+      land_value_basis_quantity:doorLand ? u : (compLand?.basisQuantity ? Math.round(compLand.basisQuantity) : null),
+      land_value_comp_count:doorLand ? 0 : (compLand?.compCount || 0),
+      land_value_match:doorLand ? (isAffordable ? 'Affordable / ED1 default' : 'market-rate default') : (compLand?.matchLabel || null),
+      land_value_recency_days:doorLand ? LAND_COMP_RECENCY_DAYS : (compLand?.recencyDays || LAND_COMP_RECENCY_DAYS),
+      land_value_comps:doorLand ? [] : (compLand?.comps || []),
     },
     noi:Math.round(noi), total_cost:Math.round(total), exit_value:Math.round(exit),
     net_profit:Math.round(profit), irr_v:irrV,
