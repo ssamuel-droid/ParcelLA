@@ -71,18 +71,6 @@ const TOC_TIERS = {
 };
 
 // ── California Density Bonus tiers (Gov Code §65915) ──────────────────────────
-// Based on % of affordable units included
-const CA_DENSITY_BONUS = [
-  { affordablePct: 0.05, bonusPct: 0.225, incomeLevel: 'very-low' },
-  { affordablePct: 0.10, bonusPct: 0.325, incomeLevel: 'very-low' },
-  { affordablePct: 0.15, bonusPct: 0.425, incomeLevel: 'very-low' },
-  { affordablePct: 0.20, bonusPct: 0.500, incomeLevel: 'very-low' },  // max 50%
-  { affordablePct: 0.10, bonusPct: 0.225, incomeLevel: 'low' },
-  { affordablePct: 0.20, bonusPct: 0.325, incomeLevel: 'low' },
-  { affordablePct: 0.40, bonusPct: 0.500, incomeLevel: 'low' },
-  { affordablePct: 0.10, bonusPct: 0.05,  incomeLevel: 'moderate' },
-  { affordablePct: 0.20, bonusPct: 0.10,  incomeLevel: 'moderate' },
-];
 
 // ── TOC tier detector ─────────────────────────────────────────────────────────
 export function detectTOCTier(lat, lng) {
@@ -171,8 +159,7 @@ export function calcAB2011(site) {
   return {
     eligible: true,
     byRight: true,
-    affordableReq: 0.15,    // 15% affordable units required
-    notes: 'AB 2011 (2022): multifamily by-right on commercial corridors. 15% affordable required for full by-right.',
+    notes: 'AB 2011 (2022): multifamily by-right on commercial corridors; verify current eligibility and labor requirements.',
     streamlined: true,
     prevailingWage: true,   // wage requirement for 10+ units
   };
@@ -198,16 +185,11 @@ export function analyzeDensity(site, options = {}) {
   // AB 2011
   const ab2011 = calcAB2011(site);
 
-  // CA density bonus (best case — 20% very-low-income = 50% bonus)
-  const caDensityBonus = options.affordablePct
-    ? CA_DENSITY_BONUS.find(d => d.affordablePct >= (options.affordablePct ?? 0.20) &&
-        d.incomeLevel === (options.incomeLevel ?? 'very-low'))
-    : CA_DENSITY_BONUS[3]; // default: 20% VLI = 50% bonus
-
-  // TOC bonus (takes precedence over CA density bonus — use higher of the two)
+  // TOC bonus only. Other bonus programs require explicit user inputs before modeling.
+  const caDensityBonus = null;
   const tocBonusPct  = toc.eligible ? TOC_TIERS[toc.tier].bonusPct : 0;
-  const caBonusPct   = caDensityBonus?.bonusPct ?? 0;
-  const bestBonusPct = Math.max(tocBonusPct, caBonusPct);
+  const caBonusPct   = 0;
+  const bestBonusPct = tocBonusPct;
 
   const bonusUnits = Math.floor(baseUnits * bestBonusPct);
   const totalUnitsWithBonus = baseUnits + bonusUnits;
@@ -288,8 +270,5 @@ export function densityBonusIRRImpact(baseModel, densityAnalysis, runModelFn) {
     baseProfirt:   baseModel.netProfit,
     enhancedProfit: enhanced.netProfit,
     profitDelta:   enhanced.netProfit - baseModel.netProfit,
-    affordable: densityAnalysis.caDensityBonus
-      ? Math.ceil(enhancedSite.units * densityAnalysis.caDensityBonus.affordablePct)
-      : 0,
   };
 }

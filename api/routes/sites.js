@@ -33,9 +33,7 @@ let _landCompCacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
-const AFFORDABLE_TEXT = /(affordable|income[- ]restricted|income restricted|low income|very low|extremely low|moderate income|\bed1\b|executive directive 1|100%\s*affordable|vhca|hca|density bonus)/i;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
-const DEFAULT_AFFORDABLE_LAND_PER_DOOR = 30000;
 
 // Guess project type from permit data
 function guessType(permitType, subType, units) {
@@ -67,46 +65,17 @@ function guessHood(address, zone) {
   return 'Koreatown';  // default fallback
 }
 
-function permitProgramText(raw = {}, site = {}) {
-  return [
-    raw.housing_program,
-    raw.affordability,
-    raw.work_description,
-    raw.project_description,
-    raw.use_desc,
-    raw.permit_status,
-    raw.status,
-    raw.permit_number,
-    site.address,
-    site.addr,
-    ...(Array.isArray(raw.address_aliases) ? raw.address_aliases : []),
-  ].map(v => String(v || '')).join(' ');
-}
-
-function rawAffordable(raw = {}, site = {}) {
-  if (raw.is_affordable === true || raw.income_restricted === true) return true;
-  if (String(raw.is_affordable).toLowerCase() === 'true' || String(raw.income_restricted).toLowerCase() === 'true') return true;
-  return AFFORDABLE_TEXT.test(permitProgramText(raw, site));
-}
-
-function housingProgramFromRaw(raw = {}, site = {}) {
-  const text = permitProgramText(raw, site);
-  if (!rawAffordable(raw, site)) return null;
-  if (/\bed1\b|executive directive 1/i.test(text)) return 'Affordable / ED1';
-  return 'Affordable';
-}
-
-function perDoorLandBasis(type, units, affordable) {
+function perDoorLandBasis(type, units) {
   if (!['Multifamily', 'Mixed-Use'].includes(type) || !Number(units || 0)) return null;
-  const perDoor = affordable ? DEFAULT_AFFORDABLE_LAND_PER_DOOR : DEFAULT_MARKET_LAND_PER_DOOR;
+  const perDoor = DEFAULT_MARKET_LAND_PER_DOOR;
   return {
     value: Math.round(perDoor * Number(units || 0)),
-    source: affordable ? 'default_affordable_per_door' : 'default_market_per_door',
+    source: 'default_market_per_door',
     metricLabel: 'price per door',
     metricValue: perDoor,
     basisQuantity: Number(units || 0),
     compCount: 0,
-    matchLabel: affordable ? 'Affordable / ED1 default' : 'market-rate default',
+    matchLabel: 'market-rate default',
     recencyDays: LAND_COMP_RECENCY_DAYS,
     comps: [],
   };
@@ -186,9 +155,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const carryCost = s.carry_cost ?? s.carryCost ?? carryFallback;
   const fallbackLandCost = Math.max(0, Math.round(preCarryCost - hardCosts - softCosts));
   const offMarket = /off|not for sale/i.test(String(s.status || ''));
-  const affordable = rawAffordable(rawPermit, s);
-  const housingProgram = housingProgramFromRaw(rawPermit, s);
-  const doorLand = offMarket ? perDoorLandBasis(type, units, affordable) : null;
+  const doorLand = offMarket ? perDoorLandBasis(type, units) : null;
   const compLand = offMarket ? estimateLandBasisFromComps({
     neighborhood: s.neighborhood ?? s.hood,
     project_type: type,
@@ -211,8 +178,6 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const netProfit = usedDynamicLand && exitValue ? exitValue - recastTotalCost : (s.net_profit || 0);
 
   return {
-    isAffordable: affordable,
-    housingProgram,
     noi,
     totalCost: recastTotalCost,
     landCost,
@@ -246,8 +211,6 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const addressAliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
   const status = s.status || 'active';
   const offMarket = /off|not for sale/i.test(status);
-  const isAffordable = rawAffordable(rawPermit, s);
-  const housingProgram = housingProgramFromRaw(rawPermit, s);
   const model = modelFromSupabaseSite(s, landCompBenchmarks);
   return {
     id:           s.id || (50000 + i),
@@ -272,8 +235,6 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     permitStatus: rawPermit.permit_status || rawPermit.status || null,
     developmentStatus: rawPermit.development_status || null,
     workDescription: rawPermit.work_description || rawPermit.project_description || null,
-    isAffordable,
-    housingProgram,
     addressAliases,
     underwrittenAt: s.underwritten_at,
     _precomputed: true,
@@ -329,8 +290,6 @@ function getModelledSites(sites, overrides) {
       _m: {
         ...baseModel,
         ...model,
-        isAffordable: s.isAffordable ?? baseModel.isAffordable ?? false,
-        housingProgram: s.housingProgram ?? baseModel.housingProgram ?? null,
         landCost: baseModel.landCost ?? model.price ?? s.price ?? null,
       },
     };
@@ -403,7 +362,7 @@ function siteMatchesSearch(s, value) {
 }
 
 async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset) {
-  if (!process.env.SUPABASE_URL || queryParams.devStatus || queryParams.affordable || hasModelOverrideParams(queryParams)) return null;
+  if (!process.env.SUPABASE_URL || queryParams.devStatus || hasModelOverrideParams(queryParams)) return null;
 
   let query = supabase
     .from('sites')
@@ -531,7 +490,6 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       if (type    && s.type  !== type)               return false;
       if (hood    && s.hood  !== hood)               return false;
       if (zone    && s.zone  !== zone)               return false;
-      if (req.query.affordable === 'true' && !s.isAffordable) return false;
       if (rti     !== undefined && s.rti !== (rti === 'true'))  return false;
       if (isComp  !== undefined && s.isComp !== (isComp === 'true')) return false;
       if (minUnits && s.units < +minUnits)            return false;
@@ -584,8 +542,6 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         developmentStatus: s.developmentStatus,
         permitNumber:  s.permitNumber,
         workDescription: s.workDescription,
-        isAffordable: s.isAffordable ?? s._m.isAffordable ?? false,
-        housingProgram: s.housingProgram ?? s._m.housingProgram ?? null,
         addressAliases: s.addressAliases || [],
         status:       s.status,
         listingStatus: s.listingStatus,

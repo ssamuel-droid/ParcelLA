@@ -273,8 +273,6 @@ const DEFAULT_USER_METRICS = {
   rentGrowthPct:3,
   exitCapSpreadBps:25,
   imputedLandPerDoorMarket:100000,
-  imputedLandPerDoorAffordable:30000,
-  affordableRentPctOfMarket:65,
 };
 const CONSTRUCTION_PLANS = {
   auto:     { label:'Auto by type', hardCost:null, softPct:0.18, months:18, rentPremium:0,    note:'Uses the project-type base cost.' },
@@ -341,8 +339,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-rti" checked> RTI / Entitled</label>
       <label class="cb"><input type="checkbox" id="f-comp" checked> Off-market / not for sale</label>
       <label class="cb"><input type="checkbox" id="f-watch"> Watchlist only</label>
-      <h4>Restriction</h4>
-      <label class="cb"><input type="checkbox" id="f-affordable"> Affordable / ED1 only</label>
       <h4>Development status</h4>
       <label class="cb"><input type="checkbox" id="f-d-submitted" checked> Submitted</label>
       <label class="cb"><input type="checkbox" id="f-d-plan" checked> Plan check</label>
@@ -438,8 +434,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <div class="setfield"><label>Annual rent growth</label><div class="mfr"><input type="number" id="set-growth" step="0.25"><span>%</span></div></div>
         <div class="setfield"><label>Exit cap spread</label><div class="mfr"><input type="number" id="set-exit-spread" step="5"><span>bps</span></div></div>
         <div class="setfield"><label>Market land / door</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-market" step="5000"></div></div>
-        <div class="setfield"><label>Affordable land / door</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-aff" step="5000"></div></div>
-        <div class="setfield"><label>Affordable rent cap</label><div class="mfr"><input type="number" id="set-aff-rent" step="1"><span>% mkt</span></div></div>
       </div>
       <div class="setnote">Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. The top-row hard-cost override still works as a quick one-off stress test.</div>
     </div>
@@ -491,7 +485,6 @@ function loadUserMetrics() {
     const saved = JSON.parse(localStorage.getItem('parcella_user_metrics') || '{}');
     if (saved.hardCostSfrAdu && !saved.hardCostNewHouse) saved.hardCostNewHouse = saved.hardCostSfrAdu;
     if (Number(saved.imputedLandPerDoorMarket) === 250000) delete saved.imputedLandPerDoorMarket;
-    if (Number(saved.imputedLandPerDoorAffordable) === 125000) delete saved.imputedLandPerDoorAffordable;
     return { ...DEFAULT_USER_METRICS, ...saved };
   } catch {
     return { ...DEFAULT_USER_METRICS };
@@ -547,8 +540,6 @@ function populateSettingsForm() {
   setSettingsField('set-growth', m.rentGrowthPct);
   setSettingsField('set-exit-spread', m.exitCapSpreadBps);
   setSettingsField('set-land-door-market', m.imputedLandPerDoorMarket);
-  setSettingsField('set-land-door-aff', m.imputedLandPerDoorAffordable);
-  setSettingsField('set-aff-rent', m.affordableRentPctOfMarket);
 }
 
 function openSettings() {
@@ -584,8 +575,6 @@ function saveSettings() {
     rentGrowthPct: metricNumber(g('set-growth')?.value, current.rentGrowthPct, -10, 12),
     exitCapSpreadBps: metricNumber(g('set-exit-spread')?.value, current.exitCapSpreadBps, -100, 200),
     imputedLandPerDoorMarket: metricNumber(g('set-land-door-market')?.value, current.imputedLandPerDoorMarket, 0, 2000000),
-    imputedLandPerDoorAffordable: metricNumber(g('set-land-door-aff')?.value, current.imputedLandPerDoorAffordable, 0, 2000000),
-    affordableRentPctOfMarket: metricNumber(g('set-aff-rent')?.value, current.affordableRentPctOfMarket, 10, 100),
   };
   saveUserMetrics();
   closeSettings();
@@ -616,42 +605,8 @@ function isOffMarketSite(s) {
   return !!(s?.isComp || s?.offMarket || status.includes('off') || status.includes('not for sale') || !siteAskPrice(s));
 }
 
-const AFFORDABLE_TEXT = /(affordable|income[- ]restricted|income restricted|low income|very low|extremely low|moderate income|\bed1\b|executive directive 1|100%\s*affordable|vhca|hca|density bonus)/i;
-
-function siteTextForProgram(s) {
-  return [
-    s?.housingProgram,
-    s?.affordability,
-    s?.workDescription,
-    s?.permitStatus,
-    s?.developmentStatus,
-    s?.permitNumber,
-    s?.addr,
-    ...(Array.isArray(s?.addressAliases) ? s.addressAliases : []),
-  ].map(v => String(v || '')).join(' ');
-}
-
-function siteIsAffordable(s) {
-  if (s?.isAffordable === true || s?.incomeRestricted === true) return true;
-  if (String(s?.isAffordable).toLowerCase() === 'true' || String(s?.incomeRestricted).toLowerCase() === 'true') return true;
-  return AFFORDABLE_TEXT.test(siteTextForProgram(s));
-}
-
-function affordabilityLabel(s) {
-  if (!siteIsAffordable(s)) return 'Market rate';
-  return /\bed1\b|executive directive 1/i.test(siteTextForProgram(s)) ? 'Affordable / ED1' : 'Affordable';
-}
-
-function affordableRentRatio() {
-  const pct = Number(currentUserMetrics().affordableRentPctOfMarket || DEFAULT_USER_METRICS.affordableRentPctOfMarket);
-  return Math.max(0.1, Math.min(1, pct / 100));
-}
-
-function landPerDoorForSite(s) {
-  const metrics = currentUserMetrics();
-  return siteIsAffordable(s)
-    ? Number(metrics.imputedLandPerDoorAffordable || DEFAULT_USER_METRICS.imputedLandPerDoorAffordable)
-    : Number(metrics.imputedLandPerDoorMarket || DEFAULT_USER_METRICS.imputedLandPerDoorMarket);
+function landPerDoorForSite() {
+  return Number(currentUserMetrics().imputedLandPerDoorMarket || DEFAULT_USER_METRICS.imputedLandPerDoorMarket);
 }
 
 function canUseDoorLandBasis(s) {
@@ -666,7 +621,7 @@ function imputedLandFromDoorSetting(s) {
 function landValueSourceNote(s) {
   if (!isOffMarketSite(s)) return 'Used as land basis in underwriting';
   if (canUseDoorLandBasis(s)) {
-    return `${affordabilityLabel(s)} land setting: ${fmtD(landPerDoorForSite(s))}/door x ${(s.units || 0).toLocaleString()} doors`;
+    return `Land setting: ${fmtD(landPerDoorForSite(s))}/door x ${(s.units || 0).toLocaleString()} doors`;
   }
   if (s?.landValueSource === 'recent_sales_comps') {
     const metric = s.landValueMetric || 'sales comp metric';
@@ -908,14 +863,20 @@ function buildSiteQueryParams(offset = 0) {
   if (g('f-d-issued')?.checked) devStatuses.push('permit_issued');
   if (g('f-d-unknown')?.checked) devStatuses.push('possibly_started_unknown');
   if (devStatuses.length && devStatuses.length < 5) qs.set('devStatus', devStatuses.join(','));
-  if (g('f-affordable')?.checked) qs.set('affordable', 'true');
 
   const pairs = [
     ['f-hood', 'hood'], ['f-zone', 'zone'], ['f-umin', 'minUnits'], ['f-umax', 'maxUnits'],
-    ['f-pmin', 'minPrice'], ['f-pmax', 'maxPrice'], ['f-cmin', 'minCost'], ['f-cmax', 'maxCost'],
+    ['f-cmin', 'minCost'], ['f-cmax', 'maxCost'],
     ['mf-i', 'minIRR'], ['mf-s', 'minSpread'], ['mf-c', 'minCapoc'],
   ];
   pairs.forEach(([id, key]) => { const val = g(id)?.value; if (val) qs.set(key, val); });
+  const offMarketIncluded = g('f-comp')?.checked === true;
+  if (!offMarketIncluded) {
+    const minPrice = g('f-pmin')?.value;
+    const maxPrice = g('f-pmax')?.value;
+    if (minPrice) qs.set('minPrice', minPrice);
+    if (maxPrice) qs.set('maxPrice', maxPrice);
+  }
   const minProfit = Number(g('mf-p')?.value || 0);
   if (minProfit) qs.set('minProfit', String(minProfit * 1000));
   return qs;
@@ -986,7 +947,6 @@ function applyFilters() {
   const srt = g('srt')?.value||'profit';
   const ffs = g('f-fs')?.checked!==false, frti = g('f-rti')?.checked!==false, fcomp = g('f-comp')?.checked!==false;
   const watchOnly = g('f-watch')?.checked === true;
-  const affordableOnly = g('f-affordable')?.checked === true;
   const devStatuses = [];
   if (g('f-d-submitted')?.checked) devStatuses.push('submitted');
   if (g('f-d-plan')?.checked) devStatuses.push('plan_check');
@@ -1010,7 +970,6 @@ function applyFilters() {
     if (!devStatuses.length) return false;
     if (devStatuses.length && !devMatch) return false;
     if (watchOnly && !isWatched(s.id)) return false;
-    if (affordableOnly && !siteIsAffordable(s)) return false;
     if (!types.length || !types.includes(s.type)) return false;
     if (hood && s.hood !== hood) return false;
     if (zone && s.zone !== zone) return false;
@@ -1129,7 +1088,6 @@ function renderCards() {
     const watched = isWatched(s.id);
     const displayAddr = siteDisplayAddress(s);
     const addrNote = siteAddressNote(s);
-    const affordable = siteIsAffordable(s);
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
       <div class="ch">
         <div><div class="ca">${escapeText(displayAddr)}</div><div class="cm">${addrNote ? escapeText(addrNote) + ' &middot; ' : ''}${s.hood} &middot; ${s.zone} &middot; ${(s.lot||0).toLocaleString()} SF &middot; ${s.units} units</div></div>
@@ -1137,7 +1095,7 @@ function renderCards() {
       </div>
       <div class="bdgs">
         ${offMarket?'<span class="bdg b4">Off-market</span>':s.rti?'<span class="bdg b1">RTI</span>':'<span class="bdg b2">For sale</span>'}
-        <span class="bdg b3">${s.type}</span>${affordable?'<span class="bdg b1">Affordable</span>':''}<span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${offMarket?'<span class="bdg b4">' + status + '</span>':''}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
+        <span class="bdg b3">${s.type}</span><span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${offMarket?'<span class="bdg b4">' + status + '</span>':''}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${pc}">${fmtM(prof)}</div></div>
@@ -1170,11 +1128,10 @@ function renderMapView() {
     const label = `${displayAddr} - ${fmtM(valuation.netProfit)}`.replace(/"/g, '');
     const price = isForSaleSite(s) ? fmtM(siteAskPrice(s)) : 'Not for sale';
     const profitColor = (valuation.netProfit || 0) >= 0 ? '#1d9e75' : '#e24b4a';
-    const affordable = siteIsAffordable(s);
     return `<button class="pin" data-label="${xmlEscape(label)}" onclick="openDetail(${s.id})" style="left:${pt.x}%;top:${pt.y}%;background:${color}">
       <span class="pintip">
         <b>${xmlEscape(displayAddr)}</b>
-        <em>${addrNote ? xmlEscape(addrNote) + ' · ' : ''}${xmlEscape(developmentStatusLabel(s))} · ${affordable ? 'Affordable · ' : ''}${s.units || 0} units · ${xmlEscape(s.hood || '')}</em>
+        <em>${addrNote ? xmlEscape(addrNote) + ' · ' : ''}${xmlEscape(developmentStatusLabel(s))} · ${s.units || 0} units · ${xmlEscape(s.hood || '')}</em>
         <span><small>Price</small><strong>${price}</strong></span>
         <span><small>Net profit</small><strong style="color:${profitColor}">${fmtM(valuation.netProfit)}</strong></span>
         <span><small>Cap on cost</small><strong>${valuation.capOnCost || 0}%</strong></span>
@@ -1245,9 +1202,7 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
   const opexRatio = metricRate('expenseRatioPct') || 0.35;
   const vacancyRate = metricRate('vacancyPct') || 0.05;
   const baseGrossPotentialRent = Math.round(s.grossPotentialRent || (storedNoi ? storedNoi / Math.max(0.01, (1 - opexRatio) * (1 - vacancyRate)) : 0));
-  const affordableCap = siteIsAffordable(s) ? Math.round(baseGrossPotentialRent * affordableRentRatio()) : 0;
-  const restrictedBaseGrossPotentialRent = affordableCap ? Math.min(baseGrossPotentialRent, affordableCap) : baseGrossPotentialRent;
-  const grossPotentialRent = Math.round(restrictedBaseGrossPotentialRent * (1 + (plan.rentPremium || 0)));
+  const grossPotentialRent = Math.round(baseGrossPotentialRent * (1 + (plan.rentPremium || 0)));
   const vacancyLoss = Math.round(recastIncome ? grossPotentialRent * vacancyRate : (s.vacancyLoss ?? grossPotentialRent * vacancyRate));
   const otherIncome = Math.round(s.otherIncome ?? (s.units || 0) * 600);
   const effectiveGrossIncome = Math.round(recastIncome ? grossPotentialRent - vacancyLoss + otherIncome : (s.effectiveGrossIncome || (grossPotentialRent - vacancyLoss + otherIncome)));
@@ -1271,10 +1226,6 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
   const debtService = Math.round(recastIncome ? loanAmount * interestRate : (s.debtService ?? loanAmount * interestRate));
   return {
     grossPotentialRent,
-    marketGrossPotentialRent: baseGrossPotentialRent,
-    affordableRentLimit: affordableCap,
-    affordableRentPctOfMarket: siteIsAffordable(s) ? Math.round(affordableRentRatio() * 1000) / 10 : null,
-    rentRestricted: siteIsAffordable(s),
     vacancyLoss,
     otherIncome,
     effectiveGrossIncome,
@@ -1420,7 +1371,6 @@ function renderDetail(s) {
   const listingStatus = siteListingStatus(s);
   const devStatus = developmentStatusLabel(s);
   const offMarket = isOffMarketSite(s);
-  const affordability = affordabilityLabel(s);
   const landLabel=offMarket?'Imputed land value':'Asking price';
   const landNote=landValueSourceNote(s);
   const metrics = currentUserMetrics();
@@ -1468,7 +1418,6 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">Zoning</div><div class="icv">${s.zone}</div></div>
       <div class="ic"><div class="icl">Listing status</div><div class="icv">${listingStatus}</div></div>
       <div class="ic"><div class="icl">Development status</div><div class="icv">${devStatus}</div></div>
-      <div class="ic"><div class="icl">Affordability</div><div class="icv">${affordability}</div></div>
       <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${s.units} / ${s.usf} SF</div></div>
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${land?fmtD(land):'Not provided'} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
@@ -1510,8 +1459,6 @@ function renderDetail(s) {
     <div id="appraisal-${s.id}" style="font-size:10px;color:#aaa">Loading appraisal comps...</div>
     <div class="sh">Income statement</div>
     <table class="ct">
-      ${income.rentRestricted ? `<tr><td>Market gross potential rent</td><td>${fmtD(income.marketGrossPotentialRent)}</td></tr>
-      <tr><td>Affordable rent cap (${income.affordableRentPctOfMarket}% of market)</td><td>${fmtD(income.affordableRentLimit)}</td></tr>` : ''}
       <tr><td>Gross potential rent</td><td>${fmtD(income.grossPotentialRent)}</td></tr>
       <tr><td>Vacancy loss (${vacancyLabel}%)</td><td style="color:#e24b4a">-${fmtD(income.vacancyLoss)}</td></tr>
       <tr><td>Other income</td><td>${fmtD(income.otherIncome)}</td></tr>
@@ -2283,11 +2230,7 @@ function incomeStatementRows(s, income = incomeStatementForSite(s)) {
   const rows = [
     xlsTitleRow('Income Statement', s.addr),
     xlsHeaderRow(['Line Item', 'Annual Amount', '$ / Unit', '% of EGI', 'Notes']),
-    ...(income.rentRestricted ? [
-      xlsRow(['Market Gross Potential Rent', cellMoney(income.marketGrossPotentialRent), s.units ? cellMoney(Math.round(income.marketGrossPotentialRent / s.units)) : '', '', 'Unrestricted market rent before Affordable cap']),
-      xlsRow(['Affordable Rent Limit', cellMoney(income.affordableRentLimit), s.units ? cellMoney(Math.round(income.affordableRentLimit / s.units)) : '', '', `${income.affordableRentPctOfMarket}% of market rent per user settings`], 'note'),
-    ] : []),
-    xlsRow(['Gross Potential Rent', cellMoney(income.grossPotentialRent), s.units ? cellMoney(Math.round(income.grossPotentialRent / s.units)) : '', '', income.rentRestricted ? 'Affordable-capped scheduled rent before vacancy' : 'Scheduled market rent before vacancy']),
+    xlsRow(['Gross Potential Rent', cellMoney(income.grossPotentialRent), s.units ? cellMoney(Math.round(income.grossPotentialRent / s.units)) : '', '', 'Scheduled market rent before vacancy']),
     xlsRow(['Vacancy Loss', cellMoneyRed(income.vacancyLoss), s.units ? cellMoneyRed(Math.round(income.vacancyLoss / s.units)) : '', income.grossPotentialRent ? cellPct(Math.round((income.vacancyLoss / income.grossPotentialRent) * 1000) / 10) : '', 'Modeled vacancy and credit loss']),
     xlsRow(['Other Income', cellMoney(income.otherIncome), s.units ? cellMoney(Math.round(income.otherIncome / s.units)) : '', '', 'Parking, laundry, storage, fees and other ancillary income']),
     xlsRow(['Effective Gross Income', cellMoney(income.effectiveGrossIncome), s.units ? cellMoney(Math.round(income.effectiveGrossIncome / s.units)) : '', cellPct(100), 'Gross rent less vacancy plus other income'], 'section'),
@@ -2592,7 +2535,6 @@ async function exportExcel(id) {
     xlsRow(['Neighborhood', s.hood]),
     xlsRow(['Zoning', s.zone]),
     xlsRow(['Project Type', s.type]),
-    xlsRow(['Affordability', affordabilityLabel(s)]),
     xlsRow(['Construction Plan', costs.planLabel]),
     xlsRow(['Hard Cost / SF', cellMoney(hardPerSf)]),
     xlsRow(['Soft Cost % of Hard Cost', cellPct(Math.round((costs.softPct || 0) * 1000) / 10)]),
@@ -2603,8 +2545,6 @@ async function exportExcel(id) {
     xlsRow(['Annual Rent Growth', cellPct(metrics.rentGrowthPct)]),
     xlsRow(['Exit Cap Spread', cellNumber(metrics.exitCapSpreadBps), 'bps']),
     xlsRow(['Market Land / Door', cellMoney(metrics.imputedLandPerDoorMarket)]),
-    xlsRow(['Affordable Land / Door', cellMoney(metrics.imputedLandPerDoorAffordable)]),
-    xlsRow(['Affordable Rent Cap', cellPct(metrics.affordableRentPctOfMarket)]),
     xlsRow(['Construction Months', cellNumber(costs.months || 18)]),
     xlsRow(['Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10)]),
     xlsRow(['Units', cellNumber(s.units || 0)]),
@@ -2628,7 +2568,6 @@ async function exportExcel(id) {
     xlsTitleRow('Underwriting', s.addr),
     xlsHeaderRow(['Metric', 'Value', '$ / SF', '$ / Unit', 'Notes']),
     xlsRow(['Construction Plan', costs.planLabel, '', '', costs.planNote || '']),
-    xlsRow(['Affordability', affordabilityLabel(s), '', '', income.rentRestricted ? `${income.affordableRentPctOfMarket}% rent cap applied` : 'Market-rate rent model']),
     xlsRow(['Hard Cost Basis', costs.source || 'current assumption', cellMoney(hardPerSf), '', 'Selected plan hard-cost assumption']),
     xlsRow(['Soft Cost %', cellPct(Math.round((costs.softPct || 0) * 1000) / 10), '', '', 'Selected plan soft-cost assumption']),
     xlsRow(['Construction Months', cellNumber(costs.months || 18), '', '', 'Selected plan duration for carry cost']),
@@ -2655,13 +2594,8 @@ async function exportExcel(id) {
     xlsTitleRow('Rent Roll', s.addr),
     xlsSectionRow('Rent Assumptions'),
     xlsRow(['Submarket', s.hood]),
-    xlsRow(['Affordability', affordabilityLabel(s)]),
     xlsRow(['Construction Plan', costs.planLabel]),
     xlsRow(['Plan Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10)]),
-    ...(income.rentRestricted ? [
-      xlsRow(['Market Annual Gross Rent', cellMoney(income.marketGrossPotentialRent)]),
-      xlsRow(['Affordable Rent Limit', cellMoney(income.affordableRentLimit), `${income.affordableRentPctOfMarket}% of market`]),
-    ] : []),
     xlsRow(['Implied Monthly Gross Rent', cellMoney(rentMonthly)]),
     xlsRow(['Implied Annual Gross Rent', cellMoney(rentMonthly * 12)]),
     xlsRow(['Vacancy', cellPct(metrics.vacancyPct)]),
@@ -2760,7 +2694,6 @@ async function exportPDF(id) {
   const pdfDebtService = Math.round(pdfLoan * (metrics.interestRatePct / 100));
   const pdfRentGrowth = metrics.rentGrowthPct / 100;
   const pdfRentImpact = signedPlanPct(costs.rentPremium);
-  const pdfAffordability = affordabilityLabel(s);
   const pdfCompQuery = compQueryForSite(s, 12);
   const [pdfComps, pdfRentComps] = await Promise.all([
     fetchJSON('/api/comps/submarket/' + encodeURIComponent(s.hood) + pdfCompQuery).catch(() => null),
@@ -2833,7 +2766,7 @@ async function exportPDF(id) {
   <h1>${displayAddr}</h1>
   ${addrNote ? `<div class="sub">${escapeText(addrNote)}</div>` : ''}
   <div class="sub">${s.hood || ''}, Los Angeles, CA &nbsp;|&nbsp; ${s.zone || ''} Zoning &nbsp;|&nbsp; ${s.units}-Unit ${s.type || 'Multifamily'}</div>
-  <div class="sub">${developmentStatusLabel(s)} &nbsp;|&nbsp; ${pdfAffordability} &nbsp;|&nbsp; ${isOffMarketSite(s) ? 'Off-Market / Not For Sale' : 'Active Listing — For Sale'}</div>
+  <div class="sub">${developmentStatusLabel(s)} &nbsp;|&nbsp; ${isOffMarketSite(s) ? 'Off-Market / Not For Sale' : 'Active Listing — For Sale'}</div>
   <div class="date">Report Date: ${today} &nbsp;|&nbsp; Prepared by ParceLLA Analytics Engine</div>
   <div class="conf">CONFIDENTIAL — FOR APPROVED RECIPIENTS ONLY</div>
 </div>
@@ -2900,7 +2833,6 @@ async function exportPDF(id) {
       <tr><td>Zoning Classification</td><td>${s.zone || 'R3'}</td></tr>
       <tr><td>Lot Size</td><td>${(s.lot||5000).toLocaleString()} SF</td></tr>
       <tr><td>Project Type</td><td>${s.type || 'Multifamily'}</td></tr>
-      <tr><td>Affordability</td><td>${pdfAffordability}</td></tr>
       <tr><td>Proposed Units</td><td>${s.units} units</td></tr>
       <tr><td>Avg Unit Size</td><td>${s.usf || 800} SF</td></tr>
       <tr><td>Total Building SF</td><td>${((s.units||12)*(s.usf||800)).toLocaleString()} SF</td></tr>
@@ -3055,14 +2987,11 @@ async function exportPDF(id) {
       <tr><td>1 Bedroom</td><td>${Math.round(s.units*0.50)}</td><td>$3,400</td><td>${fmtD(Math.round(s.units*0.50)*3400*12)}</td></tr>
       <tr><td>2 Bedroom</td><td>${Math.round(s.units*0.20)}</td><td>$4,400</td><td>${fmtD(Math.round(s.units*0.20)*4400*12)}</td></tr>
       <tr><td>3 Bedroom</td><td>${Math.round(s.units*0.05)}</td><td>$5,800</td><td>${fmtD(Math.round(s.units*0.05)*5800*12)}</td></tr>
-      ${pdfIncome.rentRestricted ? `<tr><td colspan="3">Affordable rent cap (${pdfIncome.affordableRentPctOfMarket}% of market)</td><td>${fmtD(pdfIncome.affordableRentLimit)}</td></tr>` : ''}
       <tr class="tot"><td colspan="3">Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
     </table>
 
     <h3>Operating Statement</h3>
     <table>
-      ${pdfIncome.rentRestricted ? `<tr><td>Market Gross Potential Rent</td><td>${fmtD(pdfIncome.marketGrossPotentialRent)}</td></tr>
-      <tr><td>Affordable Rent Limit</td><td>${fmtD(pdfIncome.affordableRentLimit)}</td></tr>` : ''}
       <tr><td>Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
       <tr><td>Less: Vacancy (${metrics.vacancyPct}%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.vacancyLoss)})</td></tr>
       <tr><td>Plus: Other Income</td><td>${fmtD(pdfIncome.otherIncome)}</td></tr>
@@ -3271,7 +3200,6 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
 function resetFilters() {
   ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-nh','f-d-submitted','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
   const watch=g('f-watch'); if(watch)watch.checked=false;
-  const affordable=g('f-affordable'); if(affordable)affordable.checked=false;
   ['f-hood','f-zone'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-q','f-umin','f-umax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c','mf-hc','mf-rate'].forEach(id=>{const el=g(id);if(el)el.value='';});
   const plan=g('mf-plan'); if(plan)plan.value='auto';

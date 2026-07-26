@@ -20,7 +20,6 @@ const DEFAULTS = {
   demolitionCost: 45000, // flat rate if demo required
   exitCapSpread:  0.0025, // 25bps cap rate expansion at exit
   otherIncomePerUnit: 600, // parking/laundry/storage and miscellaneous annual income
-  affordableRentPctOfMarket: 0.65, // default income-restricted rent cap as % of market rent
 };
 
 /**
@@ -101,10 +100,7 @@ export function runModel(site, overrides = {}) {
     (unitMix.two    ?? 0) * R.two    +
     (unitMix.three  ?? 0) * R.three
   );
-  const marketGrossPotentialRent = blendedRent * 12 * units;
-  const rentRestricted = site.isAffordable === true || site.incomeRestricted === true;
-  const affordableRentLimit = rentRestricted ? marketGrossPotentialRent * cfg.affordableRentPctOfMarket : 0;
-  const grossPotentialRent  = rentRestricted ? Math.min(marketGrossPotentialRent, affordableRentLimit) : marketGrossPotentialRent;
+  const grossPotentialRent  = blendedRent * 12 * units;
   const vacancyLoss         = grossPotentialRent * cfg.vacancyRate;
   const otherIncome         = (cfg.otherIncomePerUnit ?? 0) * units;
   const effectiveGrossIncome = grossPotentialRent - vacancyLoss + otherIncome;
@@ -186,7 +182,7 @@ export function runModel(site, overrides = {}) {
     loanAmount, equity,
 
     // income
-    blendedRent, marketGrossPotentialRent, affordableRentLimit, affordableRentPctOfMarket: rentRestricted ? cfg.affordableRentPctOfMarket * 100 : null, rentRestricted, grossPotentialRent, vacancyLoss, otherIncome, effectiveGrossIncome, operatingExpenses, expenseDetail, noi, year5Noi,
+    blendedRent, grossPotentialRent, vacancyLoss, otherIncome, effectiveGrossIncome, operatingExpenses, expenseDetail, noi, year5Noi,
 
     // valuation
     stabilizedValue, devSpread, devSpreadPct, capRateOnCost, marketCapRate: cap, exitCapRate,

@@ -87,8 +87,8 @@ function scoreIncomeToRent(medianIncome, avgRent) {
   // Annual rent / median income ratio
   const annualRent = avgRent * 12;
   const ratio = annualRent / medianIncome;
-  // Lower ratio = more affordable = more demand headroom
-  if (ratio <= 0.25) return 95;   // very affordable, strong demand
+  // Lower ratio = lower rent burden = more demand headroom
+  if (ratio <= 0.25) return 95;   // very low rent burden, strong demand
   if (ratio <= 0.30) return 85;
   if (ratio <= 0.35) return 70;
   if (ratio <= 0.40) return 55;
