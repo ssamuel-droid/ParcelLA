@@ -345,7 +345,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .ct{width:100%;font-size:11px;border-collapse:collapse}.ct td{padding:5px 0;border-bottom:0.5px solid #edf1f4}.ct td:last-child{text-align:right;font-weight:800}.ct tr.tot td{font-weight:900;border-top:1px solid #d8dee7;border-bottom:none;padding-top:6px}.wfr{margin-bottom:5px}.wfl{display:flex;justify-content:space-between;font-size:9px;color:#4d5969;margin-bottom:2px}.wft{height:8px;background:#edf1f5;border-radius:3px;overflow:hidden}.wff{height:100%;border-radius:3px}
 .nb{background:#fffbf0;border:1px solid #f0e0b0;border-left:3px solid var(--gold);border-radius:7px;padding:9px 11px;font-size:11px;line-height:1.55;color:#3f4a5a;margin-top:6px}.gb{padding:7px 12px;background:var(--gold);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-top:5px}.ab{width:100%;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:800;cursor:pointer;margin-top:6px}.ap{background:var(--navy);color:#fff}.as{background:#fff;color:var(--navy);border:1px solid var(--navy)}
 .maptabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:5px}.mapbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 4px;font-size:9px;font-weight:800;cursor:pointer}.mapbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.mapcard{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:5px;background:#fff;text-decoration:none}.mapcard img{width:100%;height:152px;object-fit:cover;display:block}.mapcap{padding:5px 8px;font-size:9px;color:#536071;background:#f8fafc;border-top:1px solid var(--line)}.maplinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:6px}.maplinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}.maplinks a:hover{border-color:var(--gold);background:#fffdf7}
-.viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:fill;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:5;transform:translate(-50%,-50%) scale(1.12)}.pin:after{display:none!important}.pintip{position:absolute;left:21px;top:-18px;width:224px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;box-shadow:0 10px 25px rgba(15,31,61,.2);text-align:left;color:var(--ink);font-size:10px;line-height:1.25;display:none;pointer-events:none}.pin:hover .pintip{display:block}.pintip b{display:block;font-size:11px;margin-bottom:2px;overflow-wrap:anywhere}.pintip em{display:block;font-style:normal;color:#6f7b8c;margin-bottom:6px}.pintip span{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #edf1f4;padding-top:4px;margin-top:4px}.pintip strong{font-size:10px}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}
+.viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:fill;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:5;transform:translate(-50%,-50%) scale(1.12)}.pin:after{display:none!important}.pintip{position:absolute;left:21px;top:-18px;width:224px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;box-shadow:0 10px 25px rgba(15,31,61,.2);text-align:left;color:var(--ink);font-size:10px;line-height:1.25;display:none;pointer-events:none}.pin:hover .pintip{display:block}.pintip b{display:block;font-size:11px;margin-bottom:2px;overflow-wrap:anywhere}.pintip em{display:block;font-style:normal;color:#6f7b8c;margin-bottom:6px}.pintip span{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #edf1f4;padding-top:4px;margin-top:4px}.pintip strong{font-size:10px}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}.ownerbox{border:1px solid var(--line);border-left:3px solid var(--navy);border-radius:7px;padding:9px 10px;background:#f8fafc;color:#3f4a5a;display:grid;gap:3px;font-size:12px;line-height:1.35}.ownerbox b{color:var(--navy);font-size:13px}.ownerbox span{color:#657184}.ownerct td:first-child{color:#6f7b8c;font-weight:800;text-transform:uppercase;font-size:11px}.ownerct td:last-child{text-align:right;overflow-wrap:anywhere}
+.logo{font-size:18px}.navbtn,.albl,.ntag{font-size:12px}.cb,.sbs,.sb2 input,.bp,.br,.ss,.cm,.ct,.nb,.gb,.readitem,.ownerbox{font-size:12px}.ca{font-size:15px}.cp{font-size:14px}.tbl,.dht{font-size:14px}.kpv{font-size:14px}.mbv{font-size:17px}.sh,.sb h4,.mfl,.kpl,.icl,.mbl,.bdg,.mapbtn,.mapcap,.maplinks a,.viewbtn,.watchbtn,.layerbtn,.topdeal span,.sourcelinks a{font-size:10px}.icv{font-size:13px}.da{font-size:10px}
 @media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.settings-grid{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}}
 @media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}}
 @media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg,.maplinks,.sourcelinks,.settings-grid{grid-template-columns:1fr}.viewtabs{width:100%;margin-left:0}.viewbtn{flex:1}}
@@ -858,6 +859,97 @@ function sourceLinksHTML(s) {
     ['County recorder', officialResearchLink(s.addr, 'Los Angeles county recorder deed sale')],
   ];
   return `<div class="sourcelinks">${links.map(([label, href]) => `<a href="${href}" target="_blank" rel="noopener">${label}</a>`).join('')}</div>`;
+}
+
+function ownerQueryForSite(s = {}) {
+  const p = new URLSearchParams();
+  if (s.addr) p.set('address', s.addr);
+  if (s.lat && s.lng) {
+    p.set('lat', s.lat);
+    p.set('lng', s.lng);
+  }
+  if (s.apn || s.ownerApn) p.set('apn', s.apn || s.ownerApn);
+  return p.toString();
+}
+
+function siteOwnerInfo(s = {}) {
+  if (!s.ownerName && !s.ownerMailingAddress && !s.ownerApplicantName) return null;
+  return {
+    found: true,
+    ownerName: s.ownerName || s.ownerApplicantName || null,
+    mailingAddress: s.ownerMailingAddress || null,
+    situsAddress: s.ownerSitusAddress || s.addr || null,
+    apn: s.ownerApn || s.apn || null,
+    source: s.ownerSource || 'Permit/source record',
+    applicantName: s.ownerApplicantName || null,
+  };
+}
+
+async function fetchOwnerInfo(s = {}) {
+  const localOwner = siteOwnerInfo(s);
+  if (localOwner?.ownerName) return localOwner;
+  const query = ownerQueryForSite(s);
+  if (!query) return null;
+  return await fetchJSON('/api/owners?' + query);
+}
+
+function ownerLine(label, value) {
+  return value ? `<tr><td>${escapeText(label)}</td><td>${escapeText(value)}</td></tr>` : '';
+}
+
+function ownerMoneyLine(label, value) {
+  return Number(value) ? `<tr><td>${escapeText(label)}</td><td>${fmtD(value)}</td></tr>` : '';
+}
+
+function ownerInfoHTML(owner, s = {}) {
+  if (!owner) return '<div class="ownerbox"><b>Owner lookup unavailable</b><span>Owner data could not be loaded for this address.</span></div>';
+  if (!owner.found && !owner.ownerName) {
+    return `<div class="ownerbox">
+      <b>Owner not found in imported assessor feed</b>
+      <span>${escapeText(owner.message || 'No owner record was returned for this parcel/address.')}</span>
+      <span>Address checked: ${escapeText(owner.situsAddress || s.addr || '')}</span>
+      <span>Source: ${escapeText(owner.source || 'Assessor owner feed')}</span>
+    </div>`;
+  }
+  return `<table class="ct ownerct">
+    ${ownerLine('Owner', owner.ownerName)}
+    ${ownerLine('Applicant / contact', owner.applicantName)}
+    ${ownerLine('Mailing address', owner.mailingAddress)}
+    ${ownerLine('Parcel address', owner.situsAddress || s.addr)}
+    ${ownerLine('APN / AIN', owner.apn)}
+    ${ownerLine('Last sale date', owner.lastSaleDate || owner.recordingDate)}
+    ${ownerMoneyLine('Last sale amount', owner.lastSaleAmount)}
+    ${ownerMoneyLine('Land assessed value', owner.landValue)}
+    ${ownerMoneyLine('Improvement assessed value', owner.improvementValue)}
+    ${ownerLine('Use / zoning', [owner.useDescription || owner.useCode, owner.zoning].filter(Boolean).join(' / '))}
+    ${ownerLine('Source', owner.source)}
+  </table>`;
+}
+
+function ownerPDFRows(owner, s = {}) {
+  const rows = [
+    ['Owner', owner?.ownerName || 'Not returned'],
+    ['Applicant / Contact', owner?.applicantName || ''],
+    ['Mailing Address', owner?.mailingAddress || ''],
+    ['Parcel Address', owner?.situsAddress || s.addr || ''],
+    ['APN / AIN', owner?.apn || ''],
+    ['Last Sale Date', owner?.lastSaleDate || owner?.recordingDate || ''],
+    ['Last Sale Amount', owner?.lastSaleAmount ? fmtD(owner.lastSaleAmount) : ''],
+    ['Source', owner?.source || 'Not returned'],
+  ].filter(([, value]) => value);
+  return rows.map(([label, value]) => `<tr><td>${escapeText(label)}</td><td>${escapeText(value)}</td></tr>`).join('');
+}
+
+async function hydrateOwnerInfo(s) {
+  const el = g('owner-' + s.id);
+  if (!el) return;
+  el.innerHTML = '<div class="ownerbox"><b>Loading owner info...</b><span>Checking the assessor owner feed for this parcel.</span></div>';
+  try {
+    const owner = await fetchOwnerInfo(s);
+    el.innerHTML = ownerInfoHTML(owner, s);
+  } catch (e) {
+    el.innerHTML = `<div class="ownerbox"><b>Owner lookup failed</b><span>${escapeText(e.message || 'Could not load owner data.')}</span></div>`;
+  }
 }
 
 function checkedIds(ids) {
@@ -1570,6 +1662,8 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
     <button class="ab as" onclick="toggleWatch(${s.id}, event)">${isWatched(s.id)?'Remove from watchlist':'Save to watchlist'}</button>
+    <div class="sh">Owner information</div>
+    <div id="owner-${s.id}">${ownerInfoHTML(siteOwnerInfo(s), s)}</div>
     <div class="sh">Map options</div>
     ${renderMapPanel(s)}
     <div class="sh">Returns</div>
@@ -1629,6 +1723,7 @@ function renderDetail(s) {
     <button class="ab as" onclick="shareDeal()">⤴ Copy share link</button>
     <button class="ab as" onclick="exportExcel(${s.id})">Download Excel workbook</button>
     <button class="ab ap" onclick="exportPDF(${s.id})">↓ Download PDF deal memo</button>`;
+  hydrateOwnerInfo(s);
 }
 
 async function loadComps(siteOrHood) {
@@ -2648,6 +2743,7 @@ async function exportExcel(id) {
     fetchJSON('/api/comps/submarket/' + encodeURIComponent(s.hood) + compQuery),
     fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(s.hood) + compQuery),
   ]);
+  const ownerInfo = await fetchOwnerInfo(s).catch(() => null);
 
   const costs = costModelForSite(s);
   const income = incomeStatementForSite(s, costs);
@@ -2685,6 +2781,18 @@ async function exportExcel(id) {
     xlsRow(['Neighborhood', s.hood]),
     xlsRow(['Zoning', s.zone]),
     xlsRow(['Project Type', s.type]),
+    xlsRow(['']),
+    xlsSectionRow('Owner / Contact'),
+    xlsRow(['Owner', ownerInfo?.ownerName || 'Not returned']),
+    xlsRow(['Applicant / Contact', ownerInfo?.applicantName || '']),
+    xlsRow(['Mailing Address', ownerInfo?.mailingAddress || '']),
+    xlsRow(['Parcel Address', ownerInfo?.situsAddress || s.addr || '']),
+    xlsRow(['APN / AIN', ownerInfo?.apn || '']),
+    xlsRow(['Last Sale Date', ownerInfo?.lastSaleDate || ownerInfo?.recordingDate || '']),
+    xlsRow(['Last Sale Amount', ownerInfo?.lastSaleAmount ? cellMoney(ownerInfo.lastSaleAmount) : '']),
+    xlsRow(['Owner Data Source', ownerInfo?.source || 'Not returned']),
+    xlsRow(['']),
+    xlsSectionRow('Underwriting Inputs'),
     xlsRow(['Construction Plan', costs.planLabel]),
     xlsRow(['Unit Mix Source', unitMixSourceText(s)]),
     xlsRow(['Hard Cost / SF', cellMoney(hardPerSf)]),
@@ -2848,9 +2956,10 @@ async function exportPDF(id) {
   const pdfRentGrowth = metrics.rentGrowthPct / 100;
   const pdfRentImpact = signedPlanPct(costs.rentPremium);
   const pdfCompQuery = compQueryForSite(s, 12);
-  const [pdfComps, pdfRentComps] = await Promise.all([
+  const [pdfComps, pdfRentComps, pdfOwner] = await Promise.all([
     fetchJSON('/api/comps/submarket/' + encodeURIComponent(s.hood) + pdfCompQuery).catch(() => null),
     fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(s.hood) + pdfCompQuery).catch(() => null),
+    fetchOwnerInfo(s).catch(() => null),
   ]);
   const pdfAppraisal = buildAppraisalEngine(s, pdfComps, pdfRentComps, costs, pdfIncome, valuation);
   entryCap = pdfAppraisal.entryCap || entryCap;
@@ -2989,6 +3098,10 @@ async function exportPDF(id) {
       <tr><td>Proposed Units</td><td>${s.units} units</td></tr>
       <tr><td>Avg Unit Size</td><td>${s.usf || 800} SF</td></tr>
       <tr><td>Total Building SF</td><td>${((s.units||12)*(s.usf||800)).toLocaleString()} SF</td></tr>
+    </table>
+    <h3>Owner / Contact</h3>
+    <table>
+      ${ownerPDFRows(pdfOwner, s)}
     </table>
   </div>
   <div>

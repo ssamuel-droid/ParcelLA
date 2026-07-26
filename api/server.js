@@ -36,6 +36,7 @@ import {
 } from './middleware/middleware.js';
 
 import sitesRouter     from './routes/sites.js';
+import ownersRouter    from './routes/owners.js';
 import modelRouter     from './routes/model.js';
 import compsRouter     from './routes/comps.js';
 import notesRouter     from './routes/notes.js';
@@ -99,6 +100,7 @@ app.get('/favicon.svg', (req, res) => res.sendFile(join(publicDir, 'favicon.svg'
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/sites',       sitesRouter);
+app.use('/api/owners',      ownersRouter);
 app.use('/api/model',       modelRouter);
 app.use('/api/comps',       compsRouter);
 app.use('/api/notes',       notesRouter);

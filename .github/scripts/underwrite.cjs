@@ -185,6 +185,14 @@ const RESIDENTIAL_PROJECT_TEXT = /(apartment|dwelling|residential|multifamily|mu
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
 const DEFAULT_UNIT_MIX = { s: 0.25, o: 0.50, t: 0.20, th: 0.05 };
 
+function firstText(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text && text !== '0' && text.toLowerCase() !== 'null') return text;
+  }
+  return null;
+}
+
 function unitsFromText(value) {
   const text = String(value || '');
   const match = text.match(/(\d[\d,]*)\s*[- ]?\s*(?:unit|dwelling|apartment)/i);
@@ -254,6 +262,41 @@ function unitMixForPermit(p, type) {
   const parsed = parseUnitMixFromText(p.work_description, p.use_desc, p.permit_type, p.permit_subtype);
   if (parsed) return { ...parsed, source: 'Parsed from permit text' };
   return { mix: { ...DEFAULT_UNIT_MIX }, counts: null, parsedTotal: 0, source: 'Default market mix' };
+}
+
+function ownerInfoForPermit(p = {}) {
+  const ownerName = firstText(
+    p.owner_name,
+    p.ownerName,
+    p.owner,
+    p.ownername,
+    p.property_owner,
+    p.first_owner_name,
+    p.First_Owner_Name,
+    p.firstOwnerName
+  );
+  const applicantName = firstText(
+    p.applicant_name,
+    p.applicantName,
+    p.applicant,
+    p.contact_name,
+    p.contractor_name
+  );
+  const mailingAddress = firstText(
+    p.owner_mailing_address,
+    p.mailing_address,
+    p.mail_address,
+    p.owner_address
+  );
+  const apn = firstText(p.apn, p.ain, p.AIN, p.parcel_number);
+  if (!ownerName && !applicantName && !mailingAddress && !apn) return null;
+  return {
+    owner_name: ownerName || applicantName || null,
+    applicant_name: applicantName,
+    owner_mailing_address: mailingAddress,
+    apn,
+    source: 'Permit/source record',
+  };
 }
 
 function addressAliasesForPermit(p) {
@@ -334,6 +377,7 @@ function uw(p) {
   const cap = CAPS[h]||0.0525;
   const hc = HC[t]||285;
   const unitMix = unitMixForPermit(p, t);
+  const ownerInfo = ownerInfoForPermit(p);
   const blend = R.s*unitMix.mix.s+R.o*unitMix.mix.o+R.t*unitMix.mix.t+R.th*unitMix.mix.th;
   const grossRent = blend*12*u;
   const otherIncome = u*600;
@@ -377,6 +421,7 @@ function uw(p) {
       unit_mix_counts:unitMix.counts,
       unit_mix_source:unitMix.source,
       unit_mix_parsed_total:unitMix.parsedTotal,
+      owner_info:ownerInfo,
       land_value_source:doorLand ? 'default_market_per_door' : (compLand?.source || 'permit_valuation_fallback'),
       land_value_metric:doorLand ? 'price per door' : (compLand?.metricLabel || (p.valuation>hard ? 'permit valuation' : 'hard cost percentage fallback')),
       land_value_metric_value:doorLand ? DEFAULT_MARKET_LAND_PER_DOOR : (compLand?.metricValue ? Math.round(compLand.metricValue) : null),
@@ -408,7 +453,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;

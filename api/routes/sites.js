@@ -161,6 +161,58 @@ function unitMixForSite(raw = {}, site = {}, type = site.project_type ?? site.ty
   return { mix: { ...DEFAULT_UNIT_MIX }, counts: null, parsedTotal: 0, source: 'Default market mix' };
 }
 
+function firstText(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text && text !== '0' && text.toLowerCase() !== 'null') return text;
+  }
+  return null;
+}
+
+function ownerInfoFromRaw(raw = {}, site = {}) {
+  const stored = raw.owner_info && typeof raw.owner_info === 'object' ? raw.owner_info : {};
+  const ownerName = firstText(
+    stored.owner_name,
+    stored.ownerName,
+    raw.owner_name,
+    raw.ownerName,
+    raw.owner,
+    raw.ownername,
+    raw.property_owner,
+    raw.first_owner_name,
+    raw.First_Owner_Name,
+    raw.firstOwnerName,
+    site.owner_name
+  );
+  const applicantName = firstText(
+    stored.applicant_name,
+    stored.applicantName,
+    raw.applicant_name,
+    raw.applicantName,
+    raw.applicant,
+    raw.contact_name,
+    raw.contractor_name
+  );
+  const mailingAddress = firstText(
+    stored.owner_mailing_address,
+    stored.mailingAddress,
+    raw.owner_mailing_address,
+    raw.mailing_address,
+    raw.mail_address,
+    raw.owner_address
+  );
+  const apn = firstText(stored.apn, raw.apn, raw.ain, raw.AIN, raw.parcel_number, site.apn);
+  if (!ownerName && !applicantName && !mailingAddress && !apn) return {};
+  return {
+    ownerName: ownerName || applicantName || null,
+    ownerApplicantName: applicantName,
+    ownerMailingAddress: mailingAddress,
+    ownerSitusAddress: firstText(stored.situs_address, stored.situsAddress, raw.situs_address, raw.site_address, site.address, site.addr),
+    ownerApn: apn,
+    ownerSource: stored.source || raw.owner_source || 'Permit/source record',
+  };
+}
+
 // ── Shared underwriting defaults ───────────────────────────────────────────────
 const DEFAULT_GLOBALS = {
   exitCapSpread: 0.0025,
@@ -305,6 +357,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const offMarket = /off|not for sale/i.test(status);
   const model = modelFromSupabaseSite(s, landCompBenchmarks);
   const unitMix = unitMixForSite(rawPermit, s, s.project_type ?? s.type);
+  const ownerInfo = ownerInfoFromRaw(rawPermit, s);
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
@@ -329,6 +382,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     developmentStatus: rawPermit.development_status || null,
     workDescription: rawPermit.work_description || rawPermit.project_description || null,
     addressAliases,
+    ...ownerInfo,
     unitMixSource: unitMix.source,
     unitMixCounts: unitMix.counts,
     unitMixParsedTotal: unitMix.parsedTotal,
@@ -642,6 +696,12 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         permitNumber:  s.permitNumber,
         workDescription: s.workDescription,
         addressAliases: s.addressAliases || [],
+        ownerName:    s.ownerName,
+        ownerApplicantName: s.ownerApplicantName,
+        ownerMailingAddress: s.ownerMailingAddress,
+        ownerSitusAddress: s.ownerSitusAddress,
+        ownerApn:     s.ownerApn,
+        ownerSource:  s.ownerSource,
         ms:           s.ms,
         mo:           s.mo,
         mt:           s.mt,
