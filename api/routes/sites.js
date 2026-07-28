@@ -517,8 +517,61 @@ function siteMatchesSearch(s, value) {
   return haystack.includes(term) || searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
 }
 
+function normalizeZone(value) {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/^\[[^\]]+\]/, '')
+    .replace(/^\([^\)]+\)/, '');
+}
+
+function zoneBase(value) {
+  const z = normalizeZone(value);
+  const match = z.match(/^(RAS[0-9]|RD[0-9.]+|R[0-9]|C[0-9]|CM|M[0-9]|PF|OS|A[0-9])/);
+  return match ? match[1] : z.split(/[-,]/)[0];
+}
+
+function zoneMatches(siteZone, selectedZone) {
+  const selected = normalizeZone(selectedZone);
+  if (!selected) return true;
+  const actual = normalizeZone(siteZone);
+  if (!actual) return false;
+  return actual === selected || actual.startsWith(selected) || zoneBase(actual) === zoneBase(selected);
+}
+
+function isOffMarketSiteRow(s) {
+  const status = String(s?.status || s?.listingStatus || '').toLowerCase();
+  return !!(s?.isComp || s?.offMarket || status.includes('off') || status.includes('not for sale'));
+}
+
+function listingCategory(s) {
+  if (isOffMarketSiteRow(s)) return 'off_market';
+  if (s?.rti) return 'rti';
+  return 'for_sale';
+}
+
+function developmentStatusKey(s) {
+  const explicit = String(s?.developmentStatus || '').trim();
+  const raw = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
+  if (['submitted','plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
+  if (raw.includes('not ready')) return 'plan_check';
+  if (raw.includes('issued')) return 'permit_issued';
+  if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
+  if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('pc assigned') || raw.includes('pc in progress') || raw.includes('pc info complete') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor') || raw.includes('review') || raw.includes('hold')) return 'plan_check';
+  if (raw.includes('submit') || raw.includes('filed') || raw.includes('application')) return 'submitted';
+  return 'possibly_started_unknown';
+}
+
 async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset) {
-  if (!process.env.SUPABASE_URL || queryParams.devStatus || hasModelOverrideParams(queryParams)) return null;
+  if (
+    !process.env.SUPABASE_URL ||
+    queryParams.listing ||
+    queryParams.devStatus ||
+    queryParams.zone ||
+    queryParams.minPrice ||
+    queryParams.maxPrice ||
+    hasModelOverrideParams(queryParams)
+  ) return null;
 
   let query = supabase
     .from('sites')
@@ -643,17 +696,24 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     let filtered = usedFastPage ? modelled : modelled.filter(s => {
       const m = s._m;
       if (!siteMatchesSearch(s, req.query.q || req.query.search)) return false;
-      if (type    && s.type  !== type)               return false;
+      const typeList = listParam(req.query.types || type);
+      if (typeList.length && !typeList.includes(s.type)) return false;
       if (hood    && s.hood  !== hood)               return false;
-      if (zone    && s.zone  !== zone)               return false;
+      if (zone    && !zoneMatches(s.zone, zone))     return false;
+      const listings = listParam(req.query.listing);
+      if (listings.length && !listings.includes(listingCategory(s))) return false;
+      const devStatuses = listParam(req.query.devStatus);
+      const devKey = developmentStatusKey(s);
+      if (devStatuses.length && !(devStatuses.includes(devKey) || (devStatuses.includes('city_approved_not_started') && s.rti))) return false;
       if (rti     !== undefined && s.rti !== (rti === 'true'))  return false;
       if (isComp  !== undefined && s.isComp !== (isComp === 'true')) return false;
       if (minUnits && s.units < +minUnits)            return false;
       if (maxUnits && s.units > +maxUnits)            return false;
       if (minLot  && s.lot   < +minLot)              return false;
       if (maxLot  && s.lot   > +maxLot)              return false;
-      if (minPrice && !s.isComp && (s.price ?? 0) < +minPrice) return false;
-      if (maxPrice && !s.isComp && (s.price ?? Infinity) > +maxPrice) return false;
+      const landBasis = Number(s.price ?? m.landCost ?? 0);
+      if (minPrice && landBasis && landBasis < +minPrice) return false;
+      if (maxPrice && landBasis && landBasis > +maxPrice) return false;
       if (minCost && (m.totalCost ?? 0) < +minCost) return false;
       if (maxCost && (m.totalCost ?? Infinity) > +maxCost) return false;
       if (minIRR   && m.leveragedIRR    < +minIRR)           return false;

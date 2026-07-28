@@ -160,7 +160,16 @@ function streetViewLink(addr) {
   return `https://www.google.com/maps/search/?api=1&query=${addressQuery(addr)}&layer=c`;
 }
 
+function googleMapTypeLink(addr, maptype='m') {
+  return `https://www.google.com/maps?q=${addressQuery(addr)}&z=17&t=${maptype}`;
+}
+
+function zimasLink() {
+  return 'https://planning.lacity.gov/zoning/zoning-search';
+}
+
 function officialResearchLink(addr, source) {
+  if (/zimas/i.test(source)) return zimasLink(addr);
   return `https://www.google.com/search?q=${encodeURIComponent(fullAddress(addr) + ' ' + source)}`;
 }
 
@@ -177,6 +186,8 @@ function mapPreviewForMode(s, mode) {
 
 function mapOpenLinkForMode(s, mode) {
   if (mode === 'street') return streetViewLink(s.addr);
+  if (mode === 'satellite') return googleMapTypeLink(s.addr, 'k');
+  if (mode === 'terrain') return googleMapTypeLink(s.addr, 'p');
   return mapsLink(s.addr);
 }
 
@@ -239,7 +250,7 @@ function calcIRR(cashflows, guess = 0.15) {
 }
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
-let allSites = [], filtered = [], openId = null, activeView = 'list', watchlist = loadWatchlist(), userMetrics = null;
+let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
 let sitePageTotal = 0, sitePageLimit = 50, currentSiteQuery = '';
 const g = id => document.getElementById(id);
 const LA_MAP_VIEW = { centerLat: 34.0522, centerLng: -118.2851, zoom: 10, width: 960, height: 620 };
@@ -624,12 +635,45 @@ function siteAskPrice(s) {
 }
 
 function isForSaleSite(s) {
-  return !isOffMarketSite(s) && siteAskPrice(s) > 0;
+  const status = String(s?.status || s?.listingStatus || '').toLowerCase();
+  return !isOffMarketSite(s) && (status.includes('active') || status.includes('for sale') || siteAskPrice(s) > 0);
 }
 
 function isOffMarketSite(s) {
   const status = String(s?.status || s?.listingStatus || '').toLowerCase();
-  return !!(s?.isComp || s?.offMarket || status.includes('off') || status.includes('not for sale') || !siteAskPrice(s));
+  return !!(s?.isComp || s?.offMarket || status.includes('off') || status.includes('not for sale'));
+}
+
+function listingCategory(s) {
+  if (isOffMarketSite(s)) return 'off_market';
+  if (s?.rti) return 'rti';
+  return 'for_sale';
+}
+
+function siteLandBasisForFilter(s, costs = null) {
+  return Number(siteAskPrice(s) || costs?.land || s?.landCost || s?.price || 0);
+}
+
+function normalizeZone(value) {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/^\[[^\]]+\]/, '')
+    .replace(/^\([^\)]+\)/, '');
+}
+
+function zoneBase(value) {
+  const z = normalizeZone(value);
+  const match = z.match(/^(RAS[0-9]|RD[0-9.]+|R[0-9]|C[0-9]|CM|M[0-9]|PF|OS|A[0-9])/);
+  return match ? match[1] : z.split(/[-,]/)[0];
+}
+
+function zoneMatches(siteZone, selectedZone) {
+  const selected = normalizeZone(selectedZone);
+  if (!selected) return true;
+  const actual = normalizeZone(siteZone);
+  if (!actual) return false;
+  return actual === selected || actual.startsWith(selected) || zoneBase(actual) === zoneBase(selected);
 }
 
 function landPerDoorForSite() {
@@ -670,12 +714,12 @@ function siteListingStatus(s) {
 function developmentStatusKey(s) {
   const explicit = String(s?.developmentStatus || '').trim();
   const raw = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
+  if (['submitted','plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
   if (raw.includes('not ready')) return 'plan_check';
   if (raw.includes('issued')) return 'permit_issued';
   if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
-  if (raw.includes('submit') || raw.includes('pc assigned') || raw.includes('pc in progress') || raw.includes('pc info complete') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor')) return 'submitted';
-  if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('correction') || raw.includes('verification') || raw.includes('review') || raw.includes('hold')) return 'plan_check';
-  if (['submitted','plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
+  if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('pc assigned') || raw.includes('pc in progress') || raw.includes('pc info complete') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor') || raw.includes('review') || raw.includes('hold')) return 'plan_check';
+  if (raw.includes('submit') || raw.includes('filed') || raw.includes('application')) return 'submitted';
   return 'possibly_started_unknown';
 }
 
@@ -770,15 +814,19 @@ function markerColorForSite(s, valuation) {
 
 function visibleOnMapLayer(s) {
   if (isWatched(s.id) && mapLayers.watchlist) return true;
-  return !!(
-    (isOffMarketSite(s) && mapLayers.offMarket) ||
-    ((developmentStatusKey(s) === 'city_approved_not_started' || s.rti) && mapLayers.rti) ||
-    (isForSaleSite(s) && mapLayers.forSale)
-  );
+  const category = listingCategory(s);
+  if (category === 'off_market') return !!mapLayers.offMarket;
+  if (developmentStatusKey(s) === 'city_approved_not_started' || category === 'rti') return !!mapLayers.rti;
+  return !!mapLayers.forSale;
 }
 
 function toggleMapLayer(layer) {
   mapLayers[layer] = !mapLayers[layer];
+  renderCards();
+}
+
+function setMapBase(mode) {
+  mapBaseLayer = ['roadmap','satellite','terrain'].includes(mode) ? mode : 'roadmap';
   renderCards();
 }
 
@@ -947,6 +995,21 @@ function checkedIds(ids) {
   return ids.filter(id => g(id)?.checked).map(id => id.replace(/^f-/, ''));
 }
 
+function refreshZoneOptions() {
+  const el = g('f-zone');
+  if (!el) return;
+  const current = el.value;
+  const seed = ['', 'R2', 'R3', 'R4', 'RD1.5', 'C2', 'C4', '[Q]C2'];
+  const actual = [...new Set(allSites.map(s => String(s.zone || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, 80);
+  const zones = [...new Set([...seed, ...actual, current].filter(v => v !== undefined))];
+  el.innerHTML = zones.map(zone =>
+    zone ? `<option value="${escapeText(zone)}">${escapeText(zone)}</option>` : '<option value="">All zones</option>'
+  ).join('');
+  el.value = zones.includes(current) ? current : '';
+}
+
 function buildSiteQueryParams(offset = 0) {
   const search = (g('f-q')?.value || '').trim();
   const pageLimit = search ? Math.max(sitePageLimit, 500) : sitePageLimit;
@@ -979,13 +1042,10 @@ function buildSiteQueryParams(offset = 0) {
     ['mf-i', 'minIRR'], ['mf-s', 'minSpread'], ['mf-c', 'minCapoc'],
   ];
   pairs.forEach(([id, key]) => { const val = g(id)?.value; if (val) qs.set(key, val); });
-  const offMarketIncluded = g('f-comp')?.checked === true;
-  if (!offMarketIncluded) {
-    const minPrice = g('f-pmin')?.value;
-    const maxPrice = g('f-pmax')?.value;
-    if (minPrice) qs.set('minPrice', minPrice);
-    if (maxPrice) qs.set('maxPrice', maxPrice);
-  }
+  const minPrice = g('f-pmin')?.value;
+  const maxPrice = g('f-pmax')?.value;
+  if (minPrice) qs.set('minPrice', minPrice);
+  if (maxPrice) qs.set('maxPrice', maxPrice);
   const minProfit = Number(g('mf-p')?.value || 0);
   if (minProfit) qs.set('minProfit', String(minProfit * 1000));
   return qs;
@@ -1015,6 +1075,7 @@ async function loadSites() {
     const data = await fetchSitePage(qs);
     allSites = data.results;
     sitePageTotal = data.total;
+    refreshZoneOptions();
     updateHardCostOverrideUI();
     console.log('[ParceLLA] Loaded first page', allSites.length, 'of', sitePageTotal, 'sites');
     applyFilters();
@@ -1040,6 +1101,7 @@ async function loadMoreSites() {
     const seen = new Set(allSites.map(s => String(s.id)));
     allSites = allSites.concat(data.results.filter(s => !seen.has(String(s.id))));
     sitePageTotal = data.total;
+    refreshZoneOptions();
     applyFilters();
   } catch (e) {
     alert('Could not load more sites: ' + (e.message || e));
@@ -1072,7 +1134,8 @@ function applyFilters() {
     const costs = costModelForSite(s);
     const valuation = valuationForSite(s, costs);
     if (search && !siteSearchText(s).includes(search)) return false;
-    const listingMatch = (ffs && isForSaleSite(s)) || (frti && s.rti) || (fcomp && isOffMarketSite(s));
+    const category = listingCategory(s);
+    const listingMatch = (ffs && category === 'for_sale') || (frti && category === 'rti') || (fcomp && category === 'off_market');
     if (!listingMatch) return false;
     const devKey = developmentStatusKey(s);
     const devMatch = devStatuses.includes(devKey) || (devStatuses.includes('city_approved_not_started') && s.rti);
@@ -1081,10 +1144,10 @@ function applyFilters() {
     if (watchOnly && !isWatched(s.id)) return false;
     if (!types.length || !types.includes(s.type)) return false;
     if (hood && s.hood !== hood) return false;
-    if (zone && s.zone !== zone) return false;
+    if (zone && !zoneMatches(s.zone, zone)) return false;
     if (s.units < umin || s.units > umax) return false;
-    const ask = siteAskPrice(s);
-    if (isForSaleSite(s) && ask && (ask < pmin || ask > pmax)) return false;
+    const landBasis = siteLandBasisForFilter(s, costs);
+    if (landBasis && (landBasis < pmin || landBasis > pmax)) return false;
     if ((costs.totalCost || 0) < cmin || (costs.totalCost || 0) > cmax) return false;
     if (mfp && (valuation.netProfit||0) < mfp) return false;
     if (mfi && (valuation.leveragedIRR||0) < mfi) return false;
@@ -1257,11 +1320,17 @@ function renderMapView() {
     const valuation = valuationForSite(s, costModelForSite(s));
     return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${escapeText(siteDisplayAddress(s))}</b><span>${s.hood} - ${fmtM(valuation.netProfit)} - ${valuation.capOnCost||0}% cap on cost</span></div>`;
   }).join('');
+  const baseButtons = [
+    ['roadmap','Map'],
+    ['satellite','Satellite'],
+    ['terrain','Terrain'],
+  ].map(([key,label]) => `<button class="layerbtn ${mapBaseLayer===key?'on':''}" onclick="setMapBase('${key}')"><span>${label}</span><span>${mapBaseLayer===key?'On':''}</span></button>`).join('');
   el.innerHTML = `<div class="mapview">
     <div class="mapstage">
-      <img src="${cityMapURL('roadmap')}" alt="Los Angeles development map">
+      <img src="${cityMapURL(mapBaseLayer)}" alt="Los Angeles development map">
       ${pins}${transit}
       <div class="maplegend">
+        <span><strong>${visibleSites.length.toLocaleString()}</strong> visible of ${filtered.length.toLocaleString()} filtered sites</span>
         <span><i class="dot" style="background:#1d9e75"></i>Strong profit</span>
         <span><i class="dot" style="background:#378add"></i>City approved / not started</span>
         <span><i class="dot" style="background:#ef9f27"></i>For sale</span>
@@ -1269,6 +1338,10 @@ function renderMapView() {
       </div>
     </div>
     <div class="mapside">
+      <div class="layerbox">
+        <h4>Base map</h4>
+        ${baseButtons}
+      </div>
       <div class="layerbox">
         <h4>Map layers</h4>
         ${[
