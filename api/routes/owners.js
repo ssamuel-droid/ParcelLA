@@ -4,6 +4,9 @@ const router = Router();
 
 const OWNER_LAYER_QUERY_URL = 'https://services9.arcgis.com/vt06TugX2cjEwSJJ/ArcGIS/rest/services/LACo_Assessor_Parcels_2023_DS04/FeatureServer/193/query';
 const OWNER_SOURCE = 'LA County Assessor Parcels 2023 DS04 public owner feed';
+const REGRID_SOURCE = 'Regrid Parcel API';
+const REGRID_BASE = 'https://app.regrid.com/api/v2/parcels';
+const REGRID_LA_PATH = '/us/ca/los-angeles';
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const ownerCache = new Map();
 
@@ -59,7 +62,7 @@ function formatAddress(parts, cityState, zip) {
 }
 
 function cleanMoney(value) {
-  const n = Number(value);
+  const n = Number(String(value ?? '').replace(/[$,]/g, ''));
   return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
 }
 
@@ -67,6 +70,14 @@ function cleanDate(value) {
   const text = clean(value);
   if (/^\d{8}$/.test(text)) return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}`;
   return text || null;
+}
+
+function first(...values) {
+  for (const value of values) {
+    const cleaned = clean(value);
+    if (cleaned) return cleaned;
+  }
+  return null;
 }
 
 function normalizeOwnerFeature(feature) {
@@ -141,6 +152,125 @@ async function queryLayer(params) {
   return feature ? normalizeOwnerFeature(feature) : null;
 }
 
+function regridToken() {
+  return clean(process.env.REGRID_API_KEY || process.env.REGRID_TOKEN);
+}
+
+function regridFeature(data) {
+  const features = data?.parcels?.features || data?.features || [];
+  return Array.isArray(features) ? features[0] : null;
+}
+
+function normalizeRegridFeature(feature) {
+  const p = feature?.properties || {};
+  const enhanced = p.enhanced_ownership || p.enhancedOwnership || {};
+  const ownerName = first(
+    p.owner,
+    p.owner1,
+    p.owner_1,
+    p.owner_name,
+    p.ownername,
+    enhanced.owner,
+    enhanced.owner_name,
+    enhanced.ownerName,
+    enhanced.owner_1
+  );
+  const saleDate = cleanDate(first(
+    p.saledate,
+    p.sale_date,
+    p.last_sale_date,
+    p.lastsaledate,
+    p.recordingdate,
+    p.recording_date
+  ));
+  const saleAmount = cleanMoney(first(
+    p.saleprice,
+    p.sale_price,
+    p.last_sale_price,
+    p.lastsaleprice,
+    p.last_sale_amount,
+    p.saleamt
+  ));
+  const situsAddress = first(
+    p.address,
+    p.situs_address,
+    p.situsaddress,
+    [p.saddno, p.saddstr, p.scity, p.state2, p.szip].filter(Boolean).join(' ')
+  );
+  const mailingAddress = first(
+    p.mailadd,
+    p.mail_address,
+    p.mailing_address,
+    p.owner_address
+  );
+
+  return {
+    found: !!ownerName,
+    ownerName: ownerName || null,
+    mailingAddress: mailingAddress || null,
+    situsAddress: situsAddress || null,
+    apn: first(p.parcelnumb, p.parcel_number, p.apn, p.ain, p.alt_parcelnumb1) || null,
+    lastSaleDate: saleDate,
+    recordingDate: saleDate,
+    lastSaleAmount: saleAmount,
+    source: REGRID_SOURCE,
+  };
+}
+
+async function queryRegrid(params) {
+  const token = regridToken();
+  if (!token) return null;
+
+  const attempts = [];
+  const lat = Number(params.lat);
+  const lng = Number(params.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    const u = new URL(`${REGRID_BASE}/point`);
+    u.searchParams.set('lat', String(lat));
+    u.searchParams.set('lon', String(lng));
+    u.searchParams.set('radius', '150');
+    u.searchParams.set('limit', '1');
+    u.searchParams.set('return_custom', 'true');
+    u.searchParams.set('return_enhanced_ownership', 'true');
+    u.searchParams.set('token', token);
+    attempts.push(u);
+  }
+
+  if (clean(params.address)) {
+    const u = new URL(`${REGRID_BASE}/address`);
+    u.searchParams.set('query', clean(params.address));
+    u.searchParams.set('path', REGRID_LA_PATH);
+    u.searchParams.set('limit', '1');
+    u.searchParams.set('return_custom', 'true');
+    u.searchParams.set('return_enhanced_ownership', 'true');
+    u.searchParams.set('token', token);
+    attempts.push(u);
+  }
+
+  if (clean(params.apn)) {
+    const u = new URL(`${REGRID_BASE}/query`);
+    u.searchParams.set('fields[parcelnumb][eq]', clean(params.apn));
+    u.searchParams.set('fields[path][ilike]', REGRID_LA_PATH);
+    u.searchParams.set('limit', '1');
+    u.searchParams.set('return_custom', 'true');
+    u.searchParams.set('return_enhanced_ownership', 'true');
+    u.searchParams.set('token', token);
+    attempts.push(u);
+  }
+
+  for (const url of attempts) {
+    try {
+      const data = await fetchJson(url.toString(), 9000);
+      const feature = regridFeature(data);
+      const normalized = normalizeRegridFeature(feature);
+      if (normalized?.ownerName || normalized?.lastSaleDate || normalized?.lastSaleAmount) return normalized;
+    } catch {
+      // Fall back to the public assessor layer below.
+    }
+  }
+  return null;
+}
+
 function parseAddress(address) {
   const text = String(address || '').toUpperCase()
     .replace(/,.*$/, '')
@@ -168,8 +298,10 @@ async function lookupOwner({ address, lat, lng, apn }) {
   if (cached && Date.now() - cached.time < CACHE_TTL) return cached.value;
 
   let owner = null;
+  owner = await queryRegrid({ address, lat, lng, apn }).catch(() => null);
+
   const ain = clean(apn).replace(/\D/g, '');
-  if (ain) {
+  if (!owner && ain) {
     owner = await queryLayer({ where: `AIN='${ain}' OR AIN_1=${Number(ain) || 0}` }).catch(() => null);
   }
 

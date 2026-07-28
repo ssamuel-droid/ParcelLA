@@ -182,7 +182,8 @@ function ownerInfoFromRaw(raw = {}, site = {}) {
     raw.first_owner_name,
     raw.First_Owner_Name,
     raw.firstOwnerName,
-    site.owner_name
+    site.owner_name,
+    site.ownerName
   );
   const applicantName = firstText(
     stored.applicant_name,
@@ -209,7 +210,9 @@ function ownerInfoFromRaw(raw = {}, site = {}) {
     ownerMailingAddress: mailingAddress,
     ownerSitusAddress: firstText(stored.situs_address, stored.situsAddress, raw.situs_address, raw.site_address, site.address, site.addr),
     ownerApn: apn,
-    ownerSource: stored.source || raw.owner_source || 'Permit/source record',
+    ownerLastSaleDate: firstText(stored.last_sale_date, stored.lastSaleDate, raw.last_sale_date, raw.lastSaleDate, raw.sale_date, site.owner_last_sale_date),
+    ownerLastSaleAmount: firstText(stored.last_sale_amount, stored.lastSaleAmount, raw.last_sale_amount, raw.lastSaleAmount, raw.sale_price, site.owner_last_sale_amount),
+    ownerSource: stored.source || raw.owner_source || site.owner_source || 'Permit/source record',
   };
 }
 
@@ -701,6 +704,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         ownerMailingAddress: s.ownerMailingAddress,
         ownerSitusAddress: s.ownerSitusAddress,
         ownerApn:     s.ownerApn,
+        ownerLastSaleDate: s.ownerLastSaleDate,
+        ownerLastSaleAmount: s.ownerLastSaleAmount,
         ownerSource:  s.ownerSource,
         ms:           s.ms,
         mo:           s.mo,

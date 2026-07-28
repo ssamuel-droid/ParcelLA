@@ -873,15 +873,16 @@ function ownerQueryForSite(s = {}) {
 }
 
 function siteOwnerInfo(s = {}) {
-  if (!s.ownerName && !s.ownerMailingAddress && !s.ownerApplicantName) return null;
+  if (!s.ownerName && !s.ownerLastSaleDate && !s.ownerLastSaleAmount) return null;
   return {
     found: true,
-    ownerName: s.ownerName || s.ownerApplicantName || null,
-    mailingAddress: s.ownerMailingAddress || null,
+    ownerName: s.ownerName || null,
     situsAddress: s.ownerSitusAddress || s.addr || null,
     apn: s.ownerApn || s.apn || null,
     source: s.ownerSource || 'Permit/source record',
-    applicantName: s.ownerApplicantName || null,
+    lastSaleDate: s.ownerLastSaleDate || null,
+    recordingDate: s.ownerLastSaleDate || null,
+    lastSaleAmount: s.ownerLastSaleAmount || null,
   };
 }
 
@@ -905,37 +906,27 @@ function ownerInfoHTML(owner, s = {}) {
   if (!owner) return '<div class="ownerbox"><b>Owner lookup unavailable</b><span>Owner data could not be loaded for this address.</span></div>';
   if (!owner.found && !owner.ownerName) {
     return `<div class="ownerbox">
-      <b>Owner not found in imported assessor feed</b>
+      <b>Owner not returned</b>
       <span>${escapeText(owner.message || 'No owner record was returned for this parcel/address.')}</span>
       <span>Address checked: ${escapeText(owner.situsAddress || s.addr || '')}</span>
-      <span>Source: ${escapeText(owner.source || 'Assessor owner feed')}</span>
     </div>`;
   }
+  const soldDate = owner.lastSaleDate || owner.recordingDate || owner.saleDate || '';
+  const soldPrice = owner.lastSaleAmount || owner.salePrice || '';
   return `<table class="ct ownerct">
     ${ownerLine('Owner', owner.ownerName)}
-    ${ownerLine('Applicant / contact', owner.applicantName)}
-    ${ownerLine('Mailing address', owner.mailingAddress)}
-    ${ownerLine('Parcel address', owner.situsAddress || s.addr)}
-    ${ownerLine('APN / AIN', owner.apn)}
-    ${ownerLine('Last sale date', owner.lastSaleDate || owner.recordingDate)}
-    ${ownerMoneyLine('Last sale amount', owner.lastSaleAmount)}
-    ${ownerMoneyLine('Land assessed value', owner.landValue)}
-    ${ownerMoneyLine('Improvement assessed value', owner.improvementValue)}
-    ${ownerLine('Use / zoning', [owner.useDescription || owner.useCode, owner.zoning].filter(Boolean).join(' / '))}
-    ${ownerLine('Source', owner.source)}
+    ${ownerLine('Date sold', soldDate)}
+    ${ownerMoneyLine('Sale price', soldPrice)}
   </table>`;
 }
 
 function ownerPDFRows(owner, s = {}) {
+  const soldDate = owner?.lastSaleDate || owner?.recordingDate || owner?.saleDate || '';
+  const soldPrice = owner?.lastSaleAmount || owner?.salePrice || '';
   const rows = [
     ['Owner', owner?.ownerName || 'Not returned'],
-    ['Applicant / Contact', owner?.applicantName || ''],
-    ['Mailing Address', owner?.mailingAddress || ''],
-    ['Parcel Address', owner?.situsAddress || s.addr || ''],
-    ['APN / AIN', owner?.apn || ''],
-    ['Last Sale Date', owner?.lastSaleDate || owner?.recordingDate || ''],
-    ['Last Sale Amount', owner?.lastSaleAmount ? fmtD(owner.lastSaleAmount) : ''],
-    ['Source', owner?.source || 'Not returned'],
+    ['Date Sold', soldDate],
+    ['Sale Price', soldPrice ? fmtD(soldPrice) : ''],
   ].filter(([, value]) => value);
   return rows.map(([label, value]) => `<tr><td>${escapeText(label)}</td><td>${escapeText(value)}</td></tr>`).join('');
 }
@@ -1853,6 +1844,10 @@ function xlsSheet(name, rows, widths = []) {
 
 function downloadTextFile(filename, content, type = 'application/vnd.ms-excel;charset=utf-8') {
   const blob = new Blob([content], { type });
+  downloadBlobFile(filename, blob);
+}
+
+function downloadBlobFile(filename, blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -2749,168 +2744,113 @@ async function exportExcel(id) {
   const income = incomeStatementForSite(s, costs);
   const valuation = valuationForSite(s, costs, income);
   const exportAppraisal = buildAppraisalEngine(s, comps, rentComps, costs, income, valuation);
+  const compValuation = valuationWithAppraisal(valuation, exportAppraisal, costs, income);
   const metrics = currentUserMetrics();
-  const tc = costs.totalCost || 0;
-  const land = costs.land || siteAskPrice(s) || 0;
-  const noi = valuation.noi || 0;
-  const irr = valuation.leveragedIRR || 0;
-  const entryCap = exportAppraisal.entryCap || valuation.entryCap || submarket?.entryCap || 0.0475;
-  const exitCap = exportAppraisal.exitCap || valuation.exitCap || submarket?.exitCap || entryCap + 0.0025;
-  const exitValue = exitCap ? Math.round((valuation.year5Noi || 0) / exitCap) : (valuation.exitValue || 0);
-  const netProfit = exitValue - tc;
-  const loan = tc * (metrics.loanToCostPct / 100);
-  const equity = tc - loan;
-  const debtService = income.debtService || loan * (metrics.interestRatePct / 100);
-  const today = new Date().toISOString().slice(0,10);
-  const rentMonthly = income.grossPotentialRent ? Math.round(income.grossPotentialRent / 12) : 0;
-  const totalSF = costs.totalSF;
-  const hardCosts = costs.hardCosts;
-  const softCosts = costs.softCosts;
-  const carryCost = costs.carryCost;
-  const hardPerSf = costs.hardPerSf;
-  const hardPerUnit = costs.hardPerUnit;
-  const totalPerSf = costs.totalPerSf;
-  const totalPerUnit = costs.totalPerUnit;
+  const payload = {
+    generatedAt: new Date().toISOString().slice(0, 10),
+    site: {
+      id: s.id,
+      addr: s.addr,
+      displayAddress: displayAddr,
+      addressNote: siteAddressNote(s),
+      hood: s.hood,
+      neighborhood: s.hood,
+      zone: s.zone,
+      type: s.type,
+      units: s.units || 0,
+      avgUnitSf: s.usf || 800,
+      lotSf: s.lot || 0,
+      listingStatus: siteListingStatus(s),
+      developmentStatus: developmentStatusLabel(s),
+      permitStatus: s.permitStatus || '',
+      askPrice: siteAskPrice(s),
+      landBasis: costs.land || siteAskPrice(s) || 0,
+      landSource: landValueSourceNote(s),
+      permitSourceId: s.permitSourceId || '',
+      underwrittenAt: s.underwrittenAt || '',
+    },
+    owner: {
+      ownerName: ownerInfo?.ownerName || '',
+      lastSaleDate: ownerInfo?.lastSaleDate || ownerInfo?.recordingDate || ownerInfo?.saleDate || '',
+      lastSaleAmount: ownerInfo?.lastSaleAmount || ownerInfo?.salePrice || 0,
+    },
+    assumptions: {
+      planLabel: costs.planLabel,
+      unitMixSource: unitMixSourceText(s),
+      hardCostPerSf: costs.hardPerSf,
+      softCostPct: costs.softPct || 0,
+      constructionMonths: costs.months || 18,
+      rentPremiumPct: costs.rentPremium || 0,
+      loanToCostPct: metrics.loanToCostPct,
+      interestRatePct: metrics.interestRatePct,
+      vacancyPct: metrics.vacancyPct,
+      expenseRatioPct: metrics.expenseRatioPct,
+      rentGrowthPct: metrics.rentGrowthPct,
+      entryCap: compValuation.entryCap || exportAppraisal.entryCap || valuation.entryCap,
+      exitCapSpreadBps: metrics.exitCapSpreadBps,
+      otherIncomePerUnit: s.units ? Math.round((income.otherIncome || 0) / s.units) : 600,
+      landSource: landValueSourceNote(s),
+    },
+    costs,
+    income,
+    valuation: {
+      ...compValuation,
+      leveragedIRR: valuation.leveragedIRR || 0,
+      capOnCost: compValuation.capOnCost || valuation.capOnCost || 0,
+      devSpreadPct: compValuation.devSpreadPct || valuation.devSpreadPct || 0,
+    },
+    appraisal: {
+      entryCap: exportAppraisal.entryCap,
+      exitCap: exportAppraisal.exitCap,
+      capRateSource: exportAppraisal.capRateSource,
+      reconciliation: exportAppraisal.reconciliation || [],
+      values: exportAppraisal.values || {},
+      reconciled: exportAppraisal.values?.reconciled || 0,
+    },
+    unitMix: unitMixDisplayRows(s, submarket),
+    schedules: {
+      hard: hardCostLineItems(s),
+      soft: softCostLineItems(),
+      carry: carryCostLineItems(),
+    },
+    scenarios: scenarioListForSite(s).map(row => ({
+      label: row.plan.label,
+      hardPerSf: row.costs.hardPerSf,
+      softPct: row.costs.softPct,
+      months: row.costs.months || 18,
+      rentPremiumPct: row.costs.rentPremium || 0,
+      totalCost: row.costs.totalCost,
+      costPerUnit: row.costs.totalPerUnit,
+      noi: row.income.noi,
+      exitValue: row.valuation.exitValue,
+      netProfit: row.valuation.netProfit,
+      capOnCost: row.valuation.capOnCost,
+      note: row.plan.note || '',
+    })),
+    salesComps: exportAppraisal.sales || comps?.recentComps || [],
+    rentComps: exportAppraisal.rents || rentComps?.recentComps || [],
+  };
 
-  const summaryRows = [
-    xlsTitleRow('ParceLLA Comprehensive Underwriting', siteDisplayAddress(s)),
-    xlsRow(['Generated', today]),
-    xlsRow(['']),
-    xlsSectionRow('Property Summary'),
-    xlsRow(['Address', siteDisplayAddress(s)]),
-    xlsRow(['Neighborhood', s.hood]),
-    xlsRow(['Zoning', s.zone]),
-    xlsRow(['Project Type', s.type]),
-    xlsRow(['']),
-    xlsSectionRow('Owner / Contact'),
-    xlsRow(['Owner', ownerInfo?.ownerName || 'Not returned']),
-    xlsRow(['Applicant / Contact', ownerInfo?.applicantName || '']),
-    xlsRow(['Mailing Address', ownerInfo?.mailingAddress || '']),
-    xlsRow(['Parcel Address', ownerInfo?.situsAddress || s.addr || '']),
-    xlsRow(['APN / AIN', ownerInfo?.apn || '']),
-    xlsRow(['Last Sale Date', ownerInfo?.lastSaleDate || ownerInfo?.recordingDate || '']),
-    xlsRow(['Last Sale Amount', ownerInfo?.lastSaleAmount ? cellMoney(ownerInfo.lastSaleAmount) : '']),
-    xlsRow(['Owner Data Source', ownerInfo?.source || 'Not returned']),
-    xlsRow(['']),
-    xlsSectionRow('Underwriting Inputs'),
-    xlsRow(['Construction Plan', costs.planLabel]),
-    xlsRow(['Unit Mix Source', unitMixSourceText(s)]),
-    xlsRow(['Hard Cost / SF', cellMoney(hardPerSf)]),
-    xlsRow(['Soft Cost % of Hard Cost', cellPct(Math.round((costs.softPct || 0) * 1000) / 10)]),
-    xlsRow(['Loan-to-Cost', cellPct(metrics.loanToCostPct)]),
-    xlsRow(['Interest Rate', cellPct(metrics.interestRatePct)]),
-    xlsRow(['Vacancy', cellPct(metrics.vacancyPct)]),
-    xlsRow(['Expense Ratio', cellPct(metrics.expenseRatioPct)]),
-    xlsRow(['Annual Rent Growth', cellPct(metrics.rentGrowthPct)]),
-    xlsRow(['Exit Cap Spread', cellNumber(metrics.exitCapSpreadBps), 'bps']),
-    xlsRow(['Market Land / Door', cellMoney(metrics.imputedLandPerDoorMarket)]),
-    xlsRow(['Construction Months', cellNumber(costs.months || 18)]),
-    xlsRow(['Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10)]),
-    xlsRow(['Units', cellNumber(s.units || 0)]),
-    xlsRow(['Average Unit SF', cellNumber(s.usf || 0)]),
-    xlsRow(['Lot SF', cellNumber(s.lot || 0)]),
-    xlsRow(['Land Cost', cellMoney(Math.round(land))]),
-    xlsRow(['All-In Cost', cellMoney(Math.round(tc))]),
-    xlsRow(['Reconciled Appraised Value', cellMoney(Math.round(exportAppraisal.values.reconciled || 0))]),
-    xlsRow(['Comp-Driven Exit Cap', cellPct(Math.round((exportAppraisal.exitCap || exitCap) * 10000) / 100)]),
-    xlsRow(['Appraised Profit / Gap', cellMoneySigned(Math.round(exportAppraisal.values.appraisedProfit || 0))]),
-    xlsRow(['Net Profit', cellMoneySigned(Math.round(netProfit))]),
-    xlsRow(['RTI', s.rti ? 'Yes' : 'No']),
-    xlsRow(['Listing Status', siteListingStatus(s)]),
-    xlsRow(['Development Status', developmentStatusLabel(s)]),
-    xlsRow(['Permit Status', s.permitStatus || '']),
-    xlsRow(['Permit Source ID', s.permitSourceId || '']),
-    xlsRow(['Underwritten At', s.underwrittenAt || '']),
-  ];
-
-  const underwritingRows = [
-    xlsTitleRow('Underwriting', s.addr),
-    xlsHeaderRow(['Metric', 'Value', '$ / SF', '$ / Unit', 'Notes']),
-    xlsRow(['Construction Plan', costs.planLabel, '', '', costs.planNote || '']),
-    xlsRow(['Hard Cost Basis', costs.source || 'current assumption', cellMoney(hardPerSf), '', 'Selected plan hard-cost assumption']),
-    xlsRow(['Soft Cost %', cellPct(Math.round((costs.softPct || 0) * 1000) / 10), '', '', 'Selected plan soft-cost assumption']),
-    xlsRow(['Construction Months', cellNumber(costs.months || 18), '', '', 'Selected plan duration for carry cost']),
-    xlsRow(['Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10), '', '', 'Selected plan rent adjustment applied to NOI']),
-    xlsRow(['Unit Mix Source', unitMixSourceText(s), '', '', 'Parsed from permit text when the city/project description lists bedrooms; otherwise explicit market default']),
-    xlsRow(['Land Cost', cellMoney(Math.round(land)), totalSF ? cellMoney(Math.round(land / totalSF)) : '', s.units ? cellMoney(Math.round(land / s.units)) : '', landValueSourceNote(s)]),
-    xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), 'Construction cost validation shown in Construction Costs tab']),
-    xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(Math.round(softCosts / totalSF)) : '', s.units ? cellMoney(Math.round(softCosts / s.units)) : '', 'A&E, permits, fees, contingency, developer fee']),
-    xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(Math.round(carryCost / totalSF)) : '', s.units ? cellMoney(Math.round(carryCost / s.units)) : '', 'Interest, loan fees, taxes during construction']),
-    xlsRow(['Total All-In Cost', cellMoney(Math.round(tc)), cellMoney(totalPerSf), cellMoney(totalPerUnit), 'Total development basis'], 'section'),
-    xlsRow(['Loan Amount', cellMoney(Math.round(loan)), totalSF ? cellMoney(Math.round(loan / totalSF)) : '', s.units ? cellMoney(Math.round(loan / s.units)) : '', metrics.loanToCostPct + '% LTC user assumption']),
-    xlsRow(['Equity Required', cellMoney(Math.round(equity)), totalSF ? cellMoney(Math.round(equity / totalSF)) : '', s.units ? cellMoney(Math.round(equity / s.units)) : '', 'Sponsor equity requirement']),
-    xlsRow(['NOI', cellMoney(Math.round(noi)), totalSF ? cellMoney(Math.round(noi / totalSF)) : '', s.units ? cellMoney(Math.round(noi / s.units)) : '', 'Stabilized annual NOI']),
-    xlsRow(['Year 5 NOI', cellMoney(Math.round(valuation.year5Noi)), totalSF ? cellMoney(Math.round(valuation.year5Noi / totalSF)) : '', s.units ? cellMoney(Math.round(valuation.year5Noi / s.units)) : '', 'Year-5 NOI used for exit valuation']),
-    xlsRow(['Entry Cap Rate %', cellPct(Math.round(entryCap * 10000) / 100), '', '', 'Market cap rate input']),
-    xlsRow(['Exit Cap Rate %', cellPct(Math.round(exitCap * 10000) / 100), '', '', 'Exit cap assumption']),
-    xlsRow(['Exit Value', cellMoney(Math.round(exitValue)), totalSF ? cellMoney(Math.round(exitValue / totalSF)) : '', s.units ? cellMoney(Math.round(exitValue / s.units)) : '', 'Year-5 NOI divided by exit cap']),
-    xlsRow(['Net Profit', cellMoneySigned(Math.round(netProfit)), totalSF ? cellMoneySigned(Math.round(netProfit / totalSF)) : '', s.units ? cellMoneySigned(Math.round(netProfit / s.units)) : '', 'Exit value less total all-in cost']),
-    xlsRow(['IRR %', cellPct(Math.round(irr * 10) / 10), '', '', 'Levered 5-year IRR']),
-    xlsRow(['Cap On Cost %', cellPct(valuation.capOnCost || 0), '', '', 'NOI / total cost']),
-    xlsRow(['Development Spread %', cellPct(Math.round((valuation.devSpreadPct || 0) * 1000) / 10), '', '', 'Spread over all-in cost']),
-  ];
-
-  const rentRows = [
-    xlsTitleRow('Rent Roll', s.addr),
-    xlsSectionRow('Rent Assumptions'),
-    xlsRow(['Submarket', s.hood]),
-    xlsRow(['Construction Plan', costs.planLabel]),
-    xlsRow(['Plan Rent Premium / Haircut', cellPct(Math.round((costs.rentPremium || 0) * 1000) / 10)]),
-    xlsRow(['Unit Mix Source', unitMixSourceText(s)]),
-    xlsRow(['Implied Monthly Gross Rent', cellMoney(rentMonthly)]),
-    xlsRow(['Implied Annual Gross Rent', cellMoney(rentMonthly * 12)]),
-    xlsRow(['Vacancy', cellPct(metrics.vacancyPct)]),
-    xlsRow(['Expense Ratio', cellPct(metrics.expenseRatioPct)]),
-    xlsRow(['']),
-    ...rentRowsFromSubmarket(s, submarket),
-  ];
-
-  const cashFlowRows = [
-    xlsTitleRow('Cash Flow', s.addr),
-    xlsHeaderRow(['Year', 'NOI', 'Debt Service', 'Cash Flow Before Tax', 'Exit Value', 'Loan Payoff', 'Net Sale Proceeds']),
-  ];
-  for (let year = 1; year <= 5; year++) {
-    const yearNoi = Math.round(noi * Math.pow(1 + metrics.rentGrowthPct / 100, year - 1));
-    const sale = year === 5 ? Math.round(yearNoi / exitCap) : '';
-    const payoff = year === 5 ? Math.round(loan) : '';
-    const proceeds = year === 5 ? Math.round((sale || 0) - loan) : '';
-    cashFlowRows.push(xlsRow([cellNumber(year), cellMoney(yearNoi), cellMoney(Math.round(debtService)), cellMoney(Math.round(yearNoi - debtService)), sale === '' ? '' : cellMoney(sale), payoff === '' ? '' : cellMoney(payoff), proceeds === '' ? '' : cellMoney(proceeds)]));
+  try {
+    const res = await fetch(API + '/api/excel/underwriting', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      let msg = 'Excel export failed';
+      try {
+        const err = await res.json();
+        msg = err?.error || err?.message || msg;
+      } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
+    downloadBlobFile('ParceLLA_' + safeFileName(displayAddr) + '_' + stamp + '_Underwriting.xlsx', blob);
+  } catch (e) {
+    alert('Could not generate Excel workbook: ' + (e.message || e));
   }
-
-  const sensitivityRows = [
-    xlsTitleRow('Sensitivity', s.addr),
-    xlsHeaderRow(['Scenario', 'Rent Change', 'Exit Cap Change', 'Cost Change', 'Estimated Impact']),
-    xlsRow(['Bear', '-10%', '+50 bps', '+8%', 'Lower rents, wider exit cap, higher construction cost']),
-    xlsRow(['Base', '0%', '0 bps', '0%', 'Current underwriting assumptions']),
-    xlsRow(['Bull', '+8%', '-40 bps', '-5%', 'Higher rents, tighter exit cap, value engineering']),
-    xlsRow(['']),
-    xlsRow(['Risk', 'Impact', 'Mitigation']),
-    xlsRow(['Rent miss ' + metrics.vacancyPct + '%', cellMoneyRed(-Math.round(noi * (metrics.vacancyPct / 100) * 5)), 'Validate achievable rents with local comps']),
-    xlsRow(['Cap expansion 50 bps', cellMoneyRed(-Math.round(noi / 0.005)), 'Use conservative exit cap and stress test']),
-    xlsRow(['Cost overrun 10%', cellMoneyRed(-Math.round(tc * 0.10)), 'GC pricing, contingency, value engineering']),
-  ];
-
-  const workbook = '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>' +
-    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
-    xlsStyles() +
-    xlsSheet('Summary', summaryRows, [220, 220, 120, 120, 220]) +
-    xlsSheet('Mapping', mapOptionsRows(s), [170, 320, 520]) +
-    xlsSheet('Investment Read', investmentReadRows(s, costs, income, valuation), [160, 520]) +
-    xlsSheet('Plan Scenarios', scenarioRowsForExport(s), [180, 115, 90, 80, 90, 130, 120, 120, 130, 130, 100, 320]) +
-    xlsSheet('Pencil Check', pencilCheckRows(s, { tc, land, noi, exitValue, netProfit, exitCap, hardCosts, hardPerSf, totalPerSf, totalPerUnit }), [190, 150, 130, 300]) +
-    xlsSheet('Underwriting', underwritingRows, [190, 130, 120, 120, 280]) +
-    xlsSheet('Appraisal Detail', appraisalDetailRows(exportAppraisal, s, costs, income, valuation), [160, 100, 240, 100, 160, 100, 120, 90, 90, 100, 110, 110, 120, 320]) +
-    xlsSheet('Income Statement', incomeStatementRows(s, income), [220, 130, 120, 110, 260]) +
-    xlsSheet('Rent Roll', rentRows, [160, 120, 100, 120, 130, 130]) +
-    xlsSheet('Rent Comps', rentCompPropertyRows(rentComps, s, submarket), [260, 80, 90, 70, 70, 120, 90, 90, 90, 100, 260, 100, 120, 220]) +
-    xlsSheet('Sales Comps', salesCompRows(comps), [220, 80, 130, 100, 120, 115, 85, 70, 90, 90, 90, 110, 100, 120, 120, 130, 130, 100, 120, 130, 100, 260]) +
-    xlsSheet('Construction Costs', constructionCostRows(s, tc, land), [240, 100, 130, 110, 110, 320]) +
-    xlsSheet('Cash Flow', cashFlowRows, [80, 130, 130, 150, 130, 130, 150]) +
-    xlsSheet('Sensitivity', sensitivityRows, [150, 130, 130, 130, 280]) +
-    '</Workbook>';
-
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 13);
-  downloadTextFile('ParceLLA_' + safeFileName(displayAddr) + '_' + stamp + '_Underwriting.xls', workbook);
 }
 async function exportPDF(id) {
   if (!id) return;

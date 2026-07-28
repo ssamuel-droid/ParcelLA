@@ -37,6 +37,7 @@ import {
 
 import sitesRouter     from './routes/sites.js';
 import ownersRouter    from './routes/owners.js';
+import excelRouter     from './routes/excel.js';
 import modelRouter     from './routes/model.js';
 import compsRouter     from './routes/comps.js';
 import notesRouter     from './routes/notes.js';
@@ -101,6 +102,7 @@ app.get('/favicon.svg', (req, res) => res.sendFile(join(publicDir, 'favicon.svg'
 // ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/sites',       sitesRouter);
 app.use('/api/owners',      ownersRouter);
+app.use('/api/excel',       excelRouter);
 app.use('/api/model',       modelRouter);
 app.use('/api/comps',       compsRouter);
 app.use('/api/notes',       notesRouter);
@@ -148,6 +150,7 @@ app.get('/api/health', (req, res) => {
       stripe:    !!process.env.STRIPE_SECRET_KEY,
       resend:    !!process.env.RESEND_API_KEY,
       anthropic: !!process.env.ANTHROPIC_API_KEY,
+      regrid:    !!(process.env.REGRID_API_KEY || process.env.REGRID_TOKEN),
     },
   });
 });
