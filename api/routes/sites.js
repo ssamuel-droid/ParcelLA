@@ -552,13 +552,30 @@ function listingCategory(s) {
 
 function developmentStatusKey(s) {
   const explicit = String(s?.developmentStatus || '').trim();
-  const raw = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
-  if (['submitted','plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
+  const explicitKey = explicit.toLowerCase().replace(/[\s/-]+/g, '_');
+  const explicitAliases = {
+    submitted: 'submitted',
+    plan_check: 'plan_check',
+    city_approved_not_started: 'city_approved_not_started',
+    approved_not_started: 'city_approved_not_started',
+    rti: 'city_approved_not_started',
+    permit_issued: 'permit_issued',
+    issued: 'permit_issued',
+    started_unknown: 'possibly_started_unknown',
+    possibly_started_unknown: 'possibly_started_unknown',
+  };
+  if (explicitAliases[explicitKey]) return explicitAliases[explicitKey];
+  const raw = [
+    s?.permitStatus,
+    s?.permit_status,
+    s?.workDescription,
+    s?.permitNumber,
+  ].map(v => String(v || '').toLowerCase()).join(' ');
   if (raw.includes('not ready')) return 'plan_check';
   if (raw.includes('issued')) return 'permit_issued';
   if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
-  if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('pc assigned') || raw.includes('pc in progress') || raw.includes('pc info complete') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor') || raw.includes('review') || raw.includes('hold')) return 'plan_check';
-  if (raw.includes('submit') || raw.includes('filed') || raw.includes('application')) return 'submitted';
+  if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('pcis') || raw.includes('under review') || raw.includes('check') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor') || raw.includes('review') || raw.includes('hold') || raw.includes('resubmittal')) return 'plan_check';
+  if (raw.includes('submit') || raw.includes('submittal') || raw.includes('filed') || raw.includes('application') || raw.includes('intake') || raw.includes('pre-screen') || raw.includes('created')) return 'submitted';
   return 'possibly_started_unknown';
 }
 

@@ -29,6 +29,10 @@ function pct(value) {
   return Math.abs(n) > 1 ? n / 100 : n;
 }
 
+function pctPoints(value) {
+  return num(value, 0) / 100;
+}
+
 function pctFromBps(value) {
   return num(value, 0) / 10000;
 }
@@ -230,6 +234,18 @@ router.post('/underwriting', async (req, res, next) => {
 
     const siteName = text(site.displayAddress || site.addr || 'Deal');
     const generated = text(p.generatedAt) || new Date().toISOString().slice(0, 10);
+    const unitsValue = num(site.units, 0);
+    const avgUnitSfValue = num(site.avgUnitSf || site.usf, 800);
+    const totalSfValue = money(costs.totalSF || unitsValue * avgUnitSfValue);
+    const landValue = money(costs.land || site.landBasis || site.askPrice || 0);
+    const hardCostValue = money(costs.hardCosts || 0);
+    const softCostValue = money(costs.softCosts || 0);
+    const preCarryValue = landValue + hardCostValue + softCostValue;
+    const carryCostValue = money(costs.carryCost || 0);
+    const hardPsfValue = totalSfValue ? num(assumptions.hardCostPerSf ?? (hardCostValue / totalSfValue), 0) : num(assumptions.hardCostPerSf || costs.hardPerSf, 0);
+    const softPctValue = hardCostValue ? num(assumptions.softCostPct ?? (softCostValue / hardCostValue), 0) : pct(assumptions.softCostPct || 0);
+    const carryPctValue = preCarryValue ? num(assumptions.carryPct ?? (carryCostValue / preCarryValue), 0) : 0;
+    const rentPremiumValue = pct(assumptions.rentPremiumPct);
     const summaryWs = wb.addWorksheet('Summary');
 
     const assumptionsWs = wb.addWorksheet('Assumptions');
@@ -246,16 +262,17 @@ router.post('/underwriting', async (req, res, next) => {
       return row.number;
     };
 
-    addAssumption('units', 'Units', num(site.units, 0), FMT.whole, 'Editable unit count used throughout the workbook.');
-    addAssumption('avgUnitSf', 'Average unit SF', num(site.avgUnitSf || site.usf, 800), FMT.whole, 'Net rentable SF per unit.');
-    const totalSfRow = writeRow(assumptionsWs, ['Total rentable SF', formula(`${A.units}*${A.avgUnitSf}`, money(costs.totalSF || (num(site.units) * num(site.avgUnitSf || site.usf, 800))), FMT.whole), 'Formula: units x average unit SF.'], 'total');
+    addAssumption('units', 'Units', unitsValue, FMT.whole, 'Editable unit count used throughout the workbook.');
+    addAssumption('avgUnitSf', 'Average unit SF', avgUnitSfValue, FMT.whole, 'Net rentable SF per unit.');
+    const totalSfRow = writeRow(assumptionsWs, ['Total rentable SF', formula(`${A.units}*${A.avgUnitSf}`, totalSfValue, FMT.whole), 'Formula: units x average unit SF.'], 'total');
     A.totalSf = ref('Assumptions', totalSfRow.number, 2);
-    addAssumption('land', 'Land basis / acquisition price', money(costs.land || site.landBasis || site.askPrice || 0), FMT.money, text(site.landSource || assumptions.landSource || 'Asking price or imputed off-market land value.'));
-    addAssumption('hardPsf', 'Hard cost / SF', money(assumptions.hardCostPerSf || costs.hardPerSf || 0), FMT.money, 'Primary construction-cost input.');
-    addAssumption('softPct', 'Soft costs / hard costs', pct(assumptions.softCostPct), FMT.pct, 'A&E, permits, fees, contingency, developer fee.');
+    addAssumption('land', 'Land basis / acquisition price', landValue, FMT.money, text(site.landSource || assumptions.landSource || 'Asking price or imputed off-market land value.'));
+    addAssumption('hardPsf', 'Hard cost / SF', hardPsfValue, FMT.money, 'Exact model input; formatted dollars may round on screen.');
+    addAssumption('softPct', 'Soft costs / hard costs', softPctValue, FMT.pct, 'A&E, permits, fees, contingency, developer fee.');
     addAssumption('months', 'Construction months', num(assumptions.constructionMonths || costs.months || 18), FMT.whole, 'Used to size financing carry.');
     addAssumption('ltc', 'Loan-to-cost', pct(assumptions.loanToCostPct), FMT.pct, 'Debt sizing assumption.');
     addAssumption('rate', 'Interest rate', pct(assumptions.interestRatePct), FMT.pct, 'Interest-only debt service and carry.');
+    addAssumption('carryPct', 'Financing carry / pre-carry cost', carryPctValue, FMT.pct, 'Derived from current site model so the budget ties to the app; edit to stress-test carry.');
     addAssumption('vacancy', 'Vacancy / credit loss', pct(assumptions.vacancyPct), FMT.pct, 'Applied to gross potential rent.');
     addAssumption('expenseRatio', 'Operating expenses / EGI', pct(assumptions.expenseRatioPct), FMT.pct, 'Stabilized operating expense ratio.');
     addAssumption('rentGrowth', 'Annual rent growth', pct(assumptions.rentGrowthPct), FMT.pct, 'Used for year-5 NOI.');
@@ -264,7 +281,7 @@ router.post('/underwriting', async (req, res, next) => {
     const exitCapRow = writeRow(assumptionsWs, ['Exit cap rate', formula(`${A.entryCap}+${A.exitSpread}`, pct(valuation.exitCap || appraisal.exitCap), FMT.pct2), 'Formula: entry cap + spread.'], 'total');
     A.exitCap = ref('Assumptions', exitCapRow.number, 2);
     addAssumption('otherIncomeUnit', 'Other income / unit / year', money(assumptions.otherIncomePerUnit || (num(site.units) ? num(income.otherIncome) / num(site.units) : 600)), FMT.money, 'Parking, laundry, storage, fees, and other ancillary income.');
-    addAssumption('rentPremium', 'Plan rent premium / haircut', pct(assumptions.rentPremiumPct), FMT.pct, text(assumptions.planLabel || costs.planLabel || 'Selected plan'));
+    addAssumption('rentPremium', 'Plan rent premium / haircut', rentPremiumValue, FMT.pct, text(assumptions.planLabel || costs.planLabel || 'Selected plan'));
 
     const ownerWs = wb.addWorksheet('Owner & Sale');
     setupSheet(ownerWs, [28, 32]);
@@ -279,8 +296,10 @@ router.post('/underwriting', async (req, res, next) => {
     writeRow(rentWs, ['Rent Roll', siteName], 'title');
     writeRow(rentWs, ['Unit type', 'Units', 'Rent / month', 'Monthly rent', 'Annual rent', 'Source'], 'header');
     const rentStart = rentWs.rowCount + 1;
+    let rentAnnualSubtotal = 0;
     unitMix.forEach(row => {
       const r = rentWs.rowCount + 1;
+      rentAnnualSubtotal += money(row.annual);
       writeRow(rentWs, [
         text(row.label || row.type),
         cell(num(row.units, 0), FMT.whole),
@@ -290,13 +309,27 @@ router.post('/underwriting', async (req, res, next) => {
         text(row.source || assumptions.unitMixSource || ''),
       ]);
     });
+    const targetBaseRent = rentPremiumValue === -1
+      ? money(income.grossPotentialRent)
+      : money(num(income.grossPotentialRent, 0) / (1 + rentPremiumValue));
+    if (unitMix.length && Math.abs(targetBaseRent - rentAnnualSubtotal) >= 1) {
+      const r = rentWs.rowCount + 1;
+      writeRow(rentWs, [
+        'Model adjustment',
+        '',
+        '',
+        formula(`(${targetBaseRent}/12)-SUM(D${rentStart}:D${r - 1})`, money((targetBaseRent - rentAnnualSubtotal) / 12), FMT.money),
+        formula(`${targetBaseRent}-SUM(E${rentStart}:E${r - 1})`, money(targetBaseRent - rentAnnualSubtotal), FMT.money),
+        'Reconciles rounded unit counts/rents to the site underwriting model.',
+      ]);
+    }
     const rentEnd = Math.max(rentStart, rentWs.rowCount);
     const rentTotalRow = writeRow(rentWs, [
       'Total / blended',
       formula(`SUM(B${rentStart}:B${rentEnd})`, num(site.units, 0), FMT.whole),
       formula(`IFERROR(D${rentWs.rowCount + 1}/B${rentWs.rowCount + 1},0)`, 0, FMT.money),
-      formula(`SUM(D${rentStart}:D${rentEnd})`, money(num(income.grossPotentialRent, 0) / 12), FMT.money),
-      formula(`SUM(E${rentStart}:E${rentEnd})`, money(income.grossPotentialRent), FMT.money),
+      formula(`SUM(D${rentStart}:D${rentEnd})`, money(targetBaseRent / 12), FMT.money),
+      formula(`SUM(E${rentStart}:E${rentEnd})`, targetBaseRent, FMT.money),
       text(assumptions.unitMixSource || ''),
     ], 'total');
     const rentAnnualRef = ref('Rent Roll', rentTotalRow.number, 5);
@@ -323,7 +356,7 @@ router.post('/underwriting', async (req, res, next) => {
     budgetRow('hard', 'Hard costs', `${A.totalSf}*${A.hardPsf}`, costs.hardCosts, 'Direct construction: framing, HVAC, plumbing, electrical, etc.');
     budgetRow('soft', 'Soft costs', `${budgetRefs.hard}*${A.softPct}`, costs.softCosts, 'Soft costs as a percentage of hard costs.');
     budgetRow('preCarry', 'Subtotal before carry', `${budgetRefs.land}+${budgetRefs.hard}+${budgetRefs.soft}`, num(costs.land) + num(costs.hardCosts) + num(costs.softCosts), 'Land + hard + soft costs.', 'section');
-    budgetRow('carry', 'Financing carry', `${budgetRefs.preCarry}*${A.ltc}*${A.rate}*${A.months}/12`, costs.carryCost, 'Construction interest reserve and related carry.');
+    budgetRow('carry', 'Financing carry', `${budgetRefs.preCarry}*${A.carryPct}`, costs.carryCost, 'Explicit carry load from the app model; adjust the carry assumption to stress-test timing/rates.');
     const totalCostRow = budgetRow('total', 'Total project cost', `${budgetRefs.land}+${budgetRefs.hard}+${budgetRefs.soft}+${budgetRefs.carry}`, costs.totalCost, 'Formula total underwriting basis.', 'total');
     constructionWs.getCell(`E${totalCostRow}`).value = 1;
     constructionWs.getCell(`E${totalCostRow}`).numFmt = FMT.pct;
@@ -338,6 +371,7 @@ router.post('/underwriting', async (req, res, next) => {
     writeRow(incomeWs, ['Income Statement', siteName], 'title');
     writeRow(incomeWs, ['Line item', 'Annual amount', '$ / Unit', '% of EGI', 'Formula / notes'], 'header');
     const I = {};
+    const incomeRowNumbers = {};
     const incRow = (key, label, f, result, pctFormula = '', note = '', role = 'body') => {
       const r = incomeWs.rowCount + 1;
       writeRow(incomeWs, [
@@ -348,6 +382,7 @@ router.post('/underwriting', async (req, res, next) => {
         note,
       ], role);
       I[key] = ref('Income Statement', r, 2);
+      incomeRowNumbers[key] = r;
       return r;
     };
     incRow('gpr', 'Gross potential rent', `${rentAnnualRef}*(1+${A.rentPremium})`, income.grossPotentialRent, '', 'Rent roll annual total x plan rent adjustment.');
@@ -355,17 +390,23 @@ router.post('/underwriting', async (req, res, next) => {
     incRow('other', 'Other income', `${A.units}*${A.otherIncomeUnit}`, income.otherIncome, '', 'Other annual income per unit.');
     incRow('egi', 'Effective gross income', `${I.gpr}-${I.vacancy}+${I.other}`, income.effectiveGrossIncome, '1', 'GPR less vacancy plus other income.', 'total');
     const expenseTotalRow = incRow('opex', 'Total operating expenses', `${I.egi}*${A.expenseRatio}`, income.operatingExpenses, `IFERROR(B${incomeWs.rowCount + 1}/${I.egi},0)`, 'EGI x expense ratio.', 'section');
-    const expenseWeights = [
-      ['Property taxes', 0.22],
-      ['Insurance', 0.08],
-      ['Utilities', 0.08],
-      ['Repairs & maintenance', 0.12],
-      ['Payroll / admin', 0.16],
-      ['Management fee', 0.08],
-      ['Marketing / turnover', 0.06],
-      ['Replacement reserves', 0.08],
-      ['Other operating', 0.12],
+    const expenseDetail = income.expenseDetail || {};
+    const defaultExpenseWeights = [
+      ['Property taxes', 0.22, expenseDetail.propertyTaxes],
+      ['Insurance', 0.09, expenseDetail.insurance],
+      ['Utilities', 0.07, expenseDetail.utilities],
+      ['Repairs & maintenance', 0.12, expenseDetail.repairsMaintenance],
+      ['Payroll / admin', 0.16, expenseDetail.payrollAdmin],
+      ['Management fee', 0.08, expenseDetail.managementFee],
+      ['Marketing / turnover', 0.06, expenseDetail.marketingTurnover],
+      ['Replacement reserves', 0.08, expenseDetail.replacementReserves],
+      ['Other operating', 0.12, expenseDetail.otherOperating],
     ];
+    const expenseAmountTotal = defaultExpenseWeights.reduce((sum, row) => sum + money(row[2]), 0);
+    const expenseWeights = defaultExpenseWeights.map(([label, defaultWeight, amount]) => [
+      label,
+      expenseAmountTotal ? money(amount) / expenseAmountTotal : defaultWeight,
+    ]);
     expenseWeights.forEach(([label, weight]) => {
       const r = incomeWs.rowCount + 1;
       writeRow(incomeWs, [
@@ -379,6 +420,29 @@ router.post('/underwriting', async (req, res, next) => {
     incRow('noi', 'Net operating income', `${I.egi}-${I.opex}`, income.noi, `IFERROR(B${incomeWs.rowCount + 1}/${I.egi},0)`, 'Formula: EGI less total operating expenses.', 'total');
     incRow('debt', 'Debt service', `${budgetRefs.loan}*${A.rate}`, income.debtService, '', 'Formula: loan amount x interest rate.');
     incRow('cfbt', 'Cash flow before tax', `${I.noi}-${I.debt}`, income.cfbt, '', 'NOI less annual interest-only debt service.', 'total');
+    const egiValue = num(income.effectiveGrossIncome, 0);
+    const pctResult = key => {
+      if (key === 'egi') return 1;
+      if (!egiValue) return 0;
+      const values = {
+        gpr: income.grossPotentialRent,
+        vacancy: income.vacancyLoss,
+        other: income.otherIncome,
+        opex: income.operatingExpenses,
+        noi: income.noi,
+        debt: income.debtService,
+        cfbt: income.cfbt,
+      };
+      return num(values[key], 0) / egiValue;
+    };
+    ['gpr', 'vacancy', 'other', 'egi', 'opex', 'noi', 'debt', 'cfbt'].forEach(key => {
+      const r = incomeRowNumbers[key];
+      if (!r) return;
+      const c = incomeWs.getCell(`D${r}`);
+      c.value = { formula: key === 'egi' ? '1' : `IFERROR(B${r}/${I.egi},0)`, result: pctResult(key) };
+      c.numFmt = FMT.pct;
+      styleCell(c, key === 'egi' || key === 'noi' || key === 'cfbt' ? 'total' : 'body');
+    });
     incomeWs.getCell(`B${expenseTotalRow}`).font = { name: 'Aptos', size: 10, bold: true, color: { argb: RED } };
 
     const valuationWs = wb.addWorksheet('Valuation');
@@ -399,9 +463,9 @@ router.post('/underwriting', async (req, res, next) => {
     valRow('exitValue', 'Exit value', `IFERROR(${V.year5Noi}/${V.exitCap},0)`, money(valuation.exitValue), FMT.money, 'Year 5 NOI / exit cap.', 'total');
     valRow('totalCost', 'Total project cost', `${budgetRefs.total}`, money(costs.totalCost), FMT.money, 'From construction budget.');
     valRow('netProfit', 'Net profit / gap', `${V.exitValue}-${V.totalCost}`, money(valuation.netProfit), FMT.money, 'Exit value less total cost.', 'total');
-    valRow('capOnCost', 'Cap on cost', `IFERROR(${V.noi}/${V.totalCost},0)`, pct(valuation.capOnCost), FMT.pct, 'NOI / total project cost.');
+    valRow('capOnCost', 'Cap on cost', `IFERROR(${V.noi}/${V.totalCost},0)`, pctPoints(valuation.capOnCost), FMT.pct, 'NOI / total project cost.');
     valRow('devSpread', 'Development spread', `IFERROR(${V.exitValue}/${V.totalCost}-1,0)`, pct(valuation.devSpreadPct), FMT.pct, 'Exit value / total cost - 1.');
-    valRow('leveredIrr', 'Levered IRR', `IFERROR(IRR(${rangeRef('Cash Flow', 6, 2, 6, 7)}),0)`, pct(num(valuation.leveragedIRR, 0)), FMT.pct, 'Formula references Cash Flow tab.');
+    valRow('leveredIrr', 'Levered IRR', `IFERROR(IRR(${rangeRef('Cash Flow', 6, 2, 6, 7)}),0)`, pctPoints(valuation.leveragedIRR), FMT.pct, 'Formula references Cash Flow tab.');
 
     const cashWs = wb.addWorksheet('Cash Flow');
     setupSheet(cashWs, [22, 14, 14, 14, 14, 14, 14]);
@@ -429,7 +493,7 @@ router.post('/underwriting', async (req, res, next) => {
         formula(`IFERROR((G${r}*(1+${A.rentGrowth})^4)/${A.exitCap},0)`, money(row.exitValue), FMT.money),
         formula(`H${r}-F${r}`, money(row.netProfit), FMT.money),
         formula(`IFERROR(F${r}/${A.units},0)`, money(row.costPerUnit), FMT.money),
-        formula(`IFERROR(G${r}/F${r},0)`, pct(row.capOnCost), FMT.pct),
+        formula(`IFERROR(G${r}/F${r},0)`, pctPoints(row.capOnCost), FMT.pct),
         text(row.note),
       ]);
     });
@@ -507,8 +571,8 @@ router.post('/underwriting', async (req, res, next) => {
     writeRow(summaryWs, ['NOI', formula(`${V.noi}`, money(income.noi), FMT.money), 'Income Statement tab']);
     writeRow(summaryWs, ['Exit value', formula(`${V.exitValue}`, money(valuation.exitValue), FMT.money), 'Valuation tab']);
     writeRow(summaryWs, ['Net profit / gap', formula(`${V.netProfit}`, money(valuation.netProfit), FMT.money), 'Exit value less total project cost.'], 'total');
-    writeRow(summaryWs, ['Levered IRR', formula(`${V.leveredIrr}`, pct(num(valuation.leveragedIRR, 0)), FMT.pct), 'Cash Flow tab']);
-    writeRow(summaryWs, ['Cap on cost', formula(`${V.capOnCost}`, pct(valuation.capOnCost), FMT.pct), 'NOI / total project cost']);
+    writeRow(summaryWs, ['Levered IRR', formula(`${V.leveredIrr}`, pctPoints(valuation.leveragedIRR), FMT.pct), 'Cash Flow tab']);
+    writeRow(summaryWs, ['Cap on cost', formula(`${V.capOnCost}`, pctPoints(valuation.capOnCost), FMT.pct), 'NOI / total project cost']);
     writeRow(summaryWs, ['Comp-driven exit cap', formula(`${V.exitCap}`, pct(valuation.exitCap || appraisal.exitCap), FMT.pct2), text(appraisal.capRateSource || '')]);
     wb.worksheets.forEach(ws => {
       ws.eachRow(row => row.eachCell(c => {

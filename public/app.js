@@ -128,9 +128,10 @@ function streetViewURL(addr, w=640, h=220) {
   return `https://maps.googleapis.com/maps/api/streetview?size=${w}x${h}&location=${addressQuery(addr)}&fov=90&heading=0&pitch=5&key=${GMAPS_KEY}`;
 }
 
-function staticMapURL(addr, maptype='roadmap', w=640, h=220) {
+function staticMapURL(addr, maptype='roadmap', w=640, h=220, zoom=17, style='') {
   const q = addressQuery(addr);
-  return `https://maps.googleapis.com/maps/api/staticmap?size=${w}x${h}&scale=2&zoom=17&maptype=${maptype}&center=${q}&markers=color:0x0f1f3d%7C${q}&key=${GMAPS_KEY}`;
+  const styleParam = style ? `&style=${encodeURIComponent(style)}` : '';
+  return `https://maps.googleapis.com/maps/api/staticmap?size=${w}x${h}&scale=2&zoom=${zoom}&maptype=${maptype}&center=${q}&markers=color:0x0f1f3d%7C${q}${styleParam}&key=${GMAPS_KEY}`;
 }
 
 // Neighborhood center coordinates for Street View
@@ -145,6 +146,24 @@ const HOOD_COORDS = {
   'Mar Vista':     { lat: 34.0005, lng: -118.4266 },
   'West Adams':    { lat: 34.0139, lng: -118.3338 },
   'Boyle Heights': { lat: 34.0333, lng: -118.2126 },
+  'Hollywood':     { lat: 34.0928, lng: -118.3287 },
+  'East Hollywood': { lat: 34.0920, lng: -118.3009 },
+  'North Hollywood': { lat: 34.1683, lng: -118.3789 },
+  'Van Nuys':      { lat: 34.1867, lng: -118.4489 },
+  'Northridge':    { lat: 34.2381, lng: -118.5301 },
+  'Reseda':        { lat: 34.2011, lng: -118.5361 },
+  'Canoga Park':   { lat: 34.2011, lng: -118.5973 },
+  'Woodland Hills': { lat: 34.1654, lng: -118.6089 },
+  'Pacific Palisades': { lat: 34.0459, lng: -118.5268 },
+  'Brentwood':     { lat: 34.0521, lng: -118.4737 },
+  'Venice':        { lat: 33.9850, lng: -118.4695 },
+  'West LA':       { lat: 34.0430, lng: -118.4452 },
+  'Playa Vista':   { lat: 33.9760, lng: -118.4182 },
+  'Westchester':   { lat: 33.9597, lng: -118.3991 },
+  'Palms':         { lat: 34.0247, lng: -118.4116 },
+  'Sawtelle':      { lat: 34.0407, lng: -118.4517 },
+  'Hancock Park':  { lat: 34.0726, lng: -118.3370 },
+  'Larchmont':     { lat: 34.0761, lng: -118.3235 },
 };
 
 // Google Maps search link for an address
@@ -168,8 +187,18 @@ function zimasLink() {
   return 'https://planning.lacity.gov/zoning/zoning-search';
 }
 
+function ladbsPermitsLink() {
+  return 'https://www.ladbsservices2.lacity.org/OnlineServices/?service=plr';
+}
+
+function countyRecorderLink() {
+  return 'https://www.lavote.gov/home/records/real-estate-records/general-info';
+}
+
 function officialResearchLink(addr, source) {
   if (/zimas/i.test(source)) return zimasLink(addr);
+  if (/ladbs|permit|pcis/i.test(source)) return ladbsPermitsLink(addr);
+  if (/county|recorder|deed/i.test(source)) return countyRecorderLink(addr);
   return `https://www.google.com/search?q=${encodeURIComponent(fullAddress(addr) + ' ' + source)}`;
 }
 
@@ -179,7 +208,7 @@ function nearbySearchLink(addr, query) {
 
 function mapPreviewForMode(s, mode) {
   if (mode === 'satellite') return staticMapURL(s.addr, 'satellite');
-  if (mode === 'terrain') return staticMapURL(s.addr, 'terrain');
+  if (mode === 'terrain') return staticMapURL(s.addr, 'terrain', 640, 220, 15, 'feature:road|element:geometry|visibility:simplified');
   if (mode === 'street') return streetViewURL(s.addr);
   return staticMapURL(s.addr, 'roadmap');
 }
@@ -209,15 +238,20 @@ function setMapMode(id, mode) {
   });
 }
 
+function scrollDetailSection(anchorId) {
+  const el = g(anchorId);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function renderMapPanel(s) {
   const modes = ['roadmap', 'satellite', 'terrain', 'street'];
   const links = [
-    ['Google Maps', mapsLink(s.addr)],
-    ['Directions', directionsLink(s.addr)],
-    ['ZIMAS zoning', officialResearchLink(s.addr, 'ZIMAS zoning')],
-    ['LADBS permits', officialResearchLink(s.addr, 'LADBS permits PCIS')],
-    ['Rent comps nearby', nearbySearchLink(s.addr, 'apartments for rent')],
-    ['Sales comps nearby', nearbySearchLink(s.addr, 'multifamily sale comps')],
+    { label:'Google Maps', href:mapsLink(s.addr) },
+    { label:'Directions', href:directionsLink(s.addr) },
+    { label:'ZIMAS zoning', href:officialResearchLink(s.addr, 'ZIMAS zoning') },
+    { label:'LADBS permits', href:officialResearchLink(s.addr, 'LADBS permits PCIS') },
+    { label:'Rent comps', anchor:'comps-' + s.id },
+    { label:'Sales comps', anchor:'comps-' + s.id },
   ];
   return `
     <div class="maptabs" id="map-tabs-${s.id}">
@@ -228,7 +262,10 @@ function renderMapPanel(s) {
       <div id="map-label-${s.id}" class="mapcap">Map - ${s.addr}</div>
     </a>
     <div class="maplinks">
-      ${links.map(([label, href]) => `<a href="${href}" target="_blank" rel="noopener">${label}</a>`).join('')}
+      ${links.map(link => link.anchor
+        ? `<button type="button" onclick="scrollDetailSection('${link.anchor}')">${link.label}</button>`
+        : `<a href="${link.href}" target="_blank" rel="noopener">${link.label}</a>`
+      ).join('')}
     </div>`;
 }
 const fmtM = n => n >= 1e6 ? '$'+(Math.round(n/1e5)/10)+'M' : n >= 1e3 ? '$'+Math.round(n/1e3)+'K' : '$'+Math.round(n||0);
@@ -355,9 +392,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .mbg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:5px}.mb{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:7px 8px;border-left:3px solid #ddd}.mbl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.mbv{font-size:15px;font-weight:900}.mbs{font-size:8px;color:#7f8a9a;margin-top:1px;line-height:1.15}
 .ct{width:100%;font-size:11px;border-collapse:collapse}.ct td{padding:5px 0;border-bottom:0.5px solid #edf1f4}.ct td:last-child{text-align:right;font-weight:800}.ct tr.tot td{font-weight:900;border-top:1px solid #d8dee7;border-bottom:none;padding-top:6px}.wfr{margin-bottom:5px}.wfl{display:flex;justify-content:space-between;font-size:9px;color:#4d5969;margin-bottom:2px}.wft{height:8px;background:#edf1f5;border-radius:3px;overflow:hidden}.wff{height:100%;border-radius:3px}
 .nb{background:#fffbf0;border:1px solid #f0e0b0;border-left:3px solid var(--gold);border-radius:7px;padding:9px 11px;font-size:11px;line-height:1.55;color:#3f4a5a;margin-top:6px}.gb{padding:7px 12px;background:var(--gold);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-top:5px}.ab{width:100%;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:800;cursor:pointer;margin-top:6px}.ap{background:var(--navy);color:#fff}.as{background:#fff;color:var(--navy);border:1px solid var(--navy)}
-.maptabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:5px}.mapbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 4px;font-size:9px;font-weight:800;cursor:pointer}.mapbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.mapcard{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:5px;background:#fff;text-decoration:none}.mapcard img{width:100%;height:152px;object-fit:cover;display:block}.mapcap{padding:5px 8px;font-size:9px;color:#536071;background:#f8fafc;border-top:1px solid var(--line)}.maplinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:6px}.maplinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}.maplinks a:hover{border-color:var(--gold);background:#fffdf7}
+.maptabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:5px}.mapbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 4px;font-size:9px;font-weight:800;cursor:pointer}.mapbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.mapcard{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:5px;background:#fff;text-decoration:none}.mapcard img{width:100%;height:152px;object-fit:cover;display:block}.mapcap{padding:5px 8px;font-size:9px;color:#536071;background:#f8fafc;border-top:1px solid var(--line)}.maplinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:6px}.maplinks a,.maplinks button{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff;cursor:pointer}.maplinks a:hover,.maplinks button:hover{border-color:var(--gold);background:#fffdf7}
 .viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:fill;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:5;transform:translate(-50%,-50%) scale(1.12)}.pin:after{display:none!important}.pintip{position:absolute;left:21px;top:-18px;width:224px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;box-shadow:0 10px 25px rgba(15,31,61,.2);text-align:left;color:var(--ink);font-size:10px;line-height:1.25;display:none;pointer-events:none}.pin:hover .pintip{display:block}.pintip b{display:block;font-size:11px;margin-bottom:2px;overflow-wrap:anywhere}.pintip em{display:block;font-style:normal;color:#6f7b8c;margin-bottom:6px}.pintip span{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #edf1f4;padding-top:4px;margin-top:4px}.pintip strong{font-size:10px}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}.ownerbox{border:1px solid var(--line);border-left:3px solid var(--navy);border-radius:7px;padding:9px 10px;background:#f8fafc;color:#3f4a5a;display:grid;gap:3px;font-size:12px;line-height:1.35}.ownerbox b{color:var(--navy);font-size:13px}.ownerbox span{color:#657184}.ownerct td:first-child{color:#6f7b8c;font-weight:800;text-transform:uppercase;font-size:11px}.ownerct td:last-child{text-align:right;overflow-wrap:anywhere}
-.logo{font-size:18px}.navbtn,.albl,.ntag{font-size:12px}.cb,.sbs,.sb2 input,.bp,.br,.ss,.cm,.ct,.nb,.gb,.readitem,.ownerbox{font-size:12px}.ca{font-size:15px}.cp{font-size:14px}.tbl,.dht{font-size:14px}.kpv{font-size:14px}.mbv{font-size:17px}.sh,.sb h4,.mfl,.kpl,.icl,.mbl,.bdg,.mapbtn,.mapcap,.maplinks a,.viewbtn,.watchbtn,.layerbtn,.topdeal span,.sourcelinks a{font-size:10px}.icv{font-size:13px}.da{font-size:10px}
+.logo{font-size:18px}.navbtn,.albl,.ntag{font-size:12px}.cb,.sbs,.sb2 input,.bp,.br,.ss,.cm,.ct,.nb,.gb,.readitem,.ownerbox{font-size:12px}.ca{font-size:15px}.cp{font-size:14px}.tbl,.dht{font-size:14px}.kpv{font-size:14px}.mbv{font-size:17px}.sh,.sb h4,.mfl,.kpl,.icl,.mbl,.bdg,.mapbtn,.mapcap,.maplinks a,.maplinks button,.viewbtn,.watchbtn,.layerbtn,.topdeal span,.sourcelinks a{font-size:10px}.icv{font-size:13px}.da{font-size:10px}
 @media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.settings-grid{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}}
 @media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}}
 @media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg,.maplinks,.sourcelinks,.settings-grid{grid-template-columns:1fr}.viewtabs{width:100%;margin-left:0}.viewbtn{flex:1}}
@@ -713,13 +750,30 @@ function siteListingStatus(s) {
 
 function developmentStatusKey(s) {
   const explicit = String(s?.developmentStatus || '').trim();
-  const raw = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
-  if (['submitted','plan_check','city_approved_not_started','permit_issued','possibly_started_unknown'].includes(explicit)) return explicit;
+  const explicitKey = explicit.toLowerCase().replace(/[\s/-]+/g, '_');
+  const explicitAliases = {
+    submitted: 'submitted',
+    plan_check: 'plan_check',
+    city_approved_not_started: 'city_approved_not_started',
+    approved_not_started: 'city_approved_not_started',
+    rti: 'city_approved_not_started',
+    permit_issued: 'permit_issued',
+    issued: 'permit_issued',
+    started_unknown: 'possibly_started_unknown',
+    possibly_started_unknown: 'possibly_started_unknown',
+  };
+  if (explicitAliases[explicitKey]) return explicitAliases[explicitKey];
+  const raw = [
+    s?.permitStatus,
+    s?.permit_status,
+    s?.workDescription,
+    s?.permitNumber,
+  ].map(v => String(v || '').toLowerCase()).join(' ');
   if (raw.includes('not ready')) return 'plan_check';
   if (raw.includes('issued')) return 'permit_issued';
   if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
-  if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('pc assigned') || raw.includes('pc in progress') || raw.includes('pc info complete') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor') || raw.includes('review') || raw.includes('hold')) return 'plan_check';
-  if (raw.includes('submit') || raw.includes('filed') || raw.includes('application')) return 'submitted';
+  if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('pcis') || raw.includes('under review') || raw.includes('check') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor') || raw.includes('review') || raw.includes('hold') || raw.includes('resubmittal')) return 'plan_check';
+  if (raw.includes('submit') || raw.includes('submittal') || raw.includes('filed') || raw.includes('application') || raw.includes('intake') || raw.includes('pre-screen') || raw.includes('created')) return 'submitted';
   return 'possibly_started_unknown';
 }
 
@@ -756,7 +810,10 @@ function toggleWatch(id, ev) {
 }
 
 function cityMapURL(maptype='roadmap') {
-  return `https://maps.googleapis.com/maps/api/staticmap?size=${LA_MAP_VIEW.width}x${LA_MAP_VIEW.height}&scale=2&center=${LA_MAP_VIEW.centerLat},${LA_MAP_VIEW.centerLng}&zoom=${LA_MAP_VIEW.zoom}&maptype=${maptype}&key=${GMAPS_KEY}`;
+  const styleParam = maptype === 'terrain'
+    ? `&style=${encodeURIComponent('feature:road|element:geometry|visibility:simplified')}&style=${encodeURIComponent('feature:poi|visibility:off')}`
+    : '';
+  return `https://maps.googleapis.com/maps/api/staticmap?size=${LA_MAP_VIEW.width}x${LA_MAP_VIEW.height}&scale=2&center=${LA_MAP_VIEW.centerLat},${LA_MAP_VIEW.centerLng}&zoom=${LA_MAP_VIEW.zoom}&maptype=${maptype}${styleParam}&key=${GMAPS_KEY}`;
 }
 
 function isValidLACoord(lat, lng) {
@@ -765,16 +822,34 @@ function isValidLACoord(lat, lng) {
     lng >= LA_COORD_LIMITS.minLng && lng <= LA_COORD_LIMITS.maxLng;
 }
 
-function siteCoords(s) {
-  const lat = Number(s?.lat);
-  const lng = Number(s?.lng);
-  if (isValidLACoord(lat, lng)) return { lat, lng };
+function coordDistanceMiles(a, b) {
+  if (!a || !b) return 0;
+  const toRad = deg => Number(deg) * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 3958.8 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function fallbackCoordsForSite(s) {
   const base = HOOD_COORDS[s?.hood] || { lat:LA_MAP_VIEW.centerLat, lng:LA_MAP_VIEW.centerLng };
   const n = Number(s?.id || 0);
   return {
     lat: base.lat + (((n * 7) % 11) - 5) * 0.0025,
     lng: base.lng + (((n * 5) % 11) - 5) * 0.0035,
   };
+}
+
+function siteCoords(s) {
+  const lat = Number(s?.lat);
+  const lng = Number(s?.lng);
+  const fallback = fallbackCoordsForSite(s);
+  if (!isValidLACoord(lat, lng)) return fallback;
+  const hoodBase = HOOD_COORDS[s?.hood];
+  if (hoodBase && coordDistanceMiles({ lat, lng }, hoodBase) > 12) return fallback;
+  return { lat, lng };
 }
 
 function mercatorPoint(lat, lng) {
@@ -1393,8 +1468,8 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
   const noi = Math.round(recastIncome || !storedNoi ? Math.max(0, effectiveGrossIncome - operatingExpenses) : storedNoi);
   const expenseDetail = !recastIncome && s.expenseDetail ? s.expenseDetail : {
     propertyTaxes: operatingExpenses * 0.22,
-    insurance: operatingExpenses * 0.08,
-    utilities: operatingExpenses * 0.08,
+    insurance: operatingExpenses * 0.09,
+    utilities: operatingExpenses * 0.07,
     repairsMaintenance: operatingExpenses * 0.12,
     payrollAdmin: operatingExpenses * 0.16,
     managementFee: operatingExpenses * 0.08,
@@ -2085,6 +2160,18 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
   const year5Noi = base.year5Noi || Math.round((income?.noi || 0) * Math.pow(1 + metricRate('rentGrowthPct'), 4));
   const exitValue = exitCap ? Math.round(year5Noi / exitCap) : base.exitValue || 0;
   const netProfit = exitValue - (costs?.totalCost || 0);
+  const loanAmount = base.loanAmount || Math.round((costs?.totalCost || 0) * metricRate('loanToCostPct'));
+  const equity = base.equity || Math.max(0, (costs?.totalCost || 0) - loanAmount);
+  const debtService = base.debtService || income?.debtService || 0;
+  const noi = Number(income?.noi || base.noi || 0);
+  const rentGrowth = metricRate('rentGrowthPct');
+  const cashflows = [-equity];
+  for (let year = 1; year < 5; year++) {
+    const yearNoi = Math.round(noi * Math.pow(1 + rentGrowth, year - 1));
+    cashflows.push(yearNoi - debtService);
+  }
+  cashflows.push((year5Noi - debtService) + Math.max(0, exitValue - loanAmount));
+  const leveragedIRR = equity > 0 ? calcIRR(cashflows) * 100 : 0;
   return {
     ...base,
     entryCap,
@@ -2092,6 +2179,11 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
     year5Noi,
     exitValue,
     netProfit,
+    loanAmount,
+    equity,
+    debtService,
+    leveragedIRR,
+    equityMultiple: equity > 0 ? Math.max(0, exitValue - loanAmount) / equity : 0,
     devSpreadPct: costs?.totalCost ? (exitValue - costs.totalCost) / costs.totalCost : 0,
     capRateSource: appraisal?.capRateSource || 'base market cap rate',
   };
@@ -2819,6 +2911,7 @@ async function exportExcel(id) {
   const exportAppraisal = buildAppraisalEngine(s, comps, rentComps, costs, income, valuation);
   const compValuation = valuationWithAppraisal(valuation, exportAppraisal, costs, income);
   const metrics = currentUserMetrics();
+  const preCarryCost = (costs.land || 0) + (costs.hardCosts || 0) + (costs.softCosts || 0);
   const payload = {
     generatedAt: new Date().toISOString().slice(0, 10),
     site: {
@@ -2850,8 +2943,10 @@ async function exportExcel(id) {
     assumptions: {
       planLabel: costs.planLabel,
       unitMixSource: unitMixSourceText(s),
-      hardCostPerSf: costs.hardPerSf,
-      softCostPct: costs.softPct || 0,
+      hardCostPerSf: costs.totalSF ? (costs.hardCosts || 0) / costs.totalSF : costs.hardPerSf,
+      hardCostPerSfDisplay: costs.hardPerSf,
+      softCostPct: costs.hardCosts ? (costs.softCosts || 0) / costs.hardCosts : (costs.softPct || 0),
+      carryPct: preCarryCost ? (costs.carryCost || 0) / preCarryCost : 0,
       constructionMonths: costs.months || 18,
       rentPremiumPct: costs.rentPremium || 0,
       loanToCostPct: metrics.loanToCostPct,
@@ -2868,7 +2963,6 @@ async function exportExcel(id) {
     income,
     valuation: {
       ...compValuation,
-      leveragedIRR: valuation.leveragedIRR || 0,
       capOnCost: compValuation.capOnCost || valuation.capOnCost || 0,
       devSpreadPct: compValuation.devSpreadPct || valuation.devSpreadPct || 0,
     },

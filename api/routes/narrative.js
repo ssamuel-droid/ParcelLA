@@ -157,12 +157,12 @@ NOI: ${fmtM(noi)} · ENTRY CAP: ${(entryCap*100).toFixed(2)}% · EXIT CAP: ${(ex
 EXIT VALUE: ${fmtM(exitValue)} · NET PROFIT: ${fmtM(netProfit)} · IRR: ${Math.round(irrV*10)/10}%
 CAP ON COST: ${Math.round(capOnCost*10000)/100}% · DEV SPREAD: ${Math.round(devSpreadPct*1000)/10}% · EQUITY MULTIPLE: ${Math.round(eqMult*100)/100}x
 
-Write exactly 3 paragraphs, max 200 words total:
+Write exactly 3 complete paragraphs, max 260 words total:
 1. Why this deal does or doesn't pencil — what's specifically driving the return number
 2. The single most important risk a sophisticated LP or lender would raise
 3. One non-obvious insight a less experienced buyer would likely miss
 
-Be direct, specific with numbers, opinionated. No hedging language. No bullet points. No preamble.`;
+Be direct, specific with numbers, opinionated. Finish every paragraph completely. No hedging language. No bullet points. No preamble.`;
 
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -173,7 +173,7 @@ Be direct, specific with numbers, opinionated. No hedging language. No bullet po
       },
       body: JSON.stringify({
         model:      'claude-sonnet-5',
-        max_tokens:  450,
+        max_tokens:  700,
         messages:   [{ role: 'user', content: prompt }],
       }),
     });
