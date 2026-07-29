@@ -1,0 +1,6 @@
+/*
+!/public
+!/public/**
+!/scripts
+!/scripts/vercel-build.js
+!vercel.json
