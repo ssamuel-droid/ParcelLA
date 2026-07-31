@@ -491,6 +491,17 @@ function searchVariants(value) {
   return [...new Set(variants)];
 }
 
+function searchDbVariants(value) {
+  const term = cleanSearchTerm(value);
+  if (!term) return [];
+  const parts = String(value || '')
+    .split(/[,\n;]+/)
+    .map(cleanSearchTerm)
+    .filter(Boolean);
+  const tokens = term.split(/\s+/).filter(token => token.length >= 3 || /^\d{3,}$/.test(token));
+  return [...new Set([...searchVariants(term), ...parts, ...tokens].filter(v => v.length >= 3 || /^\d{3,}$/.test(v)))];
+}
+
 function siteSearchHaystack(s) {
   const aliases = Array.isArray(s.addressAliases) ? s.addressAliases : [];
   const knownAliases = String(s.addr || '').toUpperCase() === '6091 W PICO BLVD' && Number(s.units || 0) === 138
@@ -581,18 +592,12 @@ function developmentStatusKey(s) {
 
 async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset) {
   if (
-    !process.env.SUPABASE_URL ||
-    queryParams.listing ||
-    queryParams.devStatus ||
-    queryParams.zone ||
-    queryParams.minPrice ||
-    queryParams.maxPrice ||
-    hasModelOverrideParams(queryParams)
+    !process.env.SUPABASE_URL
   ) return null;
 
   let query = supabase
     .from('sites')
-    .select('*', { count: 'exact' })
+    .select('*', { count: 'estimated' })
     .in('status', ['active', 'off-market'])
     .not('net_profit', 'is', null);
 
@@ -614,7 +619,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
   if (search) {
     const clauses = [];
-    for (const variant of searchVariants(search)) {
+    for (const variant of searchDbVariants(queryParams.q || queryParams.search)) {
       clauses.push(`address.ilike.%${variant}%`);
       clauses.push(`permit_source_id.ilike.%${variant}%`);
     }
@@ -646,8 +651,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
 
   const { data, error, count } = await query;
   if (error) throw error;
-  const landCompBenchmarks = await getLandCompBenchmarks();
-  return { sites: (data || []).map((row, i) => mapSupabaseSite(row, i, landCompBenchmarks)), total: count ?? (data || []).length };
+  return { sites: (data || []).map((row, i) => mapSupabaseSite(row, i, null)), total: count ?? (data || []).length };
 }
 router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
   try {
@@ -691,8 +695,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         const { data: sbSites, error: sbErr } = await fetchAllUnderwrittenSites();
 
         if (!sbErr && sbSites?.length > 0) {
-          const landCompBenchmarks = await getLandCompBenchmarks();
-          sites = sbSites.map((row, i) => mapSupabaseSite(row, i, landCompBenchmarks));
+          sites = sbSites.map((row, i) => mapSupabaseSite(row, i, null));
           console.log(`[sites] Loaded ${sites.length} pre-underwritten sites from Supabase`);
         } else {
           console.log('[sites] No pre-underwritten sites found - using mock sites');

@@ -1087,7 +1087,7 @@ function refreshZoneOptions() {
 
 function buildSiteQueryParams(offset = 0) {
   const search = (g('f-q')?.value || '').trim();
-  const pageLimit = search ? Math.max(sitePageLimit, 500) : sitePageLimit;
+  const pageLimit = sitePageLimit;
   const qs = new URLSearchParams({ sort: g('srt')?.value || 'profit', limit: String(pageLimit), offset: String(offset) });
   if (search) qs.set('q', search);
   const types = [];
