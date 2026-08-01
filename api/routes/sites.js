@@ -595,9 +595,28 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     !process.env.SUPABASE_URL
   ) return null;
 
+  const search = cleanSearchTerm(queryParams.q || queryParams.search);
+  const usesSelectiveFilters = !!(
+    search ||
+    queryParams.listing ||
+    queryParams.devStatus ||
+    queryParams.zone ||
+    queryParams.minUnits ||
+    queryParams.maxUnits ||
+    queryParams.minPrice ||
+    queryParams.maxPrice ||
+    queryParams.minCost ||
+    queryParams.maxCost ||
+    queryParams.minProfit ||
+    queryParams.minIRR ||
+    queryParams.minSpread ||
+    queryParams.minCapoc ||
+    hasModelOverrideParams(queryParams)
+  );
+
   let query = supabase
     .from('sites')
-    .select('*', { count: 'estimated' })
+    .select('*', usesSelectiveFilters ? undefined : { count: 'estimated' })
     .in('status', ['active', 'off-market'])
     .not('net_profit', 'is', null);
 
@@ -616,7 +635,6 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   if (queryParams.minSpread) query = query.gte('dev_spread_pct', Number(queryParams.minSpread));
   if (queryParams.minCapoc) query = query.gte('cap_on_cost', Number(queryParams.minCapoc));
 
-  const search = cleanSearchTerm(queryParams.q || queryParams.search);
   if (search) {
     const clauses = [];
     for (const variant of searchDbVariants(queryParams.q || queryParams.search)) {
@@ -651,7 +669,9 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
 
   const { data, error, count } = await query;
   if (error) throw error;
-  return { sites: (data || []).map((row, i) => mapSupabaseSite(row, i, null)), total: count ?? (data || []).length };
+  const rows = data || [];
+  const rollingTotal = requestedOffset + rows.length + (rows.length === requestedLimit ? requestedLimit : 0);
+  return { sites: rows.map((row, i) => mapSupabaseSite(row, i, null)), total: count ?? rollingTotal };
 }
 router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
   try {
