@@ -99,6 +99,41 @@ function siteDisplayAddress(s) {
   return s?.displayAddress || knownAddressGroup(s)?.label || s?.addr || '';
 }
 
+function siteZoneText(s) {
+  return s?.zone ? String(s.zone) : 'Zoning TBD';
+}
+
+function siteLotText(s) {
+  const lot = Number(s?.lot || 0);
+  return lot > 0 ? `${lot.toLocaleString()} SF` : 'Lot TBD';
+}
+
+function siteUnitsText(s) {
+  const units = Number(s?.units || 0);
+  return units > 0 ? `${units.toLocaleString()} units` : 'Units TBD';
+}
+
+function siteMetaLine(s) {
+  return [
+    s?.hood || 'Neighborhood TBD',
+    siteZoneText(s),
+    siteLotText(s),
+    siteUnitsText(s),
+  ].map(escapeText).join(' &middot; ');
+}
+
+function landPricePerSfText(s, land) {
+  const lot = Number(s?.lot || 0);
+  if (!lot) return 'Lot TBD';
+  return fmtD(Math.round((siteAskPrice(s) || land || 0) / lot)) + '/SF';
+}
+
+function landPricePerUnitText(s, land) {
+  const units = Number(s?.units || 0);
+  if (!units) return 'Units TBD';
+  return fmtD(Math.round((siteAskPrice(s) || land || 0) / units));
+}
+
 function siteAddressNote(s) {
   const group = knownAddressGroup(s);
   if (group?.note) return group.note;
@@ -1337,7 +1372,7 @@ function renderCards() {
     const addrNote = siteAddressNote(s);
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
       <div class="ch">
-        <div><div class="ca">${escapeText(displayAddr)}</div><div class="cm">${addrNote ? escapeText(addrNote) + ' &middot; ' : ''}${s.hood} &middot; ${s.zone} &middot; ${(s.lot||0).toLocaleString()} SF &middot; ${s.units} units</div></div>
+        <div><div class="ca">${escapeText(displayAddr)}</div><div class="cm">${addrNote ? escapeText(addrNote) + ' &middot; ' : ''}${siteMetaLine(s)}</div></div>
         <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div><button class="watchbtn ${watched?'on':''}" onclick="toggleWatch(${s.id}, event)">${watched?'Saved':'Save'}</button></div>
       </div>
       <div class="bdgs">
@@ -1793,10 +1828,10 @@ function renderDetail(s) {
   g('d-body').innerHTML = `
     <div class="ig">
       <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${s.hood}</div></div>
-      <div class="ic"><div class="icl">Zoning</div><div class="icv">${s.zone}</div></div>
+      <div class="ic"><div class="icl">Zoning</div><div class="icv">${escapeText(siteZoneText(s))}</div></div>
       <div class="ic"><div class="icl">Listing status</div><div class="icv">${listingStatus}</div></div>
       <div class="ic"><div class="icl">Development status</div><div class="icv">${devStatus}</div></div>
-      <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${s.units} / ${s.usf} SF</div></div>
+      <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${escapeText(siteUnitsText(s))} / ${s.usf || 800} SF avg</div></div>
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${land?fmtD(land):'Not provided'} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
@@ -3134,7 +3169,7 @@ async function exportPDF(id) {
   <div style="font-size:10px;color:#c49a3c;letter-spacing:2px;margin:8px 0">DEVELOPMENT APPRAISAL REPORT</div>
   <h1>${displayAddr}</h1>
   ${addrNote ? `<div class="sub">${escapeText(addrNote)}</div>` : ''}
-  <div class="sub">${s.hood || ''}, Los Angeles, CA &nbsp;|&nbsp; ${s.zone || ''} Zoning &nbsp;|&nbsp; ${s.units}-Unit ${s.type || 'Multifamily'}</div>
+  <div class="sub">${escapeText(s.hood || 'Los Angeles')}, CA &nbsp;|&nbsp; ${escapeText(siteZoneText(s))} &nbsp;|&nbsp; ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'Multifamily')}</div>
   <div class="sub">${developmentStatusLabel(s)} &nbsp;|&nbsp; ${isOffMarketSite(s) ? 'Off-Market / Not For Sale' : 'Active Listing — For Sale'}</div>
   <div class="date">Report Date: ${today} &nbsp;|&nbsp; Prepared by ParceLLA Analytics Engine</div>
   <div class="conf">CONFIDENTIAL — FOR APPROVED RECIPIENTS ONLY</div>
@@ -3166,8 +3201,8 @@ async function exportPDF(id) {
 </div>
 
 <div class="note">
-  <strong>Investment Summary:</strong> This analysis presents a ${s.units}-unit ${s.type || 'multifamily'} development opportunity located at ${displayAddr} in ${s.hood || 'Los Angeles'}, CA.
-  The subject property is zoned ${s.zone || 'R3'} with a ${(s.lot||5000).toLocaleString()} SF lot. 
+  <strong>Investment Summary:</strong> This analysis presents a ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'multifamily')} development opportunity located at ${displayAddr} in ${s.hood || 'Los Angeles'}, CA.
+  The subject property has ${escapeText(siteZoneText(s))} and ${escapeText(siteLotText(s))}. 
   ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'submitted' ? 'The project has been submitted to the city and is awaiting plan check or approval.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
   Based on RSMeans 2024 construction cost data and CoStar Q3 2024 market cap rates, the projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF), 
   with a stabilized exit value of <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding a net development profit of <strong>${fmtD(prof)}</strong>.
@@ -3199,10 +3234,10 @@ async function exportPDF(id) {
       <tr><td>Street Address</td><td>${displayAddr}</td></tr>
       <tr><td>Neighborhood</td><td>${s.hood || 'Los Angeles'}</td></tr>
       <tr><td>City / County</td><td>Los Angeles, CA / LA County</td></tr>
-      <tr><td>Zoning Classification</td><td>${s.zone || 'R3'}</td></tr>
-      <tr><td>Lot Size</td><td>${(s.lot||5000).toLocaleString()} SF</td></tr>
+      <tr><td>Zoning Classification</td><td>${escapeText(siteZoneText(s))}</td></tr>
+      <tr><td>Lot Size</td><td>${escapeText(siteLotText(s))}</td></tr>
       <tr><td>Project Type</td><td>${s.type || 'Multifamily'}</td></tr>
-      <tr><td>Proposed Units</td><td>${s.units} units</td></tr>
+      <tr><td>Proposed Units</td><td>${escapeText(siteUnitsText(s))}</td></tr>
       <tr><td>Avg Unit Size</td><td>${s.usf || 800} SF</td></tr>
       <tr><td>Total Building SF</td><td>${((s.units||12)*(s.usf||800)).toLocaleString()} SF</td></tr>
     </table>
@@ -3219,8 +3254,8 @@ async function exportPDF(id) {
       <tr><td>Listing Status</td><td>${siteListingStatus(s)}</td></tr>
       <tr><td>Demo Required</td><td>${s.demo ? 'Yes' : 'No'}</td></tr>
       <tr><td>Asking Price</td><td>${isForSaleSite(s) ? fmtD(siteAskPrice(s)) : 'Not for sale (imputed)'}</td></tr>
-      <tr><td>Price per Unit</td><td>${fmtD(Math.round((siteAskPrice(s)||land)/s.units))}</td></tr>
-      <tr><td>Price per SF (land)</td><td>${fmtD(Math.round((siteAskPrice(s)||land)/(s.lot||5000)))}/SF</td></tr>
+      <tr><td>Price per Unit</td><td>${landPricePerUnitText(s, land)}</td></tr>
+      <tr><td>Price per SF (land)</td><td>${landPricePerSfText(s, land)}</td></tr>
     </table>
 
     <h3>Unit Mix</h3>
