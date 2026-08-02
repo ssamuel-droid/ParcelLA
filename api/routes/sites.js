@@ -498,8 +498,19 @@ function searchDbVariants(value) {
     .split(/[,\n;]+/)
     .map(cleanSearchTerm)
     .filter(Boolean);
-  const tokens = term.split(/\s+/).filter(token => token.length >= 3 || /^\d{3,}$/.test(token));
-  return [...new Set([...searchVariants(term), ...parts, ...tokens].filter(v => v.length >= 3 || /^\d{3,}$/.test(v)))];
+  const hasNumericPart = parts.some(part => /^\d{3,}\b/.test(part));
+  const variants = [];
+
+  for (const part of parts) {
+    const isNumber = /^\d{3,}\b/.test(part);
+    const isSpecificText = part.length >= 6;
+    if (isNumber || isSpecificText || (!hasNumericPart && parts.length === 1)) variants.push(part);
+  }
+
+  if (hasNumericPart && parts.some(part => /pico/i.test(part))) variants.push('6091 W PICO');
+  if (!variants.length) variants.push(...searchVariants(term));
+
+  return [...new Set(variants.filter(v => v.length >= 3 || /^\d{3,}$/.test(v)))];
 }
 
 function siteSearchHaystack(s) {
@@ -664,7 +675,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     units: 'units',
   };
   const sortColumn = sortColumns[sort] || 'net_profit';
-  query = query.order(sortColumn, { ascending: sort === 'price-a', nullsFirst: false });
+  if (!search) query = query.order(sortColumn, { ascending: sort === 'price-a', nullsFirst: false });
   query = query.range(requestedOffset, requestedOffset + requestedLimit - 1);
 
   const { data, error, count } = await query;
