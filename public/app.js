@@ -163,9 +163,19 @@ function streetViewURL(addr, w=640, h=220) {
   return `https://maps.googleapis.com/maps/api/streetview?size=${w}x${h}&location=${addressQuery(addr)}&fov=90&heading=0&pitch=5&key=${GMAPS_KEY}`;
 }
 
+const TERRAIN_MAP_STYLES = [
+  'feature:all|element:labels|visibility:off',
+  'feature:road|element:geometry|visibility:off',
+  'feature:landscape.natural|element:geometry|color:0xd8ead3',
+  'feature:landscape.man_made|element:geometry|color:0xf1ead4',
+  'feature:water|element:geometry|color:0xb7d7e8',
+  'feature:administrative|visibility:off',
+];
+
 function staticMapURL(addr, maptype='roadmap', w=640, h=220, zoom=17, style='') {
   const q = addressQuery(addr);
-  const styleParam = style ? `&style=${encodeURIComponent(style)}` : '';
+  const styles = Array.isArray(style) ? style : (style ? [style] : []);
+  const styleParam = styles.map(item => `&style=${encodeURIComponent(item)}`).join('');
   return `https://maps.googleapis.com/maps/api/staticmap?size=${w}x${h}&scale=2&zoom=${zoom}&maptype=${maptype}&center=${q}&markers=color:0x0f1f3d%7C${q}${styleParam}&key=${GMAPS_KEY}`;
 }
 
@@ -243,7 +253,7 @@ function nearbySearchLink(addr, query) {
 
 function mapPreviewForMode(s, mode) {
   if (mode === 'satellite') return staticMapURL(s.addr, 'satellite');
-  if (mode === 'terrain') return staticMapURL(s.addr, 'terrain', 640, 220, 15, 'feature:road|element:geometry|visibility:simplified');
+  if (mode === 'terrain') return staticMapURL(s.addr, 'terrain', 640, 220, 15, TERRAIN_MAP_STYLES);
   if (mode === 'street') return streetViewURL(s.addr);
   return staticMapURL(s.addr, 'roadmap');
 }
@@ -846,7 +856,7 @@ function toggleWatch(id, ev) {
 
 function cityMapURL(maptype='roadmap') {
   const styleParam = maptype === 'terrain'
-    ? `&style=${encodeURIComponent('feature:road|element:geometry|visibility:simplified')}&style=${encodeURIComponent('feature:poi|visibility:off')}`
+    ? TERRAIN_MAP_STYLES.map(item => `&style=${encodeURIComponent(item)}`).join('')
     : '';
   return `https://maps.googleapis.com/maps/api/staticmap?size=${LA_MAP_VIEW.width}x${LA_MAP_VIEW.height}&scale=2&center=${LA_MAP_VIEW.centerLat},${LA_MAP_VIEW.centerLng}&zoom=${LA_MAP_VIEW.zoom}&maptype=${maptype}${styleParam}&key=${GMAPS_KEY}`;
 }

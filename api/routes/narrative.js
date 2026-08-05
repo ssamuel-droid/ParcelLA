@@ -57,9 +57,9 @@ function mapSupabaseSite(s) {
     addr:         s.address ?? s.addr,
     hood:         s.neighborhood ?? s.hood ?? 'Koreatown',
     type:         s.project_type ?? s.type ?? 'Multifamily',
-    zone:         s.zoning ?? s.zone ?? 'R3',
-    lot:          s.lot_sf ?? s.lot ?? 5000,
-    units:        s.units ?? 4,
+    zone:         s.zoning ?? s.zone ?? null,
+    lot:          s.lot_sf ?? s.lot ?? null,
+    units:        s.units ?? null,
     usf:          s.avg_unit_sf ?? s.usf ?? 800,
     rti:          s.rti ?? false,
     isComp:       s.is_comp ?? false,
@@ -89,7 +89,27 @@ async function findNarrativeSite(siteId) {
   if (!data) return { site: null, model: null };
 
   const site = mapSupabaseSite(data);
-  return { site, model: runModel(normalizeSite(site)) };
+  return { site, model: site._m || modelFromSupabaseSite(data) };
+}
+
+function narrativeFallback(site, model, reason = '') {
+  const fmtM = n => n >= 1e6 ? '$' + (Math.round(n / 1e5) / 10) + 'M'
+    : n >= 1e3 ? '$' + Math.round(n / 1e3) + 'K'
+    : '$' + Math.round(n || 0);
+  const units = site.units ? `${site.units} units` : 'unit count TBD';
+  const entryCap = model.marketCapRate ?? model.cap ?? 0.0525;
+  const exitCap = model.exitCapRate ?? entryCap + 0.0025;
+  const profit = model.netProfit ?? model.exitProceeds ?? 0;
+  const profitRead = profit >= 0
+    ? `The current model shows ${fmtM(profit)} of value above the all-in basis.`
+    : `The current model shows a ${fmtM(Math.abs(profit))} value gap against the all-in basis.`;
+  const reasonText = reason ? ` AI provider note: ${reason}` : '';
+
+  return `${site.addr} is a ${units} ${site.type || 'development'} deal in ${site.hood || 'Los Angeles'}. ${profitRead} The key inputs are ${fmtM(model.totalCost || 0)} of total cost, ${fmtM(model.noi || 0)} of stabilized NOI, and an exit cap of ${(exitCap * 100).toFixed(2)}%. On those numbers, the deal is mainly driven by the spread between stabilized NOI and construction/acquisition basis.${reasonText}
+
+The main underwriting risk is that the cost and rent assumptions need to be verified before relying on the return. Hard costs, unit mix, entitlement status, and achievable rents can move the result quickly, so the next diligence step is to compare the construction budget and rent roll to recent local comps.
+
+The non-obvious point is that the land basis matters differently depending on listing status. If the site is not for sale, the imputed land value is only a negotiation screen, not a transaction price. If it is listed, the asking price should be stressed against both the cap-rate valuation and the per-unit/per-SF comp evidence.`;
 }
 
 // ── NARRATIVE ─────────────────────────────────────────────────────────────────
@@ -164,6 +184,12 @@ Write exactly 3 complete paragraphs, max 260 words total:
 
 Be direct, specific with numbers, opinionated. Finish every paragraph completely. No hedging language. No bullet points. No preamble.`;
 
+    if (!process.env.ANTHROPIC_API_KEY) {
+      const narrative = narrativeFallback(site, model, 'Anthropic API key is not configured, so this is a deterministic model summary.');
+      await logActivity(req.user?.id, 'generate_narrative_fallback', siteId);
+      return res.json({ narrative, cached: false, fallback: true });
+    }
+
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -180,7 +206,11 @@ Be direct, specific with numbers, opinionated. Finish every paragraph completely
 
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
-      throw new Error(err.error?.message ?? `Claude API ${r.status}`);
+      const message = err.error?.message ?? `Claude API ${r.status}`;
+      const narrative = narrativeFallback(site, model, message);
+      console.warn('[narrative] Claude fallback:', message);
+      await logActivity(req.user?.id, 'generate_narrative_fallback', siteId, { reason: message });
+      return res.json({ narrative, cached: false, fallback: true, error: message });
     }
 
     const data      = await r.json();

@@ -10,6 +10,7 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { requireAuth } from '../middleware/auth.js';
+import { RENTS } from '../../src/data/submarkets.js';
 
 const router = Router();
 
@@ -201,6 +202,63 @@ function rentSummary(rows) {
     if (key && rent && !latest[key]) latest[key] = rent;
   }
   return latest;
+}
+
+const BENCHMARK_UNIT_SF = {
+  studio: 500,
+  one: 650,
+  two: 900,
+  three: 1200,
+};
+
+const BED_LABELS = {
+  studio: { bedroomType: 'Studio', bedrooms: 0 },
+  one: { bedroomType: '1 BR', bedrooms: 1 },
+  two: { bedroomType: '2 BR', bedrooms: 2 },
+  three: { bedroomType: '3 BR', bedrooms: 3 },
+};
+
+function benchmarkRentRows(hood, storedComps, siteLat, siteLng) {
+  const storedBenchmarks = (storedComps || [])
+    .filter(row => !row.address && row.monthlyRent)
+    .map(row => ({
+      ...row,
+      source: row.source || 'saved market benchmark',
+      propertyName: row.propertyName || `${hood} ${row.bedroomType || 'rent'} benchmark`,
+      address: `${hood} rent benchmark`,
+      amenities: row.amenities || 'Saved submarket rent benchmark; replace with live property comps when available.',
+      distanceMiles: row.distanceMiles ?? null,
+    }));
+  if (storedBenchmarks.length) return storedBenchmarks.slice(0, 12);
+
+  const rents = RENTS[hood] || RENTS.Koreatown || {};
+  const period = new Date().toISOString().slice(0, 10);
+  return Object.entries(BED_LABELS)
+    .filter(([key]) => Number(rents[key] || 0) > 0)
+    .map(([key, meta]) => {
+      const rent = Number(rents[key]);
+      const sf = BENCHMARK_UNIT_SF[key];
+      return {
+        source: 'market rent benchmark',
+        propertyName: `${hood} ${meta.bedroomType} benchmark`,
+        address: `${hood} submarket`,
+        neighborhood: hood,
+        lat: siteLat,
+        lng: siteLng,
+        distanceMiles: null,
+        bedroomType: meta.bedroomType,
+        bedrooms: meta.bedrooms,
+        bathrooms: meta.bedrooms ? 1 : 1,
+        monthlyRent: rent,
+        unitSf: sf,
+        rentPerSf: Math.round((rent / sf) * 100) / 100,
+        yearBuilt: null,
+        propertyUnits: null,
+        amenities: 'New-construction market rent benchmark used because recent property-level rent comps were not returned.',
+        period,
+        url: '',
+      };
+    });
 }
 
 function periodTime(value) {
@@ -406,24 +464,28 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
     const staleSavedPropertyCount = storedComps
       .filter(c => c.address && !isRecentPeriod(c.period, recencyDays)).length;
     const propertyComps = rankRentComps([...liveComps, ...recentStoredPropertyComps]).slice(0, limit);
+    const benchmarkComps = propertyComps.length ? [] : benchmarkRentRows(hood, storedComps, siteLat, siteLng).slice(0, limit);
+    const returnedComps = propertyComps.length ? propertyComps : benchmarkComps;
     const hasRentcast = Boolean(process.env.RENTCAST_API_KEY);
     const source = liveComps.length
       ? 'rentcast active listings'
       : propertyComps.length
         ? 'recent saved database'
-        : 'market benchmark only';
+        : 'market benchmark fallback';
     const returnedMatchLabel = liveComps.length
       ? 'active apartment listings plus saved recent comps'
       : propertyComps.length
         ? `saved rent comps, last ${Math.round(recencyDays / 30)} months`
-        : matchLabel;
+        : benchmarkComps.length
+          ? 'benchmark rent rows from saved/submarket rent table'
+          : matchLabel;
     const limiter = propertyComps.length
       ? staleSavedPropertyCount
         ? `${staleSavedPropertyCount} older saved rent comp(s) were hidden because they are outside the ${recencyDays}-day recency window.`
         : ''
       : hasRentcast
         ? 'RentCast did not return nearby active apartment listings, and saved property-level rent comps are older than the recency window.'
-        : 'RENTCAST_API_KEY is not configured, so the app can only use saved benchmark rents unless recent property-level comps are added.';
+        : 'RENTCAST_API_KEY is not configured, so benchmark rents are shown until recent property-level comps are added.';
 
     res.json({
       hood,
@@ -432,10 +494,10 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
       matchLabel: returnedMatchLabel,
       recencyDays,
       staleSavedPropertyCount,
-      comps: propertyComps.length,
-      recentComps: propertyComps,
-      marketRents: rentSummary(storedComps),
-      benchmarkRows: storedComps.filter(c => !c.address).slice(0, 12),
+      comps: returnedComps.length,
+      recentComps: returnedComps,
+      marketRents: rentSummary([...storedComps, ...benchmarkComps]),
+      benchmarkRows: benchmarkComps,
       message: propertyComps.length
         ? 'Active or recent property-level rent comps found.'
         : 'No recent property-level rent comps were returned; benchmark rents are shown instead.',

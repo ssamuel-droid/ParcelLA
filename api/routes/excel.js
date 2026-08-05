@@ -75,6 +75,16 @@ function cell(value, numFmt) {
   return { value, numFmt };
 }
 
+function blankUnlessPositive(value, numFmt) {
+  const n = num(value, 0);
+  return n > 0 ? cell(n, numFmt) : '';
+}
+
+function blankPct(value, numFmt = FMT.pct) {
+  const n = pct(value);
+  return n > 0 ? cell(n, numFmt) : '';
+}
+
 function formula(value, result = 0, numFmt) {
   return { formula: value, result, numFmt };
 }
@@ -504,18 +514,19 @@ router.post('/underwriting', async (req, res, next) => {
     writeRow(salesWs, ['Address', 'Distance', 'Sale date', 'Sale price', 'Units', 'Avg SF', 'Year built', 'Cap rate', '$ / Unit', '$ / SF', 'Weight', 'Source / notes'], 'header');
     salesComps.forEach(c => {
       const r = salesWs.rowCount + 1;
+      const cap = c.capRate || c.capRateNorm;
       writeRow(salesWs, [
         text(c.address),
-        cell(num(c.distanceMiles, 0), FMT.number),
+        c.distanceMiles === undefined || c.distanceMiles === null ? '' : cell(num(c.distanceMiles, 0), FMT.number),
         text(c.saleDate || '').slice(0, 10),
-        cell(money(c.salePrice), FMT.money),
-        cell(num(c.units, 0), FMT.whole),
-        cell(num(c.avgUnitSf, 0), FMT.whole),
-        cell(num(c.yearBuilt, 0), FMT.whole),
-        cell(pct(c.capRate || c.capRateNorm), FMT.pct2),
+        blankUnlessPositive(c.salePrice, FMT.money),
+        blankUnlessPositive(c.units, FMT.whole),
+        blankUnlessPositive(c.avgUnitSf, FMT.whole),
+        blankUnlessPositive(c.yearBuilt, FMT.whole),
+        blankPct(cap, FMT.pct2),
         formula(`IFERROR(D${r}/E${r},0)`, money(c.pricePerUnit || c.usablePricePerUnit), FMT.money),
         formula(`IFERROR(D${r}/(E${r}*F${r}),0)`, money(c.pricePerSf || c.usablePricePerSf), FMT.money),
-        cell(pct(c.weightPct), FMT.pct),
+        c.weightPct ? cell(pct(c.weightPct), FMT.pct) : '',
         text(c.source || c.notes || ''),
       ]);
     });
@@ -528,14 +539,14 @@ router.post('/underwriting', async (req, res, next) => {
       const r = rentCompsWs.rowCount + 1;
       writeRow(rentCompsWs, [
         text(c.propertyName ? `${c.propertyName} - ${c.address || ''}` : c.address),
-        cell(num(c.distanceMiles, 0), FMT.number),
+        c.distanceMiles === undefined || c.distanceMiles === null ? '' : cell(num(c.distanceMiles, 0), FMT.number),
         text(c.period || '').slice(0, 10),
-        cell(num(c.bedrooms, 0), FMT.number),
-        cell(num(c.bathrooms, 0), FMT.number),
-        cell(money(c.monthlyRent || c.usableMonthlyRent), FMT.money),
-        cell(num(c.unitSf, 0), FMT.whole),
+        c.bedrooms === undefined || c.bedrooms === null ? '' : cell(num(c.bedrooms, 0), FMT.number),
+        c.bathrooms === undefined || c.bathrooms === null ? '' : cell(num(c.bathrooms, 0), FMT.number),
+        blankUnlessPositive(c.monthlyRent || c.usableMonthlyRent, FMT.money),
+        blankUnlessPositive(c.unitSf, FMT.whole),
         formula(`IFERROR(F${r}/G${r},0)`, num(c.rentPerSf || c.usableRentPerSf, 0), '$0.00'),
-        cell(pct(c.weightPct), FMT.pct),
+        c.weightPct ? cell(pct(c.weightPct), FMT.pct) : '',
         text(c.amenities || c.source || ''),
       ]);
     });
@@ -553,9 +564,9 @@ router.post('/underwriting', async (req, res, next) => {
         text(row.note),
       ]);
     });
-    writeRow(appraisalWs, ['Reconciled value', '', formula(`SUMPRODUCT(B3:B${Math.max(3, appraisalWs.rowCount)},C3:C${Math.max(3, appraisalWs.rowCount)})`, money(appraisal.reconciled || appraisal.values?.reconciled), FMT.money), 'Formula: weighted reconciliation.'], 'total');
-    writeRow(appraisalWs, ['Comp-driven entry cap', '', formula(`${V.entryCap}`, pct(appraisal.entryCap || valuation.entryCap), FMT.pct2), text(appraisal.capRateSource)]);
-    writeRow(appraisalWs, ['Comp-driven exit cap', '', formula(`${V.exitCap}`, pct(appraisal.exitCap || valuation.exitCap), FMT.pct2), 'Entry cap plus exit cap spread.']);
+    writeRow(appraisalWs, ['Reconciled value', 'n/a', formula(`SUMPRODUCT(B3:B${Math.max(3, appraisalWs.rowCount)},C3:C${Math.max(3, appraisalWs.rowCount)})`, money(appraisal.reconciled || appraisal.values?.reconciled), FMT.money), 'Formula: weighted reconciliation.'], 'total');
+    writeRow(appraisalWs, ['Comp-driven entry cap', 'n/a', formula(`${V.entryCap}`, pct(appraisal.entryCap || valuation.entryCap), FMT.pct2), text(appraisal.capRateSource)]);
+    writeRow(appraisalWs, ['Comp-driven exit cap', 'n/a', formula(`${V.exitCap}`, pct(appraisal.exitCap || valuation.exitCap), FMT.pct2), 'Entry cap plus exit cap spread.']);
 
     setupSheet(summaryWs, [30, 20, 44]);
     writeRow(summaryWs, ['ParceLLA Underwriting Summary', siteName, generated], 'title');

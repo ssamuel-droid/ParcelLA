@@ -539,6 +539,13 @@ function siteMatchesSearch(s, value) {
   return haystack.includes(term) || searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
 }
 
+function numericFilterPass(value, min, max) {
+  const n = Number(value || 0);
+  if (min && n && n < Number(min)) return false;
+  if (max && n && n > Number(max)) return false;
+  return true;
+}
+
 function normalizeZone(value) {
   return String(value || '')
     .toUpperCase()
@@ -601,12 +608,55 @@ function developmentStatusKey(s) {
   return 'possibly_started_unknown';
 }
 
+function sitePassesQueryFilters(s, queryParams) {
+  const m = s._m || {};
+  if (!siteMatchesSearch(s, queryParams.q || queryParams.search)) return false;
+
+  const typeList = listParam(queryParams.types || queryParams.type);
+  if (typeList.length && !typeList.includes(s.type)) return false;
+  if (queryParams.hood && s.hood !== queryParams.hood) return false;
+  if (queryParams.zone && !zoneMatches(s.zone, queryParams.zone)) return false;
+
+  const listings = listParam(queryParams.listing);
+  if (listings.length && !listings.includes(listingCategory(s))) return false;
+
+  const devStatuses = listParam(queryParams.devStatus);
+  const devKey = developmentStatusKey(s);
+  if (devStatuses.length && !(devStatuses.includes(devKey) || (devStatuses.includes('city_approved_not_started') && s.rti))) return false;
+
+  if (queryParams.rti !== undefined && s.rti !== (queryParams.rti === 'true')) return false;
+  if (queryParams.isComp !== undefined && s.isComp !== (queryParams.isComp === 'true')) return false;
+  if (queryParams.minUnits && Number(s.units || 0) < Number(queryParams.minUnits)) return false;
+  if (queryParams.maxUnits && Number(s.units || 0) > Number(queryParams.maxUnits)) return false;
+  if (queryParams.minLot && Number(s.lot || 0) < Number(queryParams.minLot)) return false;
+  if (queryParams.maxLot && Number(s.lot || 0) > Number(queryParams.maxLot)) return false;
+
+  const landBasis = Number(s.price ?? m.landCost ?? 0);
+  if (!numericFilterPass(landBasis, queryParams.minPrice, queryParams.maxPrice)) return false;
+  if (queryParams.minCost && Number(m.totalCost || 0) < Number(queryParams.minCost)) return false;
+  if (queryParams.maxCost && Number(m.totalCost || Infinity) > Number(queryParams.maxCost)) return false;
+  if (queryParams.minIRR && Number(m.leveragedIRR || 0) < Number(queryParams.minIRR)) return false;
+  if (queryParams.minProfit && Number(m.netProfit || 0) < Number(queryParams.minProfit)) return false;
+  const spreadPct = Math.abs(Number(m.devSpreadPct || 0)) <= 1 ? Number(m.devSpreadPct || 0) * 100 : Number(m.devSpreadPct || 0);
+  const capOnCostPct = Math.abs(Number(m.capRateOnCost || 0)) <= 1 ? Number(m.capRateOnCost || 0) * 100 : Number(m.capRateOnCost || 0);
+  if (queryParams.minSpread && spreadPct < Number(queryParams.minSpread)) return false;
+  if (queryParams.minCapoc && capOnCostPct < Number(queryParams.minCapoc)) return false;
+  return true;
+}
+
 async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset) {
   if (
     !process.env.SUPABASE_URL
   ) return null;
 
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
+  const needsPostFilter = Boolean(
+    search ||
+    queryParams.listing ||
+    queryParams.devStatus ||
+    queryParams.minPrice ||
+    queryParams.maxPrice
+  );
   const usesSelectiveFilters = !!(
     search ||
     queryParams.listing ||
@@ -637,8 +687,6 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
   if (queryParams.minUnits) query = query.gte('units', Number(queryParams.minUnits));
   if (queryParams.maxUnits) query = query.lte('units', Number(queryParams.maxUnits));
-  if (queryParams.minPrice) query = query.gte('price', Number(queryParams.minPrice));
-  if (queryParams.maxPrice) query = query.lte('price', Number(queryParams.maxPrice));
   if (queryParams.minCost) query = query.gte('total_cost', Number(queryParams.minCost));
   if (queryParams.maxCost) query = query.lte('total_cost', Number(queryParams.maxCost));
   if (queryParams.minProfit) query = query.gte('net_profit', Number(queryParams.minProfit));
@@ -676,13 +724,27 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   };
   const sortColumn = sortColumns[sort] || 'net_profit';
   if (!search) query = query.order(sortColumn, { ascending: sort === 'price-a', nullsFirst: false });
-  query = query.range(requestedOffset, requestedOffset + requestedLimit - 1);
+  const dbOffset = needsPostFilter ? 0 : requestedOffset;
+  const dbLimit = needsPostFilter
+    ? Math.min(5000, Math.max(requestedOffset + requestedLimit * 20, requestedLimit))
+    : requestedLimit;
+  query = query.range(dbOffset, dbOffset + dbLimit - 1);
 
   const { data, error, count } = await query;
   if (error) throw error;
   const rows = data || [];
+  let mapped = rows.map((row, i) => mapSupabaseSite(row, i + dbOffset, null));
+  if (needsPostFilter) {
+    const matches = mapped.filter(site => sitePassesQueryFilters(site, queryParams));
+    const page = matches.slice(requestedOffset, requestedOffset + requestedLimit);
+    const hasMoreRawRows = rows.length === dbLimit;
+    const total = hasMoreRawRows
+      ? Math.max(matches.length, requestedOffset + page.length + requestedLimit)
+      : matches.length;
+    return { sites: page, total };
+  }
   const rollingTotal = requestedOffset + rows.length + (rows.length === requestedLimit ? requestedLimit : 0);
-  return { sites: rows.map((row, i) => mapSupabaseSite(row, i, null)), total: count ?? rollingTotal };
+  return { sites: mapped, total: count ?? rollingTotal };
 }
 router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
   try {
