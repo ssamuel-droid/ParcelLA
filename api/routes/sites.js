@@ -35,6 +35,45 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
+const SITE_LIST_SELECT = [
+  'id',
+  'address',
+  'neighborhood',
+  'project_type',
+  'zoning',
+  'lot_sf',
+  'units',
+  'avg_unit_sf',
+  'rti',
+  'is_comp',
+  'price',
+  'status',
+  'has_demo',
+  'lat',
+  'lng',
+  'permit_source_id',
+  'total_cost',
+  'hard_costs',
+  'soft_costs',
+  'carry_cost',
+  'noi',
+  'exit_value',
+  'net_profit',
+  'irr_v',
+  'cap_on_cost',
+  'dev_spread_pct',
+  'entry_cap_rate',
+  'owner_name',
+  'owner_last_sale_date',
+  'owner_last_sale_amount',
+  'owner_source',
+  'underwritten_at',
+  'raw_permit_data',
+].join(',');
+const SITE_SEARCH_SELECT = SITE_LIST_SELECT
+  .split(',')
+  .filter(column => column !== 'raw_permit_data')
+  .join(',');
 
 // Guess project type from permit data
 function guessType(permitType, subType, units) {
@@ -709,9 +748,10 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     hasModelOverrideParams(queryParams)
   );
 
+  const selectColumns = search && !queryParams.devStatus ? SITE_SEARCH_SELECT : SITE_LIST_SELECT;
   let query = supabase
     .from('sites')
-    .select('*', usesSelectiveFilters ? undefined : { count: 'estimated' })
+    .select(selectColumns, usesSelectiveFilters ? undefined : { count: 'estimated' })
     .in('status', ['active', 'off-market'])
     .not('net_profit', 'is', null);
 

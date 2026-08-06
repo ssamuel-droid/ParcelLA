@@ -25,7 +25,7 @@ function escapeText(value) {
   }[ch]));
 }
 
-async function fetchJSONWithTimeout(url, options = {}, timeoutMs = 30000) {
+async function fetchJSONWithTimeout(url, options = {}, timeoutMs = 60000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -40,7 +40,7 @@ async function fetchJSONWithTimeout(url, options = {}, timeoutMs = 30000) {
     return data;
   } catch (e) {
     if (e.name === 'AbortError') {
-      throw new Error('The data server took too long to respond. It may be waking up.');
+      throw new Error('The data server took too long to respond. It may be waking up. Retry once, then narrow the search with a street number if it still times out.');
     }
     throw e;
   } finally {
@@ -1200,7 +1200,7 @@ function buildSiteQueryParams(offset = 0) {
 }
 
 async function fetchSitePage(qs) {
-  const data = await fetchJSONWithTimeout(API + '/api/sites?' + qs.toString(), {}, 30000);
+  const data = await fetchJSONWithTimeout(API + '/api/sites?' + qs.toString(), {}, 60000);
   return {
     results: data.results || [],
     total: Number.isFinite(Number(data.total)) ? Number(data.total) : (data.results || []).length,
