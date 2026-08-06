@@ -67,6 +67,27 @@ function canonicalAddress(value) {
   return String(value || '').toUpperCase().replace(/\s+/g, ' ').trim();
 }
 
+function searchTokens(value) {
+  return canonicalAddress(value)
+    .replace(/[,%()'"]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(token => token.length >= 2);
+}
+
+function orderedSearchTokenMatch(haystack, value) {
+  const tokens = searchTokens(value);
+  if (tokens.length < 2) return false;
+  let cursor = 0;
+  for (const token of tokens) {
+    const idx = haystack.indexOf(token, cursor);
+    if (idx < 0) return false;
+    cursor = idx + token.length;
+  }
+  return true;
+}
+
 const KNOWN_ADDRESS_GROUPS = [
   {
     key: '6091 W PICO BLVD',
@@ -152,6 +173,13 @@ function siteSearchText(s) {
     s?.workDescription,
     ...siteAddressAliases(s),
   ].map(canonicalAddress).join(' ');
+}
+
+function siteMatchesSearchText(s, value) {
+  const term = canonicalAddress(String(value || '').replace(/[,%()'"]/g, ' '));
+  if (!term) return true;
+  const haystack = siteSearchText(s);
+  return haystack.includes(term) || orderedSearchTokenMatch(haystack, value);
 }
 
 function addressQuery(addr) {
@@ -1228,7 +1256,8 @@ async function loadMoreSites() {
   }
 }
 function applyFilters() {
-  const search = canonicalAddress(g('f-q')?.value || '');
+  const searchValue = (g('f-q')?.value || '').trim();
+  const search = canonicalAddress(searchValue);
   const hood = g('f-hood')?.value||'', zone = g('f-zone')?.value||'';
   const umin = +g('f-umin')?.value||0, umax = +g('f-umax')?.value||Infinity;
   const pmin = +g('f-pmin')?.value||0, pmax = +g('f-pmax')?.value||Infinity;
@@ -1253,7 +1282,7 @@ function applyFilters() {
   filtered = allSites.filter(s => {
     const costs = costModelForSite(s);
     const valuation = valuationForSite(s, costs);
-    if (search && !siteSearchText(s).includes(search)) return false;
+    if (search && !siteMatchesSearchText(s, searchValue)) return false;
     const category = listingCategory(s);
     const listingMatch = (ffs && category === 'for_sale') || (frti && category === 'rti') || (fcomp && category === 'off_market');
     if (!listingMatch) return false;

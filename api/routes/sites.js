@@ -478,6 +478,36 @@ function cleanSearchTerm(value) {
   return String(value || '').replace(/[,%()'"]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
 }
 
+function searchTokens(value) {
+  return cleanSearchTerm(value)
+    .toUpperCase()
+    .split(/\s+/)
+    .filter(token => token.length >= 2);
+}
+
+function orderedTokenMatch(haystack, value) {
+  const tokens = searchTokens(value);
+  if (tokens.length < 2) return false;
+  let cursor = 0;
+  for (const token of tokens) {
+    const idx = haystack.indexOf(token, cursor);
+    if (idx < 0) return false;
+    cursor = idx + token.length;
+  }
+  return true;
+}
+
+function addressWildcardVariant(value) {
+  const term = cleanSearchTerm(value);
+  const match = term.match(/^(\d{3,})\s+(.+)$/);
+  if (!match) return null;
+  const streetTokens = match[2]
+    .split(/\s+/)
+    .filter(token => !/^(N|S|E|W|NE|NW|SE|SW|NORTH|SOUTH|EAST|WEST)$/i.test(token));
+  if (!streetTokens.length) return null;
+  return [match[1], ...streetTokens].join('%');
+}
+
 function searchVariants(value) {
   const term = cleanSearchTerm(value);
   if (!term) return [];
@@ -505,6 +535,8 @@ function searchDbVariants(value) {
     const isNumber = /^\d{3,}\b/.test(part);
     const isSpecificText = part.length >= 6;
     if (isNumber || isSpecificText || (!hasNumericPart && parts.length === 1)) variants.push(part);
+    const wildcard = addressWildcardVariant(part);
+    if (wildcard) variants.push(wildcard);
   }
 
   if (hasNumericPart && parts.some(part => /pico/i.test(part))) variants.push('6091 W PICO');
@@ -536,7 +568,9 @@ function siteMatchesSearch(s, value) {
   const term = cleanSearchTerm(value).toUpperCase();
   if (!term) return true;
   const haystack = siteSearchHaystack(s);
-  return haystack.includes(term) || searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
+  return haystack.includes(term) ||
+    orderedTokenMatch(haystack, value) ||
+    searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
 }
 
 function numericFilterPass(value, min, max) {
