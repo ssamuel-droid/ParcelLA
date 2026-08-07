@@ -124,8 +124,23 @@ function siteZoneText(s) {
   return s?.zone ? String(s.zone) : 'Zoning TBD';
 }
 
+function siteNeighborhood(s) {
+  const raw = String(s?.hood || s?.neighborhood || '').trim();
+  const inferred = hoodFromCoords(Number(s?.lat), Number(s?.lng));
+  if (!raw || raw === 'Neighborhood TBD') return inferred || 'Neighborhood TBD';
+  if (raw === 'Koreatown' && inferred && inferred !== 'Koreatown') return inferred;
+  return raw;
+}
+
+function knownLotSf(s) {
+  const lot = Number(s?.lot || s?.lotSf || 0);
+  if (!Number.isFinite(lot) || lot <= 0) return 0;
+  const likelyDefault = lot === 5000 && (isOffMarketSite(s) || s?.permitNumber || s?.permitSourceId);
+  return likelyDefault ? 0 : lot;
+}
+
 function siteLotText(s) {
-  const lot = Number(s?.lot || 0);
+  const lot = knownLotSf(s);
   return lot > 0 ? `${lot.toLocaleString()} SF` : 'Lot TBD';
 }
 
@@ -136,17 +151,22 @@ function siteUnitsText(s) {
 
 function siteMetaLine(s) {
   return [
-    s?.hood || 'Neighborhood TBD',
-    siteZoneText(s),
+    siteNeighborhood(s),
     siteLotText(s),
     siteUnitsText(s),
   ].map(escapeText).join(' &middot; ');
 }
 
 function landPricePerSfText(s, land) {
-  const lot = Number(s?.lot || 0);
+  const lot = knownLotSf(s);
   if (!lot) return 'Lot TBD';
   return fmtD(Math.round((siteAskPrice(s) || land || 0) / lot)) + '/SF';
+}
+
+function siteAvgUnitSfText(s) {
+  const avg = Number(s?.usf || s?.avgUnitSf || 0);
+  const assumed = !avg || (avg === 800 && (s?.permitNumber || s?.permitSourceId || /default/i.test(String(s?.unitMixSource || ''))));
+  return assumed ? '800 SF avg (assumed)' : `${Math.round(avg).toLocaleString()} SF avg`;
 }
 
 function landPricePerUnitText(s, land) {
@@ -237,7 +257,41 @@ const HOOD_COORDS = {
   'Sawtelle':      { lat: 34.0407, lng: -118.4517 },
   'Hancock Park':  { lat: 34.0726, lng: -118.3370 },
   'Larchmont':     { lat: 34.0761, lng: -118.3235 },
+  'Studio City':    { lat: 34.1486, lng: -118.3965 },
+  'Sherman Oaks':   { lat: 34.1511, lng: -118.4492 },
+  'Encino':         { lat: 34.1517, lng: -118.5214 },
 };
+
+const HOOD_BOXES = [
+  {h:'Silver Lake',lat0:34.070,lat1:34.105,lng0:-118.290,lng1:-118.250},
+  {h:'Echo Park',lat0:34.060,lat1:34.085,lng0:-118.280,lng1:-118.248},
+  {h:'Los Feliz',lat0:34.095,lat1:34.125,lng0:-118.310,lng1:-118.270},
+  {h:'Highland Park',lat0:34.095,lat1:34.135,lng0:-118.235,lng1:-118.175},
+  {h:'Koreatown',lat0:34.045,lat1:34.075,lng0:-118.325,lng1:-118.285},
+  {h:'Mid-Wilshire',lat0:34.055,lat1:34.075,lng0:-118.365,lng1:-118.325},
+  {h:'Hollywood',lat0:34.085,lat1:34.110,lng0:-118.340,lng1:-118.300},
+  {h:'West Adams',lat0:34.000,lat1:34.035,lng0:-118.355,lng1:-118.315},
+  {h:'Culver City',lat0:33.995,lat1:34.030,lng0:-118.420,lng1:-118.375},
+  {h:'Mar Vista',lat0:33.982,lat1:34.010,lng0:-118.455,lng1:-118.415},
+  {h:'Venice',lat0:33.975,lat1:34.005,lng0:-118.480,lng1:-118.445},
+  {h:'West LA',lat0:34.030,lat1:34.060,lng0:-118.455,lng1:-118.420},
+  {h:'Brentwood',lat0:34.040,lat1:34.075,lng0:-118.490,lng1:-118.450},
+  {h:'Pacific Palisades',lat0:34.030,lat1:34.080,lng0:-118.545,lng1:-118.490},
+  {h:'Studio City',lat0:34.130,lat1:34.162,lng0:-118.430,lng1:-118.370},
+  {h:'Sherman Oaks',lat0:34.140,lat1:34.178,lng0:-118.480,lng1:-118.415},
+  {h:'Encino',lat0:34.145,lat1:34.180,lng0:-118.530,lng1:-118.480},
+  {h:'Van Nuys',lat0:34.175,lat1:34.215,lng0:-118.465,lng1:-118.415},
+  {h:'North Hollywood',lat0:34.155,lat1:34.195,lng0:-118.390,lng1:-118.350},
+  {h:'Woodland Hills',lat0:34.155,lat1:34.200,lng0:-118.640,lng1:-118.580},
+  {h:'Reseda',lat0:34.190,lat1:34.225,lng0:-118.545,lng1:-118.500},
+  {h:'Northridge',lat0:34.220,lat1:34.260,lng0:-118.555,lng1:-118.500},
+];
+
+function hoodFromCoords(lat, lng) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const match = HOOD_BOXES.find(b => lat >= b.lat0 && lat <= b.lat1 && lng >= b.lng0 && lng <= b.lng1);
+  return match?.h || null;
+}
 
 // Google Maps search link for an address
 function mapsLink(addr) {
@@ -321,7 +375,6 @@ function renderMapPanel(s) {
   const links = [
     { label:'Google Maps', href:mapsLink(s.addr) },
     { label:'Directions', href:directionsLink(s.addr) },
-    { label:'ZIMAS zoning', href:officialResearchLink(s.addr, 'ZIMAS zoning') },
     { label:'LADBS permits', href:officialResearchLink(s.addr, 'LADBS permits PCIS') },
     { label:'Rent comps', anchor:'comps-' + s.id },
     { label:'Sales comps', anchor:'comps-' + s.id },
@@ -505,12 +558,6 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <option>Los Feliz</option><option>Koreatown</option><option>Mid-Wilshire</option>
         <option>Culver City</option><option>Mar Vista</option><option>West Adams</option>
         <option>Boyle Heights</option>
-      </select>
-      <h4>Zoning</h4>
-      <select id="f-zone" class="sbs">
-        <option value="">All zones</option>
-        <option>R2</option><option>R3</option><option>R4</option><option>RD1.5</option>
-        <option>C2</option><option>C4</option><option>[Q]C2</option>
       </select>
       <h4>Units</h4>
       <div class="sb2"><input type="number" id="f-umin" placeholder="Min"><input type="number" id="f-umax" placeholder="Max"></div>
@@ -1053,7 +1100,6 @@ function pencilReadHTML(s, costs, income, valuation) {
 function sourceLinksHTML(s) {
   const links = [
     ['LA City Open Data', 'https://data.lacity.org/'],
-    ['ZIMAS zoning', officialResearchLink(s.addr, 'ZIMAS zoning')],
     ['LADBS permits', officialResearchLink(s.addr, 'LADBS permits PCIS')],
     ['Google Maps', mapsLink(s.addr)],
     ['County recorder', officialResearchLink(s.addr, 'Los Angeles county recorder deed sale')],
@@ -1189,7 +1235,7 @@ function buildSiteQueryParams(offset = 0) {
   if (devStatuses.length && devStatuses.length < 5) qs.set('devStatus', devStatuses.join(','));
 
   const pairs = [
-    ['f-hood', 'hood'], ['f-zone', 'zone'], ['f-umin', 'minUnits'], ['f-umax', 'maxUnits'],
+    ['f-hood', 'hood'], ['f-umin', 'minUnits'], ['f-umax', 'maxUnits'],
     ['f-cmin', 'minCost'], ['f-cmax', 'maxCost'],
     ['mf-i', 'minIRR'], ['mf-s', 'minSpread'], ['mf-c', 'minCapoc'],
   ];
@@ -1273,7 +1319,7 @@ async function loadMoreSites() {
 function applyFilters() {
   const searchValue = (g('f-q')?.value || '').trim();
   const search = canonicalAddress(searchValue);
-  const hood = g('f-hood')?.value||'', zone = g('f-zone')?.value||'';
+  const hood = g('f-hood')?.value||'';
   const umin = +g('f-umin')?.value||0, umax = +g('f-umax')?.value||Infinity;
   const pmin = +g('f-pmin')?.value||0, pmax = +g('f-pmax')?.value||Infinity;
   const cmin = +g('f-cmin')?.value||0, cmax = +g('f-cmax')?.value||Infinity;
@@ -1307,8 +1353,7 @@ function applyFilters() {
     if (devStatuses.length && !devMatch) return false;
     if (watchOnly && !isWatched(s.id)) return false;
     if (!types.length || !types.includes(s.type)) return false;
-    if (hood && s.hood !== hood) return false;
-    if (zone && !zoneMatches(s.zone, zone)) return false;
+    if (hood && siteNeighborhood(s) !== hood) return false;
     if (s.units < umin || s.units > umax) return false;
     const landBasis = siteLandBasisForFilter(s, costs);
     if (landBasis && (landBasis < pmin || landBasis > pmax)) return false;
@@ -1467,7 +1512,7 @@ function renderMapView() {
     return `<button class="pin" data-label="${xmlEscape(label)}" onclick="openDetail(${s.id})" style="left:${pt.x}%;top:${pt.y}%;background:${color}">
       <span class="pintip">
         <b>${xmlEscape(displayAddr)}</b>
-        <em>${addrNote ? xmlEscape(addrNote) + ' · ' : ''}${xmlEscape(developmentStatusLabel(s))} · ${s.units || 0} units · ${xmlEscape(s.hood || '')}</em>
+        <em>${addrNote ? xmlEscape(addrNote) + ' · ' : ''}${xmlEscape(developmentStatusLabel(s))} · ${s.units || 0} units · ${xmlEscape(siteNeighborhood(s))}</em>
         <span><small>Price</small><strong>${price}</strong></span>
         <span><small>Net profit</small><strong style="color:${profitColor}">${fmtM(valuation.netProfit)}</strong></span>
         <span><small>Cap on cost</small><strong>${valuation.capOnCost || 0}%</strong></span>
@@ -1482,7 +1527,7 @@ function renderMapView() {
   }).join('') : '';
   const topDeals = visibleSites.map(row => row.s).slice(0, 6).map(s => {
     const valuation = valuationForSite(s, costModelForSite(s));
-    return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${escapeText(siteDisplayAddress(s))}</b><span>${s.hood} - ${fmtM(valuation.netProfit)} - ${valuation.capOnCost||0}% cap on cost</span></div>`;
+    return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${escapeText(siteDisplayAddress(s))}</b><span>${siteNeighborhood(s)} - ${fmtM(valuation.netProfit)} - ${valuation.capOnCost||0}% cap on cost</span></div>`;
   }).join('');
   const baseButtons = [
     ['roadmap','Map'],
@@ -1586,7 +1631,7 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
 
 function rentsForSite(s = {}, submarket = null) {
   const apiRents = submarket?.rents || {};
-  const localRents = FRONTEND_RENTS[s.hood] || FRONTEND_RENTS.Koreatown || {};
+  const localRents = FRONTEND_RENTS[siteNeighborhood(s)] || FRONTEND_RENTS.Koreatown || {};
   return {
     studio: Number(apiRents.studio ?? localRents.studio ?? 0),
     one: Number(apiRents.one ?? localRents.one ?? 0),
@@ -1791,7 +1836,7 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
 
 function valuationForSite(s, costs = costModelForSite(s), income = incomeStatementForSite(s, costs)) {
   const metrics = currentUserMetrics();
-  const entryCap = Number(s.entryCap) || FRONTEND_CAP_RATES[s.hood] || 0.0525;
+  const entryCap = Number(s.entryCap) || FRONTEND_CAP_RATES[siteNeighborhood(s)] || 0.0525;
   const exitCap = entryCap + ((Number(metrics.exitCapSpreadBps) || 0) / 10000);
   const noi = Math.round(income.noi || 0);
   const rentGrowth = metricRate('rentGrowthPct');
@@ -1881,11 +1926,10 @@ function renderDetail(s) {
   }, 100);
   g('d-body').innerHTML = `
     <div class="ig">
-      <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${s.hood}</div></div>
-      <div class="ic"><div class="icl">Zoning</div><div class="icv">${escapeText(siteZoneText(s))}</div></div>
+      <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${siteNeighborhood(s)}</div></div>
       <div class="ic"><div class="icl">Listing status</div><div class="icv">${listingStatus}</div></div>
       <div class="ic"><div class="icl">Development status</div><div class="icv">${devStatus}</div></div>
-      <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${escapeText(siteUnitsText(s))} / ${s.usf || 800} SF avg</div></div>
+      <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${escapeText(siteUnitsText(s))} / ${siteAvgUnitSfText(s)}</div></div>
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${land?fmtD(land):'Not provided'} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
@@ -1940,7 +1984,7 @@ function renderDetail(s) {
       <tr><td>Debt service</td><td style="color:#e24b4a">-${fmtD(income.debtService)}</td></tr>
       <tr class="tot"><td>Cash flow before tax</td><td>${fmtD(income.cfbt)}</td></tr>
     </table>
-    <div class="sh">Comparable evidence - ${s.hood}</div>
+    <div class="sh">Comparable evidence - ${siteNeighborhood(s)}</div>
     <div id="comps-${s.id}" style="font-size:10px;color:#aaa">Loading comps...</div>
 
     <div class="sh">Assumption sources</div>
@@ -2598,7 +2642,6 @@ function mapOptionsRows(s) {
     xlsRow(['Directions', 'Check access from target origin points', directionsLink(s.addr)]),
     xlsRow(['Street View', 'Review frontage, curb cuts, slope, street condition and adjacent uses', streetViewLink(s.addr)]),
     xlsRow(['Satellite / aerial', 'Review building footprint, lot layout, alleys and neighboring improvements', mapsLink(s.addr)]),
-    xlsRow(['ZIMAS zoning search', 'Validate zoning, overlays, specific plans, TOC and planning notes', officialResearchLink(s.addr, 'ZIMAS zoning')]),
     xlsRow(['LADBS permit search', 'Review permits, plan checks, certificates and permit history', officialResearchLink(s.addr, 'LADBS permits PCIS')]),
     xlsRow(['Rent comps nearby', 'Quick map search for visible rental competition', nearbySearchLink(s.addr, 'apartments for rent')]),
     xlsRow(['Sales comps nearby', 'Quick map search for nearby multifamily sales context', nearbySearchLink(s.addr, 'multifamily sale comps')]),
@@ -2614,7 +2657,6 @@ function investmentReadRows(s, costs, income, valuation) {
     xlsRow(['']),
     xlsSectionRow('Data Sources'),
     xlsRow(['LA City Open Data', 'https://data.lacity.org/']),
-    xlsRow(['ZIMAS zoning', officialResearchLink(s.addr, 'ZIMAS zoning')]),
     xlsRow(['LADBS permits', officialResearchLink(s.addr, 'LADBS permits PCIS')]),
     xlsRow(['Google Maps', mapsLink(s.addr)]),
     xlsRow(['County recorder search', officialResearchLink(s.addr, 'Los Angeles county recorder deed sale')]),
@@ -2988,9 +3030,9 @@ async function exportExcel(id) {
 
   const compQuery = compQueryForSite(s, 12);
   const [submarket, comps, rentComps] = await Promise.all([
-    fetchJSON('/api/submarkets/' + encodeURIComponent(s.hood)),
-    fetchJSON('/api/comps/submarket/' + encodeURIComponent(s.hood) + compQuery),
-    fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(s.hood) + compQuery),
+    fetchJSON('/api/submarkets/' + encodeURIComponent(siteNeighborhood(s))),
+    fetchJSON('/api/comps/submarket/' + encodeURIComponent(siteNeighborhood(s)) + compQuery),
+    fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(siteNeighborhood(s)) + compQuery),
   ]);
   const ownerInfo = await fetchOwnerInfo(s).catch(() => null);
 
@@ -3008,13 +3050,13 @@ async function exportExcel(id) {
       addr: s.addr,
       displayAddress: displayAddr,
       addressNote: siteAddressNote(s),
-      hood: s.hood,
-      neighborhood: s.hood,
+      hood: siteNeighborhood(s),
+      neighborhood: siteNeighborhood(s),
       zone: s.zone,
       type: s.type,
       units: s.units || 0,
       avgUnitSf: s.usf || 800,
-      lotSf: s.lot || 0,
+      lotSf: knownLotSf(s),
       listingStatus: siteListingStatus(s),
       developmentStatus: developmentStatusLabel(s),
       permitStatus: s.permitStatus || '',
@@ -3153,8 +3195,8 @@ async function exportPDF(id) {
   const pdfRentImpact = signedPlanPct(costs.rentPremium);
   const pdfCompQuery = compQueryForSite(s, 12);
   const [pdfComps, pdfRentComps, pdfOwner] = await Promise.all([
-    fetchJSON('/api/comps/submarket/' + encodeURIComponent(s.hood) + pdfCompQuery).catch(() => null),
-    fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(s.hood) + pdfCompQuery).catch(() => null),
+    fetchJSON('/api/comps/submarket/' + encodeURIComponent(siteNeighborhood(s)) + pdfCompQuery).catch(() => null),
+    fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(siteNeighborhood(s)) + pdfCompQuery).catch(() => null),
     fetchOwnerInfo(s).catch(() => null),
   ]);
   const pdfAppraisal = buildAppraisalEngine(s, pdfComps, pdfRentComps, costs, pdfIncome, valuation);
@@ -3656,7 +3698,7 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
 function resetFilters() {
   ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-nh','f-d-submitted','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
   const watch=g('f-watch'); if(watch)watch.checked=false;
-  ['f-hood','f-zone'].forEach(id=>{const el=g(id);if(el)el.value='';});
+  ['f-hood'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-q','f-umin','f-umax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c','mf-hc','mf-rate'].forEach(id=>{const el=g(id);if(el)el.value='';});
   const plan=g('mf-plan'); if(plan)plan.value='auto';
   loadSites();
