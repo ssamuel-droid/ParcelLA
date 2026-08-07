@@ -639,6 +639,10 @@ function loadUserMetrics() {
   }
 }
 
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function baseUserMetrics() {
   return { ...DEFAULT_USER_METRICS, ...(userMetrics || {}) };
 }
@@ -1200,7 +1204,18 @@ function buildSiteQueryParams(offset = 0) {
 }
 
 async function fetchSitePage(qs) {
-  const data = await fetchJSONWithTimeout(API + '/api/sites?' + qs.toString(), {}, 60000);
+  const url = API + '/api/sites?' + qs.toString();
+  let data;
+  try {
+    data = await fetchJSONWithTimeout(url, {}, 60000);
+  } catch (e) {
+    if (!String(e.message || '').includes('too long')) throw e;
+    const list = g('list');
+    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...</div>';
+    g('albl').textContent = 'Retrying API';
+    await wait(1800);
+    data = await fetchJSONWithTimeout(url, {}, 60000);
+  }
   return {
     results: data.results || [],
     total: Number.isFinite(Number(data.total)) ? Number(data.total) : (data.results || []).length,
