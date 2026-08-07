@@ -557,7 +557,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <option>Silver Lake</option><option>Echo Park</option><option>Highland Park</option>
         <option>Los Feliz</option><option>Koreatown</option><option>Mid-Wilshire</option>
         <option>Culver City</option><option>Mar Vista</option><option>West Adams</option>
-        <option>Boyle Heights</option>
+        <option>Boyle Heights</option><option>Studio City</option><option>Sherman Oaks</option>
+        <option>Encino</option><option>North Hollywood</option><option>Van Nuys</option>
+        <option>Woodland Hills</option><option>Reseda</option><option>Northridge</option>
       </select>
       <h4>Units</h4>
       <div class="sb2"><input type="number" id="f-umin" placeholder="Min"><input type="number" id="f-umax" placeholder="Max"></div>
@@ -2000,7 +2002,7 @@ function renderDetail(s) {
 
 async function loadComps(siteOrHood) {
   try {
-    const hood = typeof siteOrHood === 'object' ? siteOrHood.hood : siteOrHood;
+    const hood = typeof siteOrHood === 'object' ? siteNeighborhood(siteOrHood) : siteOrHood;
     const qs = typeof siteOrHood === 'object' ? compQueryForSite(siteOrHood, 6) : '';
     const r = await fetch(API + '/api/comps/submarket/' + encodeURIComponent(hood) + qs);
     if (!r.ok) return null;
@@ -2010,7 +2012,7 @@ async function loadComps(siteOrHood) {
 
 async function loadRentComps(siteOrHood) {
   try {
-    const hood = typeof siteOrHood === 'object' ? siteOrHood.hood : siteOrHood;
+    const hood = typeof siteOrHood === 'object' ? siteNeighborhood(siteOrHood) : siteOrHood;
     const qs = typeof siteOrHood === 'object' ? compQueryForSite(siteOrHood, 12) : '';
     const r = await fetch(API + '/api/comps/rent/submarket/' + encodeURIComponent(hood) + qs);
     if (!r.ok) return null;
@@ -3265,7 +3267,7 @@ async function exportPDF(id) {
   <div style="font-size:10px;color:#c49a3c;letter-spacing:2px;margin:8px 0">DEVELOPMENT APPRAISAL REPORT</div>
   <h1>${displayAddr}</h1>
   ${addrNote ? `<div class="sub">${escapeText(addrNote)}</div>` : ''}
-  <div class="sub">${escapeText(s.hood || 'Los Angeles')}, CA &nbsp;|&nbsp; ${escapeText(siteZoneText(s))} &nbsp;|&nbsp; ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'Multifamily')}</div>
+  <div class="sub">${escapeText(siteNeighborhood(s))}, CA &nbsp;|&nbsp; ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'Multifamily')}</div>
   <div class="sub">${developmentStatusLabel(s)} &nbsp;|&nbsp; ${isOffMarketSite(s) ? 'Off-Market / Not For Sale' : 'Active Listing — For Sale'}</div>
   <div class="date">Report Date: ${today} &nbsp;|&nbsp; Prepared by ParceLLA Analytics Engine</div>
   <div class="conf">CONFIDENTIAL — FOR APPROVED RECIPIENTS ONLY</div>
@@ -3297,8 +3299,8 @@ async function exportPDF(id) {
 </div>
 
 <div class="note">
-  <strong>Investment Summary:</strong> This analysis presents a ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'multifamily')} development opportunity located at ${displayAddr} in ${s.hood || 'Los Angeles'}, CA.
-  The subject property has ${escapeText(siteZoneText(s))} and ${escapeText(siteLotText(s))}. 
+  <strong>Investment Summary:</strong> This analysis presents a ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'multifamily')} development opportunity located at ${displayAddr} in ${siteNeighborhood(s)}, CA.
+  Lot size is ${escapeText(siteLotText(s))}. 
   ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'submitted' ? 'The project has been submitted to the city and is awaiting plan check or approval.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
   Based on RSMeans 2024 construction cost data and CoStar Q3 2024 market cap rates, the projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF), 
   with a stabilized exit value of <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding a net development profit of <strong>${fmtD(prof)}</strong>.
@@ -3328,13 +3330,12 @@ async function exportPDF(id) {
     <h3>Site Characteristics</h3>
     <table>
       <tr><td>Street Address</td><td>${displayAddr}</td></tr>
-      <tr><td>Neighborhood</td><td>${s.hood || 'Los Angeles'}</td></tr>
+      <tr><td>Neighborhood</td><td>${siteNeighborhood(s)}</td></tr>
       <tr><td>City / County</td><td>Los Angeles, CA / LA County</td></tr>
-      <tr><td>Zoning Classification</td><td>${escapeText(siteZoneText(s))}</td></tr>
       <tr><td>Lot Size</td><td>${escapeText(siteLotText(s))}</td></tr>
       <tr><td>Project Type</td><td>${s.type || 'Multifamily'}</td></tr>
       <tr><td>Proposed Units</td><td>${escapeText(siteUnitsText(s))}</td></tr>
-      <tr><td>Avg Unit Size</td><td>${s.usf || 800} SF</td></tr>
+      <tr><td>Avg Unit Size</td><td>${siteAvgUnitSfText(s)}</td></tr>
       <tr><td>Total Building SF</td><td>${((s.units||12)*(s.usf||800)).toLocaleString()} SF</td></tr>
     </table>
     <h3>Owner / Contact</h3>
@@ -3365,7 +3366,6 @@ async function exportPDF(id) {
       <tr><td>Google Maps</td><td><a href="${mapsLink(s.addr)}" target="_blank">Open</a></td></tr>
       <tr><td>Street View</td><td><a href="${streetViewLink(s.addr)}" target="_blank">Open</a></td></tr>
       <tr><td>Directions</td><td><a href="${directionsLink(s.addr)}" target="_blank">Open</a></td></tr>
-      <tr><td>ZIMAS zoning</td><td><a href="${officialResearchLink(s.addr, 'ZIMAS zoning')}" target="_blank">Search</a></td></tr>
       <tr><td>LADBS permits</td><td><a href="${officialResearchLink(s.addr, 'LADBS permits PCIS')}" target="_blank">Search</a></td></tr>
     </table>
   </div>
@@ -3373,12 +3373,12 @@ async function exportPDF(id) {
 
 <!-- MARKET ANALYSIS -->
 <div class="page-break"></div>
-<h2>III. Market Analysis — ${s.hood || 'Los Angeles'} Submarket</h2>
+<h2>III. Market Analysis — ${siteNeighborhood(s)} Submarket</h2>
 <div class="two-col">
   <div>
     <h3>Rental Market Overview</h3>
     <div class="note" style="margin-bottom:10px">
-      ${s.hood || 'Los Angeles'} is an established Los Angeles multifamily submarket characterized by strong renter demand, 
+      ${siteNeighborhood(s)} is an established Los Angeles multifamily submarket characterized by strong renter demand, 
       constrained new supply, and consistent rent growth averaging 3-5% annually. 
       The submarket benefits from proximity to employment centers, transit access, and lifestyle amenities 
       that attract high-income renters.
@@ -3405,7 +3405,7 @@ async function exportPDF(id) {
     <div class="note">
       <strong>Source:</strong> CoStar Q3 2024, CBRE LA Multifamily Market Report Q3 2024, 
       Marcus & Millichap Investment Research. Cap rates reflect stabilized assets 
-      transacting in the ${s.hood || 'LA'} submarket over the trailing 24 months.
+      transacting in the ${siteNeighborhood(s)} submarket over the trailing 24 months.
     </div>
   </div>
 </div>
@@ -3661,7 +3661,7 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
 <h2>IX. Conclusion & Recommendation</h2>
 <div class="note">
   <strong>Analyst Conclusion:</strong> Based on our underwriting analysis, the subject property at ${displayAddr} represents
-  a ${irr >= 15 ? 'compelling' : irr >= 10 ? 'moderate' : 'marginal'} development opportunity in the ${s.hood || 'Los Angeles'} submarket.
+  a ${irr >= 15 ? 'compelling' : irr >= 10 ? 'moderate' : 'marginal'} development opportunity in the ${siteNeighborhood(s)} submarket.
   
   The project is projected to generate a ${Math.round(irr*10)/10}% levered IRR on a 5-year hold basis, 
   a ${capoc}% cap rate on cost (vs. ${(entryCap*100).toFixed(2)}% market entry cap), 

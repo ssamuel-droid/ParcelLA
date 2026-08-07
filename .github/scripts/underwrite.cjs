@@ -134,8 +134,8 @@ const BOXES = [
   {h:'West LA',lat0:34.030,lat1:34.060,lng0:-118.455,lng1:-118.420},
   {h:'Brentwood',lat0:34.040,lat1:34.075,lng0:-118.490,lng1:-118.450},
   {h:'Pacific Palisades',lat0:34.030,lat1:34.080,lng0:-118.545,lng1:-118.490},
-  {h:'Studio City',lat0:34.130,lat1:34.160,lng0:-118.405,lng1:-118.370},
-  {h:'Sherman Oaks',lat0:34.140,lat1:34.175,lng0:-118.465,lng1:-118.415},
+  {h:'Studio City',lat0:34.130,lat1:34.162,lng0:-118.430,lng1:-118.370},
+  {h:'Sherman Oaks',lat0:34.140,lat1:34.178,lng0:-118.480,lng1:-118.415},
   {h:'Van Nuys',lat0:34.175,lat1:34.215,lng0:-118.465,lng1:-118.415},
   {h:'North Hollywood',lat0:34.155,lat1:34.195,lng0:-118.390,lng1:-118.350},
   {h:'Encino',lat0:34.145,lat1:34.180,lng0:-118.530,lng1:-118.480},
@@ -388,7 +388,7 @@ function uw(p) {
   const soft = hard*0.18;
   const fallbackLand = p.valuation>hard ? p.valuation : hard*0.45;
   const compLand = estimateLandBasisFromComps({
-    neighborhood:h, project_type:t, units:u, avg_unit_sf:800, lot_sf:5000,
+    neighborhood:h, project_type:t, units:u, avg_unit_sf:800, lot_sf:null,
     totalSF, lat:p.lat, lng:p.lng,
   }, LAND_BENCHMARKS);
   const doorLand = ['Multifamily','Mixed-Use'].includes(t)
@@ -407,7 +407,7 @@ function uw(p) {
   const cf = noi-ds;
   const irrV = eq>500 ? Math.min(Math.max(irr([-eq,cf,cf,cf,cf,cf+exit-loan]),-50),100) : 0;
   return {
-    neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:800, lot_sf:5000,
+    neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:800, lot_sf:null,
     price:Math.round(land),
     status:'off-market', data_source:'ladbs_permit', rti:p.is_rti||false,
     lat:p.lat, lng:p.lng,

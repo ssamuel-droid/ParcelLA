@@ -75,6 +75,58 @@ const SITE_SEARCH_SELECT = SITE_LIST_SELECT
   .filter(column => column !== 'raw_permit_data')
   .join(',');
 
+const NEIGHBORHOOD_BOXES = [
+  {h:'Silver Lake',lat0:34.070,lat1:34.105,lng0:-118.290,lng1:-118.250},
+  {h:'Echo Park',lat0:34.060,lat1:34.085,lng0:-118.280,lng1:-118.248},
+  {h:'Los Feliz',lat0:34.095,lat1:34.125,lng0:-118.310,lng1:-118.270},
+  {h:'Highland Park',lat0:34.095,lat1:34.135,lng0:-118.235,lng1:-118.175},
+  {h:'Koreatown',lat0:34.045,lat1:34.075,lng0:-118.325,lng1:-118.285},
+  {h:'Mid-Wilshire',lat0:34.055,lat1:34.075,lng0:-118.365,lng1:-118.325},
+  {h:'Hollywood',lat0:34.085,lat1:34.110,lng0:-118.340,lng1:-118.300},
+  {h:'West Adams',lat0:34.000,lat1:34.035,lng0:-118.355,lng1:-118.315},
+  {h:'Culver City',lat0:33.995,lat1:34.030,lng0:-118.420,lng1:-118.375},
+  {h:'Mar Vista',lat0:33.982,lat1:34.010,lng0:-118.455,lng1:-118.415},
+  {h:'Venice',lat0:33.975,lat1:34.005,lng0:-118.480,lng1:-118.445},
+  {h:'West LA',lat0:34.030,lat1:34.060,lng0:-118.455,lng1:-118.420},
+  {h:'Brentwood',lat0:34.040,lat1:34.075,lng0:-118.490,lng1:-118.450},
+  {h:'Pacific Palisades',lat0:34.030,lat1:34.080,lng0:-118.545,lng1:-118.490},
+  {h:'Studio City',lat0:34.130,lat1:34.162,lng0:-118.430,lng1:-118.370},
+  {h:'Sherman Oaks',lat0:34.140,lat1:34.178,lng0:-118.480,lng1:-118.415},
+  {h:'Encino',lat0:34.145,lat1:34.180,lng0:-118.530,lng1:-118.480},
+  {h:'Van Nuys',lat0:34.175,lat1:34.215,lng0:-118.465,lng1:-118.415},
+  {h:'North Hollywood',lat0:34.155,lat1:34.195,lng0:-118.390,lng1:-118.350},
+  {h:'Woodland Hills',lat0:34.155,lat1:34.200,lng0:-118.640,lng1:-118.580},
+  {h:'Reseda',lat0:34.190,lat1:34.225,lng0:-118.545,lng1:-118.500},
+  {h:'Northridge',lat0:34.220,lat1:34.260,lng0:-118.555,lng1:-118.500},
+];
+
+function hoodFromCoords(lat, lng) {
+  const la = Number(lat);
+  const ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return null;
+  const match = NEIGHBORHOOD_BOXES.find(b => la >= b.lat0 && la <= b.lat1 && ln >= b.lng0 && ln <= b.lng1);
+  return match?.h || null;
+}
+
+function normalizedNeighborhood(s = {}) {
+  const raw = String(s.neighborhood ?? s.hood ?? '').trim();
+  const inferred = hoodFromCoords(s.lat, s.lng);
+  if (!raw) return inferred;
+  if (raw === 'Koreatown' && inferred && inferred !== 'Koreatown') return inferred;
+  return raw;
+}
+
+function normalizedLotSf(s = {}) {
+  const lot = Number(s.lot_sf ?? s.lot ?? 0);
+  if (!Number.isFinite(lot) || lot <= 0) return null;
+  const likelyDefault = lot === 5000 && (
+    String(s.status || '').toLowerCase().includes('off') ||
+    s.permit_source_id ||
+    s.raw_permit_data?.permit_number
+  );
+  return likelyDefault ? null : lot;
+}
+
 // Guess project type from permit data
 function guessType(permitType, subType, units) {
   const pt = (permitType || '').toLowerCase();
@@ -316,8 +368,9 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const type = s.project_type ?? s.type ?? 'Multifamily';
   const units = Number(s.units || 0);
   const avgUnitSf = Number(s.avg_unit_sf || s.usf || 800);
+  const neighborhood = normalizedNeighborhood(s) || 'Koreatown';
   const unitMix = unitMixForSite(rawPermit, s, type);
-  const rents = RENTS[s.neighborhood ?? s.hood] || RENTS.Koreatown;
+  const rents = RENTS[neighborhood] || RENTS.Koreatown;
   const blendedRent = (
     unitMix.mix.studio * (rents.studio || 0) +
     unitMix.mix.one * (rents.one || 0) +
@@ -340,11 +393,11 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const offMarket = /off|not for sale/i.test(String(s.status || ''));
   const doorLand = offMarket ? perDoorLandBasis(type, units) : null;
   const compLand = offMarket ? estimateLandBasisFromComps({
-    neighborhood: s.neighborhood ?? s.hood,
+    neighborhood,
     project_type: type,
     units,
     avg_unit_sf: avgUnitSf,
-    lot_sf: s.lot_sf ?? s.lot,
+    lot_sf: normalizedLotSf(s),
     totalSF: totalSf,
     lat: s.lat,
     lng: s.lng,
@@ -397,16 +450,18 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const addressAliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
   const status = s.status || 'active';
   const offMarket = /off|not for sale/i.test(status);
+  const neighborhood = normalizedNeighborhood(s) || 'Neighborhood TBD';
+  const lotSf = normalizedLotSf(s);
   const model = modelFromSupabaseSite(s, landCompBenchmarks);
   const unitMix = unitMixForSite(rawPermit, s, s.project_type ?? s.type);
   const ownerInfo = ownerInfoFromRaw(rawPermit, s);
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
-    hood:         s.neighborhood ?? s.hood ?? 'Koreatown',
+    hood:         neighborhood,
     type:         s.project_type ?? s.type ?? 'Multifamily',
     zone:         s.zoning ?? s.zone ?? null,
-    lot:          s.lot_sf ?? s.lot ?? null,
+    lot:          lotSf,
     units:        s.units ?? null,
     usf:          s.avg_unit_sf ?? s.usf ?? 800,
     rti:          s.rti ?? false,
@@ -725,6 +780,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
   const needsPostFilter = Boolean(
     search ||
+    queryParams.hood ||
     queryParams.listing ||
     queryParams.devStatus ||
     queryParams.minPrice ||
@@ -732,6 +788,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   );
   const usesSelectiveFilters = !!(
     search ||
+    queryParams.hood ||
     queryParams.listing ||
     queryParams.devStatus ||
     queryParams.zone ||
@@ -757,7 +814,6 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
 
   const types = listParam(queryParams.types || queryParams.type);
   if (types.length) query = query.in('project_type', types);
-  if (queryParams.hood) query = query.eq('neighborhood', queryParams.hood);
   if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
   if (queryParams.minUnits) query = query.gte('units', Number(queryParams.minUnits));
   if (queryParams.maxUnits) query = query.lte('units', Number(queryParams.maxUnits));
