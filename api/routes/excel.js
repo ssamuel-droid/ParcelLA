@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireAuth, requireActiveAccess } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -218,7 +219,7 @@ function tableRows(list = [], limit = 50) {
   return Array.isArray(list) ? list.slice(0, limit) : [];
 }
 
-router.post('/underwriting', async (req, res, next) => {
+router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, next) => {
   try {
     const ExcelJS = (await import('exceljs')).default;
     const p = req.body || {};

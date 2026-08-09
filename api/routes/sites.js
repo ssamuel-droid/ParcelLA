@@ -14,7 +14,7 @@ import { runModel, runScenarios } from '../../src/model/financialModel.js';
 import { RENTS } from '../../src/data/submarkets.js';
 import { enrichSite }    from '../../src/data/laOpenData.js';
 import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/DemandScore.js';
-import { requireAuth, optionalAuth } from '../middleware/auth.js';
+import { requireAuth, optionalAuth, getUserAccess } from '../middleware/auth.js';
 import { validateSiteFilters, validateModelOverrides } from '../middleware/middleware.js';
 import { supabase } from '../../src/data/supabase.js';
 import {
@@ -553,6 +553,39 @@ function getModelledSites(sites, overrides) {
   return modelled;
 }
 
+function redactSiteResult(site, hasAccess) {
+  if (hasAccess) return { ...site, locked: false, accessRequired: false };
+
+  const protectedLabel = `Protected site #${site.id}`;
+  return {
+    ...site,
+    locked: true,
+    accessRequired: true,
+    addr: protectedLabel,
+    displayAddress: protectedLabel,
+    hood: 'Members only',
+    neighborhood: 'Members only',
+    zone: null,
+    lot: null,
+    permitStatus: null,
+    permitNumber: null,
+    workDescription: null,
+    addressAliases: [],
+    ownerName: null,
+    ownerApplicantName: null,
+    ownerMailingAddress: null,
+    ownerSitusAddress: null,
+    ownerApn: null,
+    ownerLastSaleDate: null,
+    ownerLastSaleAmount: null,
+    ownerSource: null,
+    lat: null,
+    lng: null,
+    landValueMatch: null,
+    landValueComps: [],
+  };
+}
+
 function listParam(value) {
   return String(value || '').split(',').map(v => v.trim()).filter(Boolean);
 }
@@ -981,13 +1014,16 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     const total = usedFastPage ? fastTotal : filtered.length;
     const paginated = usedFastPage ? filtered : filtered.slice(requestedOffset, requestedOffset + requestedLimit);
 
+    const access = await getUserAccess(req.user);
+
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
     res.json({
       total,
       limit:   +limit,
       offset:  +offset,
-      results: paginated.map(s => ({
+      access,
+      results: paginated.map(s => redactSiteResult({
         id:           s.id,
         addr:         s.addr ?? s.address,
         hood:         s.hood ?? s.neighborhood,
@@ -1058,7 +1094,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         cfbt:         s._m.cfbt,
         coc:          s._m.cocReturn,
         eqMult:       s._m.equityMultiple,
-      })),
+      }, access.active)),
     });
   } catch (err) { next(err); }
 });
@@ -1092,6 +1128,26 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
+    const access = await getUserAccess(req.user);
+    if (!access.active) {
+      return res.json({
+        site: redactSiteResult({
+          id: site.id,
+          addr: site.addr ?? site.address,
+          type: site.type ?? site.project_type,
+          units: site.units,
+          status: site.status,
+          listingStatus: site.listingStatus,
+          isComp: site.isComp ?? site.is_comp ?? false,
+        }, false),
+        model: null,
+        scenarios: null,
+        isSaved: false,
+        userOverrides: {},
+        access,
+      });
+    }
+
     // If user is logged in, check if they've saved this site
     let isSaved = false;
     let userOverrides = {};
@@ -1108,7 +1164,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
       }
     }
 
-    res.json({ site, model, scenarios, isSaved, userOverrides });
+    res.json({ site, model, scenarios, isSaved, userOverrides, access });
   } catch (err) { next(err); }
 });
 

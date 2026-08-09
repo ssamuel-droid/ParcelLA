@@ -10,6 +10,92 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY   // service key for server-side verification
 );
 
+const FREE_ACCESS_HOURS = 24;
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing']);
+
+function trialEndIso() {
+  return new Date(Date.now() + FREE_ACCESS_HOURS * 60 * 60 * 1000).toISOString();
+}
+
+function expiresInSeconds(value) {
+  if (!value) return 0;
+  const ms = new Date(value).getTime() - Date.now();
+  return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
+}
+
+export function accessForProfile(profile = null) {
+  const plan = profile?.plan || 'free';
+  const subscriptionStatus = profile?.subscription_status || 'inactive';
+  const paidAccess = ['pro', 'enterprise'].includes(plan) && ACTIVE_SUBSCRIPTION_STATUSES.has(subscriptionStatus);
+  const trialSecondsRemaining = expiresInSeconds(profile?.trial_ends_at);
+  const trialAccess = plan === 'free' && trialSecondsRemaining > 0;
+  const active = paidAccess || trialAccess;
+
+  return {
+    active,
+    plan,
+    subscriptionStatus,
+    trialEndsAt: profile?.trial_ends_at || null,
+    trialSecondsRemaining,
+    freeAccessHours: FREE_ACCESS_HOURS,
+    reason: paidAccess ? 'subscription' : trialAccess ? 'free_24h_trial' : 'locked',
+  };
+}
+
+export async function ensureUserProfile(user) {
+  if (!user) return null;
+
+  const { data: existing, error: selectError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (selectError) throw selectError;
+
+  const patch = {
+    email: user.email,
+    name: user.user_metadata?.name || user.user_metadata?.full_name || existing?.name || null,
+  };
+
+  if (!existing) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .insert({
+        id: user.id,
+        ...patch,
+        plan: 'free',
+        subscription_status: 'trialing',
+        trial_ends_at: trialEndIso(),
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  if (!existing.trial_ends_at && (existing.plan || 'free') === 'free') {
+    patch.subscription_status = existing.subscription_status || 'trialing';
+    patch.trial_ends_at = trialEndIso();
+  }
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .update(patch)
+    .eq('id', user.id)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function getUserAccess(user) {
+  if (!user) return accessForProfile(null);
+  const profile = await ensureUserProfile(user);
+  return accessForProfile(profile);
+}
+
 /**
  * requireAuth — hard gate, returns 401 if no valid session
  */
@@ -28,6 +114,23 @@ export async function requireAuth(req, res, next) {
 
   req.user = user;
   next();
+}
+
+export async function requireActiveAccess(req, res, next) {
+  try {
+    const access = await getUserAccess(req.user);
+    if (!access.active) {
+      return res.status(402).json({
+        error: 'A free account or active subscription is required to view full deal details.',
+        access,
+        upgrade: '/api/stripe/checkout',
+      });
+    }
+    req.access = access;
+    next();
+  } catch (err) {
+    next(err);
+  }
 }
 
 /**

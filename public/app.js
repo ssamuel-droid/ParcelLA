@@ -9,6 +9,15 @@ const GMAPS_KEY = 'AIzaSyAC7R0Wlh41L71vexWCYqdn3WAjx8PJeQ0';
 const SOCRATA_TOKEN = 'Mj7n61b8beE9ZbxZPhNMSUrh';
 const SOCRATA_BASE  = 'https://data.lacity.org/resource';
 
+let authClient = null;
+let authSession = null;
+let authConfig = null;
+let accountState = {
+  user: null,
+  profile: null,
+  access: { active: false, plan: 'free', reason: 'locked', trialSecondsRemaining: 0 },
+};
+
 async function fetchLACityData(datasetId, params = {}) {
   const qs = new URLSearchParams({ $limit: 200, ...params });
   const url = `${SOCRATA_BASE}/${datasetId}.json?${qs}`;
@@ -25,11 +34,28 @@ function escapeText(value) {
   }[ch]));
 }
 
+function shouldAttachAuth(url) {
+  const value = String(url || '');
+  return value.startsWith('/api/') || value.includes('/api/');
+}
+
+function authHeaders() {
+  return authSession?.access_token ? { Authorization: 'Bearer ' + authSession.access_token } : {};
+}
+
+function withAuthHeaders(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (shouldAttachAuth(url) && authSession?.access_token) {
+    headers.Authorization = 'Bearer ' + authSession.access_token;
+  }
+  return { ...options, headers };
+}
+
 async function fetchJSONWithTimeout(url, options = {}, timeoutMs = 60000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
+    const res = await fetch(url, { ...withAuthHeaders(url, options), signal: controller.signal });
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch {}
@@ -198,6 +224,7 @@ function siteSearchText(s) {
 function siteMatchesSearchText(s, value) {
   const term = canonicalAddress(String(value || '').replace(/[,%()'"]/g, ' '));
   if (!term) return true;
+  if (s?.locked) return true;
   const haystack = siteSearchText(s);
   return haystack.includes(term) || orderedSearchTokenMatch(haystack, value);
 }
@@ -415,6 +442,7 @@ const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
 let sitePageTotal = 0, sitePageLimit = 50, currentSiteQuery = '';
+let authBooted = false, authMessage = '';
 const g = id => document.getElementById(id);
 const LA_MAP_VIEW = { centerLat: 34.0522, centerLng: -118.2851, zoom: 10, width: 960, height: 620 };
 const LA_COORD_LIMITS = { minLat: 33.65, maxLat: 34.45, minLng: -119.05, maxLng: -117.55 };
@@ -485,13 +513,234 @@ const CONSTRUCTION_PLANS = {
 };
 userMetrics = loadUserMetrics();
 
+function hasFullAccess() {
+  return accountState?.access?.active === true;
+}
+
+function accessTimeText(seconds) {
+  const sec = Number(seconds || 0);
+  if (sec <= 0) return 'expired';
+  if (sec >= 3600) return Math.ceil(sec / 3600) + 'h left';
+  return Math.ceil(sec / 60) + 'm left';
+}
+
+function accountLabel() {
+  const access = accountState.access || {};
+  if (!accountState.user) return 'Preview';
+  if (access.reason === 'subscription') return (access.plan || 'Pro').toUpperCase();
+  if (access.reason === 'free_24h_trial') return 'Trial ' + accessTimeText(access.trialSecondsRemaining);
+  return 'Locked';
+}
+
+function protectedAddressLabel(s) {
+  return s?.locked ? (s.addr || 'Protected development site') : 'Protected development site';
+}
+
+function gatedDisplayAddress(s) {
+  return hasFullAccess() ? siteDisplayAddress(s) : protectedAddressLabel(s);
+}
+
+function gatedMetaLine(s) {
+  if (hasFullAccess()) return siteMetaLine(s);
+  const parts = [s?.type || 'Development site', siteUnitsText(s)].filter(Boolean);
+  return parts.map(escapeText).join(' &middot; ');
+}
+
+function paywallHTML(title = 'Create a free account to unlock this deal') {
+  return `<div class="paywall">
+    <h3>${escapeText(title)}</h3>
+    <p>Full addresses, neighborhoods, map pins, owner and sale records, Excel exports, and PDF memos are available after sign-in.</p>
+    <div class="paygrid">
+      <div><b>Free account</b><span>24 hours of full access</span></div>
+      <div><b>Intro Pro</b><span>$29.99/mo after a 3-day Stripe trial</span></div>
+    </div>
+    <button class="ab ap" onclick="openAuthDialog()">Sign in / start free access</button>
+  </div>`;
+}
+
+function renderAuthUI() {
+  const btn = g('auth-btn');
+  const pill = g('access-pill');
+  if (btn) btn.textContent = accountState.user ? (accountState.user.email || 'Account') : 'Sign in';
+  if (pill) {
+    pill.textContent = accountLabel();
+    pill.className = 'accesspill ' + (hasFullAccess() ? 'on' : 'off');
+  }
+
+  const body = g('auth-body');
+  if (!body) return;
+
+  const setupMissing = !authClient;
+  if (setupMissing) {
+    body.innerHTML = `<div class="authcopy">
+      <h3>Login setup needed</h3>
+      <p>Add ` + '`SUPABASE_ANON_KEY`' + ` to the API environment, then enable Google in Supabase Auth. Public preview still works.</p>
+    </div>`;
+    return;
+  }
+
+  if (!accountState.user) {
+    body.innerHTML = `<div class="authcopy">
+      <h3>Start free access</h3>
+      <p>Sign in to unlock full addresses, areas, map pins, owner/sale data, Excel, and PDF for 24 hours.</p>
+      ${authMessage ? `<div class="authmsg">${escapeText(authMessage)}</div>` : ''}
+      <button class="authprimary" onclick="signInWithGoogle()">Continue with Google</button>
+      <div class="authsplit"><span></span><em>or</em><span></span></div>
+      <label>Email</label>
+      <div class="authrow"><input id="auth-email" type="email" placeholder="you@example.com"><button onclick="sendMagicLink()">Send link</button></div>
+      <div class="authfine">After the free 24-hour account access, Intro Pro is $29.99/mo after a 3-day Stripe trial.</div>
+    </div>`;
+    return;
+  }
+
+  const access = accountState.access || {};
+  const trialText = access.reason === 'free_24h_trial'
+    ? 'Free access: ' + accessTimeText(access.trialSecondsRemaining)
+    : access.reason === 'subscription'
+      ? 'Subscription active'
+      : 'Free access expired';
+
+  body.innerHTML = `<div class="authcopy">
+    <h3>Your account</h3>
+    <p>${escapeText(accountState.user.email || '')}</p>
+    <div class="authmsg">${escapeText(trialText)}</div>
+    <button class="authprimary" onclick="startCheckout()">Start Intro Pro - $29.99/mo</button>
+    <button class="authsecondary" onclick="openBillingPortal()">Manage billing</button>
+    <button class="authsecondary" onclick="signOut()">Sign out</button>
+  </div>`;
+}
+
+async function refreshAccount() {
+  if (!authSession?.access_token) {
+    accountState = {
+      user: null,
+      profile: null,
+      access: { active: false, plan: 'free', reason: 'locked', trialSecondsRemaining: 0 },
+    };
+    renderAuthUI();
+    return;
+  }
+  try {
+    const data = await fetchJSONWithTimeout(API + '/api/auth/me', {}, 10000);
+    accountState = {
+      user: data.user || null,
+      profile: data.profile || null,
+      access: data.access || { active: false, plan: 'free', reason: 'locked' },
+    };
+  } catch {
+    accountState = {
+      user: null,
+      profile: null,
+      access: { active: false, plan: 'free', reason: 'locked', trialSecondsRemaining: 0 },
+    };
+  }
+  renderAuthUI();
+}
+
+async function initAuth() {
+  try {
+    authConfig = await fetchJSONWithTimeout(API + '/api/auth/config', {}, 8000);
+    if (!authConfig?.supabaseUrl || !authConfig?.supabaseAnonKey || !window.supabase?.createClient) {
+      renderAuthUI();
+      return;
+    }
+    authClient = window.supabase.createClient(authConfig.supabaseUrl, authConfig.supabaseAnonKey, {
+      auth: { persistSession: true, detectSessionInUrl: true },
+    });
+    const { data } = await authClient.auth.getSession();
+    authSession = data?.session || null;
+    await refreshAccount();
+    authClient.auth.onAuthStateChange(async (_event, session) => {
+      authSession = session || null;
+      await refreshAccount();
+      if (authBooted) loadSites();
+    });
+  } catch {
+    renderAuthUI();
+  } finally {
+    authBooted = true;
+  }
+}
+
+function openAuthDialog(message = '') {
+  authMessage = message;
+  renderAuthUI();
+  g('auth-modal')?.classList.add('open');
+}
+
+function closeAuthDialog() {
+  g('auth-modal')?.classList.remove('open');
+  authMessage = '';
+}
+
+async function signInWithGoogle() {
+  if (!authClient) return openAuthDialog('Login is not configured yet.');
+  await authClient.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin + window.location.pathname },
+  });
+}
+
+async function sendMagicLink() {
+  if (!authClient) return openAuthDialog('Login is not configured yet.');
+  const email = (g('auth-email')?.value || '').trim();
+  if (!email) return openAuthDialog('Enter your email first.');
+  const { error } = await authClient.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin + window.location.pathname },
+  });
+  openAuthDialog(error ? error.message : 'Check your email for the sign-in link.');
+}
+
+async function signOut() {
+  if (authClient) await authClient.auth.signOut();
+  authSession = null;
+  await refreshAccount();
+  closeAuthDialog();
+  loadSites();
+}
+
+async function startCheckout() {
+  if (!accountState.user) return openAuthDialog('Sign in first, then you can start the paid trial.');
+  try {
+    const data = await fetchJSONWithTimeout(API + '/api/stripe/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: 'pro' }),
+    }, 20000);
+    if (data?.url) window.location.href = data.url;
+  } catch (e) {
+    alert('Checkout is not ready yet: ' + (e.message || e));
+  }
+}
+
+async function openBillingPortal() {
+  if (!accountState.user) return openAuthDialog('Sign in first.');
+  try {
+    const data = await fetchJSONWithTimeout(API + '/api/stripe/portal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }, 20000);
+    if (data?.url) window.location.href = data.url;
+  } catch (e) {
+    alert('Billing portal is not ready yet: ' + (e.message || e));
+  }
+}
+
+function requireFullAccess(action = 'view this deal') {
+  if (hasFullAccess()) return true;
+  openAuthDialog('Sign in to ' + action + '. Free accounts unlock full data for 24 hours.');
+  return false;
+}
+
 document.getElementById('app').innerHTML = `<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--navy:#0f1f3d;--navy2:#172b52;--gold:#b98b2f;--green:#1d9e75;--red:#d94b4b;--amber:#ef9f27;--blue:#378add;--ink:#1b2533;--muted:#6f7b8c;--line:#dfe5ec;--panel:#ffffff;--soft:#f3f6f9;--soft2:#e9eef4}
 body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink);height:100vh;overflow:hidden}
 .nav{background:linear-gradient(90deg,var(--navy),#172b52);padding:0 16px;height:48px;display:flex;align-items:center;gap:12px;position:fixed;top:0;left:0;right:0;z-index:100;box-shadow:0 1px 8px rgba(15,31,61,0.18)}
 .logo{font-size:16px;font-weight:800;color:#fff;letter-spacing:0;flex-shrink:0}.logo span{color:var(--gold)}
-.ntag{font-size:10px;color:rgba(255,255,255,0.62);letter-spacing:0;text-transform:uppercase}.nav-r{margin-left:auto;display:flex;align-items:center;gap:7px}.navbtn{border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.08);color:#fff;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.navbtn:hover{background:rgba(255,255,255,.15)}
+.ntag{font-size:10px;color:rgba(255,255,255,0.62);letter-spacing:0;text-transform:uppercase}.nav-r{margin-left:auto;display:flex;align-items:center;gap:7px}.navbtn{border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.08);color:#fff;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.navbtn:hover{background:rgba(255,255,255,.15)}.navbtn.primary{background:var(--gold);border-color:var(--gold);color:#fff}
+.accesspill{border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900;border:1px solid rgba(255,255,255,.25);color:#fff;white-space:nowrap}.accesspill.on{background:rgba(29,158,117,.24);border-color:rgba(29,158,117,.55)}.accesspill.off{background:rgba(255,255,255,.08)}
 .adot{width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 3px rgba(239,159,39,0.18)}.adot.ok{background:var(--green);box-shadow:0 0 0 3px rgba(29,158,117,0.18)}.albl{font-size:10px;color:rgba(255,255,255,0.7)}
 .layout{display:flex;height:calc(100vh - 48px);margin-top:48px}
 .sb{width:230px;background:#fbfcfd;border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
@@ -512,7 +761,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .pb{display:flex;align-items:center;gap:7px}.pbl{font-size:10px;color:#7f8a9a;min-width:62px}.pbt{flex:1;height:5px;background:#edf1f5;border-radius:3px;overflow:hidden}.pbf{height:100%;border-radius:3px}.pbv{font-size:10px;font-weight:800;min-width:58px;text-align:right;white-space:nowrap}
 .empty{text-align:center;padding:34px 16px;color:#7f8a9a;font-size:12px}.sw{text-align:center;padding:34px;color:#7f8a9a;font-size:12px}.spin{width:26px;height:26px;border:3px solid #e7edf4;border-top-color:var(--navy);border-radius:50%;animation:sp 0.8s linear infinite;margin:0 auto 9px}@keyframes sp{to{transform:rotate(360deg)}}
 .detail{position:fixed;right:0;top:48px;width:min(560px,46vw);max-width:100vw;height:calc(100vh - 48px);background:#fff;border-left:1px solid var(--line);overflow-y:auto;overflow-x:hidden;transform:translateX(100%);transition:transform 0.2s;z-index:50;box-shadow:-10px 0 30px rgba(15,31,61,0.14)}.detail.open{transform:translateX(0)}
-.settings{position:fixed;inset:0;background:rgba(15,31,61,.42);display:none;align-items:flex-start;justify-content:center;padding:70px 16px 16px;z-index:200;overflow:auto}.settings.open{display:flex}.settings-panel{width:min(820px,100%);background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 50px rgba(15,31,61,.25);overflow:hidden}.settings-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);background:#f8fafc}.settings-head h3{font-size:14px;color:var(--navy)}.settings-head p{font-size:10px;color:#6f7b8c;margin-top:2px}.settings-body{padding:12px 14px}.settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.setfield{border:1px solid var(--line);border-radius:8px;padding:8px;background:#fbfcfd}.setfield label{display:block;font-size:8px;font-weight:900;text-transform:uppercase;color:#7f8a9a;margin-bottom:5px}.setfield .mfr input{font-size:12px}.setnote{font-size:10px;color:#6f7b8c;line-height:1.35;margin:10px 0 0}.setactions{display:flex;justify-content:flex-end;gap:7px;padding:10px 14px;border-top:1px solid var(--line);background:#f8fafc}.setactions button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:800;cursor:pointer;color:#536071}.setactions button.primary{background:var(--navy);border-color:var(--navy);color:#fff}.setactions button.warn{color:#8a5b06;background:#fffaf0;border-color:#ead7a6}
+.settings,.authmodal{position:fixed;inset:0;background:rgba(15,31,61,.42);display:none;align-items:flex-start;justify-content:center;padding:70px 16px 16px;z-index:200;overflow:auto}.settings.open,.authmodal.open{display:flex}.settings-panel,.authpanel{width:min(820px,100%);background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 50px rgba(15,31,61,.25);overflow:hidden}.authpanel{width:min(430px,100%)}.settings-head,.authhead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);background:#f8fafc}.settings-head h3,.authhead h3{font-size:14px;color:var(--navy)}.settings-head p,.authhead p{font-size:10px;color:#6f7b8c;margin-top:2px}.settings-body,.authbody{padding:12px 14px}.settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.setfield{border:1px solid var(--line);border-radius:8px;padding:8px;background:#fbfcfd}.setfield label{display:block;font-size:8px;font-weight:900;text-transform:uppercase;color:#7f8a9a;margin-bottom:5px}.setfield .mfr input{font-size:12px}.setnote{font-size:10px;color:#6f7b8c;line-height:1.35;margin:10px 0 0}.setactions{display:flex;justify-content:flex-end;gap:7px;padding:10px 14px;border-top:1px solid var(--line);background:#f8fafc}.setactions button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:800;cursor:pointer;color:#536071}.setactions button.primary{background:var(--navy);border-color:var(--navy);color:#fff}.setactions button.warn{color:#8a5b06;background:#fffaf0;border-color:#ead7a6}
+.authcopy{display:grid;gap:9px}.authcopy h3{font-size:16px;color:var(--navy)}.authcopy p{font-size:12px;color:#536071;line-height:1.4}.authcopy label{font-size:9px;font-weight:900;color:#7f8a9a;text-transform:uppercase}.authprimary,.authsecondary,.authrow button{border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:7px;padding:9px 10px;font-size:12px;font-weight:900;cursor:pointer}.authsecondary{background:#fff;color:var(--navy)}.authrow{display:flex;gap:6px}.authrow input{flex:1;border:1px solid var(--line);border-radius:7px;padding:8px;font-size:12px}.authmsg{border:1px solid #e8d6a7;background:#fffaf0;color:#7a5108;border-radius:7px;padding:8px;font-size:12px;font-weight:800}.authfine{font-size:11px;color:#6f7b8c;line-height:1.35}.authsplit{display:flex;align-items:center;gap:8px;color:#9aa4b2;font-size:10px;text-transform:uppercase;font-weight:900}.authsplit span{height:1px;background:var(--line);flex:1}.paywall{border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;background:#fffaf0;padding:12px;margin:6px 0 10px}.paywall h3{font-size:15px;color:var(--navy);margin-bottom:5px}.paywall p{font-size:12px;color:#536071;line-height:1.45}.paygrid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}.paygrid div{background:#fff;border:1px solid #ead7a6;border-radius:7px;padding:8px}.paygrid b{display:block;font-size:12px;color:#7a5108}.paygrid span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}
 .dh{padding:9px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#fff;z-index:2}.dht{font-size:12px;font-weight:800;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px}.dha{display:flex;gap:5px;flex-shrink:0}.da{padding:5px 8px;font-size:9px;font-weight:800;border:1px solid var(--line);border-radius:5px;cursor:pointer;background:#fff;color:#536071}.da.p{background:var(--navy);color:#fff;border-color:var(--navy)}.dhx{background:none;border:none;font-size:18px;cursor:pointer;color:#8792a2;padding:0 2px;flex-shrink:0}
 .db{padding:10px 12px}.sh{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0;color:#8390a2;margin:10px 0 5px}.sh:first-child{margin-top:0}.ig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:6px}.ic{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:6px 8px}.icl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.icv{font-size:11px;font-weight:800;overflow-wrap:anywhere}
 .mbg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:5px}.mb{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:7px 8px;border-left:3px solid #ddd}.mbl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.mbv{font-size:15px;font-weight:900}.mbs{font-size:8px;color:#7f8a9a;margin-top:1px;line-height:1.15}
@@ -528,7 +778,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 <nav class="nav">
   <div class="logo">PARCEL<span>LA</span></div>
   <div class="ntag">LA Development Sites</div>
-  <div class="nav-r"><button class="navbtn" onclick="openSettings()">Settings</button><span class="adot" id="adot"></span><span class="albl" id="albl">Connecting...</span></div>
+  <div class="nav-r"><span class="accesspill off" id="access-pill">Preview</span><button class="navbtn primary" onclick="openAuthDialog()" id="auth-btn">Sign in</button><button class="navbtn" onclick="openSettings()">Settings</button><span class="adot" id="adot"></span><span class="albl" id="albl">Connecting...</span></div>
 </nav>
 <div class="layout">
   <div class="sb">
@@ -640,9 +890,19 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <button class="primary" onclick="saveSettings()">Save & re-underwrite</button>
     </div>
   </div>
+</div>
+<div class="authmodal" id="auth-modal">
+  <div class="authpanel">
+    <div class="authhead">
+      <div><h3>ParceLLA Access</h3><p>Free account unlocks full data for 24 hours.</p></div>
+      <button class="dhx" onclick="closeAuthDialog()">×</button>
+    </div>
+    <div class="authbody" id="auth-body"></div>
+  </div>
 </div>`;
 
 async function boot() {
+  await initAuth();
   try {
     await fetchJSONWithTimeout(API + '/api/health', {}, 8000);
     g('adot').className = 'adot ok';
@@ -1182,6 +1442,10 @@ function ownerPDFRows(owner, s = {}) {
 async function hydrateOwnerInfo(s) {
   const el = g('owner-' + s.id);
   if (!el) return;
+  if (!hasFullAccess()) {
+    el.innerHTML = '<div class="ownerbox"><b>Owner data locked</b><span>Sign in for a free 24-hour account to view owner and sale data.</span></div>';
+    return;
+  }
   el.innerHTML = '<div class="ownerbox"><b>Loading owner info...</b><span>Checking the assessor owner feed for this parcel.</span></div>';
   try {
     const owner = await fetchOwnerInfo(s);
@@ -1267,6 +1531,7 @@ async function fetchSitePage(qs) {
   return {
     results: data.results || [],
     total: Number.isFinite(Number(data.total)) ? Number(data.total) : (data.results || []).length,
+    access: data.access || null,
   };
 }
 
@@ -1284,6 +1549,10 @@ async function loadSites() {
     const qs = buildSiteQueryParams(0);
     currentSiteQuery = qs.toString();
     const data = await fetchSitePage(qs);
+    if (data.access) {
+      accountState.access = data.access;
+      renderAuthUI();
+    }
     allSites = data.results;
     sitePageTotal = data.total;
     refreshZoneOptions();
@@ -1309,6 +1578,10 @@ async function loadMoreSites() {
   if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
   try {
     const data = await fetchSitePage(qs);
+    if (data.access) {
+      accountState.access = data.access;
+      renderAuthUI();
+    }
     const seen = new Set(allSites.map(s => String(s.id)));
     allSites = allSites.concat(data.results.filter(s => !seen.has(String(s.id))));
     sitePageTotal = data.total;
@@ -1469,11 +1742,11 @@ function renderCards() {
     const priceMain = isForSaleSite(s) ? fmtM(ask) : 'Not for sale';
     const priceSub = offMarket ? 'land basis ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
     const watched = isWatched(s.id);
-    const displayAddr = siteDisplayAddress(s);
+    const displayAddr = gatedDisplayAddress(s);
     const addrNote = siteAddressNote(s);
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
       <div class="ch">
-        <div><div class="ca">${escapeText(displayAddr)}</div><div class="cm">${addrNote ? escapeText(addrNote) + ' &middot; ' : ''}${siteMetaLine(s)}</div></div>
+        <div><div class="ca">${escapeText(displayAddr)}</div><div class="cm">${hasFullAccess() && addrNote ? escapeText(addrNote) + ' &middot; ' : ''}${gatedMetaLine(s)}</div></div>
         <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div><button class="watchbtn ${watched?'on':''}" onclick="toggleWatch(${s.id}, event)">${watched?'Saved':'Save'}</button></div>
       </div>
       <div class="bdgs">
@@ -1497,6 +1770,10 @@ function renderCards() {
 
 function renderMapView() {
   const el = g('list');
+  if (!hasFullAccess()) {
+    el.innerHTML = paywallHTML('Sign in to view the deal map');
+    return;
+  }
   const visibleSites = filtered
     .filter(visibleOnMapLayer)
     .map(s => ({ s, pt: siteMapPoint(s) }))
@@ -1575,8 +1852,13 @@ function openDetail(id) {
   openId = id;
   const s = allSites.find(x => x.id===id);
   if (!s) return;
-  g('d-title').textContent = siteDisplayAddress(s);
+  g('d-title').textContent = gatedDisplayAddress(s);
   g('detail').classList.add('open');
+  if (!hasFullAccess()) {
+    g('d-body').innerHTML = paywallHTML('Sign in to view this property');
+    renderCards();
+    return;
+  }
   renderDetail(s);
   renderCards();
 }
@@ -2020,12 +2302,13 @@ async function loadRentComps(siteOrHood) {
   } catch (e) { return null; }
 }
 async function generateNarrative(id) {
+  if (!requireFullAccess('generate AI deal analysis')) return;
   const el = g('narr-'+id);
   if (!el) return;
   el.innerHTML = '<div style="font-size:11px;color:#aaa;padding:6px">Generating analysis...</div>';
   try {
     const r = await fetch(API+'/api/narrative/'+id, {
-      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({overrides:{}})
+      method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body:JSON.stringify({overrides:{}})
     });
     if (!r.ok) throw new Error('API '+r.status);
     const data = await r.json();
@@ -2142,7 +2425,7 @@ function downloadBlobFile(filename, blob) {
 }
 
 async function fetchJSON(path) {
-  const r = await fetch(API + path);
+  const r = await fetch(API + path, withAuthHeaders(API + path));
   if (!r.ok) return null;
   return await r.json();
 }
@@ -3026,6 +3309,7 @@ function pencilCheckRows(s, m) {
 
 
 async function exportExcel(id) {
+  if (!requireFullAccess('download Excel workbooks')) return;
   const s = allSites.find(x => x.id === id);
   if (!s) return;
   const displayAddr = siteDisplayAddress(s);
@@ -3134,7 +3418,7 @@ async function exportExcel(id) {
   try {
     const res = await fetch(API + '/api/excel/underwriting', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
@@ -3153,6 +3437,7 @@ async function exportExcel(id) {
   }
 }
 async function exportPDF(id) {
+  if (!requireFullAccess('download PDF memos')) return;
   if (!id) return;
   const s = allSites.find(x => x.id === id);
   if (!s) return;

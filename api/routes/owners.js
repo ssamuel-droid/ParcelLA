@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { optionalAuth, getUserAccess } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -337,8 +338,15 @@ async function lookupOwner({ address, lat, lng, apn }) {
   return value;
 }
 
-router.get('/', async (req, res, next) => {
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
+    const access = await getUserAccess(req.user);
+    if (!access.active) {
+      return res.status(402).json({
+        error: 'Sign in for a free 24-hour account to view owner and sale data.',
+        access,
+      });
+    }
     const { address, lat, lng, apn } = req.query;
     if (!address && !apn && (!lat || !lng)) {
       return res.status(400).json({ error: 'address, apn, or lat/lng is required' });

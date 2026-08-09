@@ -22,6 +22,7 @@
 
 import { Router }      from 'express';
 import { createClient } from '@supabase/supabase-js';
+import Stripe from 'stripe';
 import { requireAuth }  from '../middleware/auth.js';
 
 const router = Router();
@@ -34,7 +35,6 @@ let _stripe = null;
 function stripe() {
   if (!_stripe) {
     if (!process.env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY not set');
-    const Stripe = require('stripe');
     _stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
   }
   return _stripe;
@@ -44,14 +44,15 @@ const PLANS = {
   free: {
     name:        'Free',
     price:       0,
-    features:    ['10 site views/day', '5 model calculations/day', 'Basic filters', 'Save up to 5 sites'],
-    limits:      { sitesPerDay: 10, modelsPerDay: 5, pdf: false, alerts: 1, aiNarrative: false },
+    features:    ['Public preview', '24 hours of full address access after sign-in', 'Basic filters', 'Upgrade for ongoing access'],
+    limits:      { sitesPerDay: 10, modelsPerDay: 5, pdf: false, alerts: 1, aiNarrative: false, trialHours: 24 },
   },
   pro: {
-    name:        'Pro',
-    price:       49,
+    name:        'Intro Pro',
+    price:       29.99,
     priceId:     process.env.STRIPE_PRO_PRICE_ID,
-    features:    ['Unlimited searches', 'PDF deal memos', 'Deal alerts', 'AI narratives', 'Excel export', 'Deal sharing'],
+    trialDays:   3,
+    features:    ['Full addresses and maps', 'Owner/sale data when available', 'Unlimited searches', 'PDF deal memos', 'Excel export', 'Deal sharing'],
     limits:      { sitesPerDay: Infinity, modelsPerDay: Infinity, pdf: true, alerts: 20, aiNarrative: true },
   },
   enterprise: {
@@ -101,9 +102,9 @@ router.post('/checkout', requireAuth, async (req, res, next) => {
       }],
       mode:               'subscription',
       success_url:        `${APP_URL}/?upgraded=true`,
-      cancel_url:         `${APP_URL}/pricing`,
+      cancel_url:         `${APP_URL}/?checkout=cancelled`,
       metadata:           { user_id: req.user.id, plan },
-      subscription_data:  { trial_period_days: 14 },
+      subscription_data:  { trial_period_days: PLANS[plan].trialDays || 3 },
     });
 
     res.json({ url: session.url, sessionId: session.id });

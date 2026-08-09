@@ -59,12 +59,24 @@ export { pdfRouter };
  * GET  /api/auth/me
  */
 import { createClient } from '@supabase/supabase-js';
+import { ensureUserProfile, accessForProfile } from '../middleware/auth.js';
 
 const authRouter = Router();
 
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 }
+
+authRouter.get('/config', (req, res) => {
+  res.json({
+    supabaseUrl: process.env.SUPABASE_URL || '',
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
+    googleEnabled: true,
+    freeAccessHours: 24,
+    introPrice: 29.99,
+    checkoutTrialDays: 3,
+  });
+});
 
 authRouter.post('/signup', async (req, res, next) => {
   try {
@@ -123,9 +135,7 @@ authRouter.get('/me', async (req, res, next) => {
     const { data: { user }, error } = await sb.auth.getUser(token);
     if (error || !user) return res.status(401).json({ error: 'Invalid token' });
 
-    // Get profile
-    const { data: profile } = await sb
-      .from('profiles').select('*').eq('id', user.id).maybeSingle();
+    const profile = await ensureUserProfile(user);
 
     // Get saved site ids
     const { data: saved } = await sb
@@ -134,6 +144,7 @@ authRouter.get('/me', async (req, res, next) => {
     res.json({
       user,
       profile,
+      access: accessForProfile(profile),
       savedSiteIds: saved?.map(s => s.site_id) ?? [],
     });
   } catch (err) { next(err); }
