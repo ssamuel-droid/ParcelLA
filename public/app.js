@@ -1519,14 +1519,14 @@ async function fetchSitePage(qs) {
   const url = API + '/api/sites?' + qs.toString();
   let data;
   try {
-    data = await fetchJSONWithTimeout(url, {}, 60000);
+    data = await fetchJSONWithTimeout(url, {}, 22000);
   } catch (e) {
     if (!String(e.message || '').includes('too long')) throw e;
     const list = g('list');
-    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...</div>';
+    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...<br><small style="margin-top:8px;color:#768295">This should finish within 20 seconds.</small></div>';
     g('albl').textContent = 'Retrying API';
     await wait(1800);
-    data = await fetchJSONWithTimeout(url, {}, 60000);
+    data = await fetchJSONWithTimeout(url, {}, 22000);
   }
   return {
     results: data.results || [],
@@ -1538,10 +1538,13 @@ async function fetchSitePage(qs) {
 async function loadSites() {
   g('rct').textContent = 'Loading first 50 sites...';
   g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loading first 50 sites...</div>';
+  const startedAt = Date.now();
   const slowTimer = setTimeout(() => {
     const list = g('list');
     if (list && list.textContent.includes('Loading first 50')) {
-      list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...</div>';
+      const qs = currentSiteQuery || buildSiteQueryParams(0).toString();
+      const apiUrl = (API || '') + '/api/sites?' + qs;
+      list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...<br><button class="gb" style="margin-top:10px" onclick="loadSites()">Retry now</button><br><a style="display:block;margin-top:8px;font-size:11px;color:#667790" href="' + escapeText(apiUrl) + '" target="_blank" rel="noopener">Open API test</a></div>';
       g('albl').textContent = 'API waking up';
     }
   }, 7000);
@@ -1557,7 +1560,7 @@ async function loadSites() {
     sitePageTotal = data.total;
     refreshZoneOptions();
     updateHardCostOverrideUI();
-    console.log('[ParceLLA] Loaded first page', allSites.length, 'of', sitePageTotal, 'sites');
+    console.log('[ParceLLA] Loaded first page', allSites.length, 'of', sitePageTotal, 'sites in', Date.now() - startedAt, 'ms');
     applyFilters();
   } catch (e) {
     g('rct').textContent = 'Could not load sites';
