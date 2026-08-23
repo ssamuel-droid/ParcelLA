@@ -71,7 +71,7 @@ authRouter.get('/config', (req, res) => {
   res.json({
     supabaseUrl: process.env.SUPABASE_URL || '',
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
-    googleEnabled: true,
+    googleEnabled: process.env.GOOGLE_AUTH_ENABLED === 'true',
     freeAccessHours: 24,
     introPrice: 29.99,
     checkoutTrialDays: 3,

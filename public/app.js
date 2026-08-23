@@ -584,12 +584,14 @@ function renderAuthUI() {
   }
 
   if (!accountState.user) {
+    const googleButton = authConfig?.googleEnabled
+      ? '<button class="authprimary" onclick="signInWithGoogle()">Continue with Google</button><div class="authsplit"><span></span><em>or</em><span></span></div>'
+      : '<div class="authmsg">Google sign-in is not enabled yet. Use email link for now.</div>';
     body.innerHTML = `<div class="authcopy">
       <h3>Start free access</h3>
       <p>Sign in to unlock full addresses, areas, map pins, owner/sale data, Excel, and PDF for 24 hours.</p>
       ${authMessage ? `<div class="authmsg">${escapeText(authMessage)}</div>` : ''}
-      <button class="authprimary" onclick="signInWithGoogle()">Continue with Google</button>
-      <div class="authsplit"><span></span><em>or</em><span></span></div>
+      ${googleButton}
       <label>Email</label>
       <div class="authrow"><input id="auth-email" type="email" placeholder="you@example.com"><button onclick="sendMagicLink()">Send link</button></div>
       <div class="authfine">After the free 24-hour account access, Intro Pro is $29.99/mo after a 3-day Stripe trial.</div>
@@ -677,23 +679,40 @@ function closeAuthDialog() {
   authMessage = '';
 }
 
+function friendlyAuthError(message = '') {
+  const text = String(message || '');
+  if (/unsupported provider|provider is not enabled/i.test(text)) {
+    return 'Google sign-in is not enabled in Supabase yet. Use email link for now, or enable Google in Supabase Auth providers.';
+  }
+  if (/database error saving new user/i.test(text)) {
+    return 'The database user-profile trigger needs the latest repair SQL. Use email again after the SQL repair is run.';
+  }
+  return text || 'Sign-in failed. Please try again.';
+}
+
 async function signInWithGoogle() {
   if (!authClient) return openAuthDialog('Login is not configured yet.');
-  await authClient.auth.signInWithOAuth({
+  if (!authConfig?.googleEnabled) return openAuthDialog('Google sign-in is not enabled yet. Use email link for now.');
+  const { error } = await authClient.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: window.location.origin + window.location.pathname },
   });
+  if (error) openAuthDialog(friendlyAuthError(error.message));
 }
 
 async function sendMagicLink() {
   if (!authClient) return openAuthDialog('Login is not configured yet.');
   const email = (g('auth-email')?.value || '').trim();
   if (!email) return openAuthDialog('Enter your email first.');
-  const { error } = await authClient.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin + window.location.pathname },
-  });
-  openAuthDialog(error ? error.message : 'Check your email for the sign-in link.');
+  try {
+    const { error } = await authClient.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin + window.location.pathname },
+    });
+    openAuthDialog(error ? friendlyAuthError(error.message) : 'Check your email for the sign-in link.');
+  } catch (e) {
+    openAuthDialog(friendlyAuthError(e.message || e));
+  }
 }
 
 async function signOut() {
