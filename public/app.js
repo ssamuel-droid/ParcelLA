@@ -55,7 +55,10 @@ async function fetchJSONWithTimeout(url, options = {}, timeoutMs = 60000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...withAuthHeaders(url, options), signal: controller.signal });
+    const requestOptions = withAuthHeaders(url, options);
+    const method = String(requestOptions.method || 'GET').toUpperCase();
+    if (!requestOptions.cache && method === 'GET') requestOptions.cache = 'no-store';
+    const res = await fetch(url, { ...requestOptions, signal: controller.signal });
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch {}
@@ -441,6 +444,7 @@ function calcIRR(cashflows, guess = 0.15) {
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
+let siteLoadRunId = 0;
 let sitePageTotal = 0, sitePageLimit = 50, currentSiteQuery = '';
 let authBooted = false, authMessage = '';
 const g = id => document.getElementById(id);
@@ -902,7 +906,9 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 </div>`;
 
 async function boot() {
-  await initAuth();
+  initAuth().then(() => {
+    if (authSession?.access_token) loadSites();
+  });
   try {
     await fetchJSONWithTimeout(API + '/api/health', {}, 8000);
     g('adot').className = 'adot ok';
@@ -1519,14 +1525,14 @@ async function fetchSitePage(qs) {
   const url = API + '/api/sites?' + qs.toString();
   let data;
   try {
-    data = await fetchJSONWithTimeout(url, {}, 22000);
+    data = await fetchJSONWithTimeout(url, {}, 12000);
   } catch (e) {
     if (!String(e.message || '').includes('too long')) throw e;
     const list = g('list');
-    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...<br><small style="margin-top:8px;color:#768295">This should finish within 20 seconds.</small></div>';
+    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...<br><small style="margin-top:8px;color:#768295">This should finish within 15 seconds.</small></div>';
     g('albl').textContent = 'Retrying API';
     await wait(1800);
-    data = await fetchJSONWithTimeout(url, {}, 22000);
+    data = await fetchJSONWithTimeout(url, {}, 16000);
   }
   return {
     results: data.results || [],
@@ -1536,10 +1542,12 @@ async function fetchSitePage(qs) {
 }
 
 async function loadSites() {
+  const runId = ++siteLoadRunId;
   g('rct').textContent = 'Loading first 50 sites...';
   g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loading first 50 sites...</div>';
   const startedAt = Date.now();
   const slowTimer = setTimeout(() => {
+    if (runId !== siteLoadRunId) return;
     const list = g('list');
     if (list && list.textContent.includes('Loading first 50')) {
       const qs = currentSiteQuery || buildSiteQueryParams(0).toString();
@@ -1552,6 +1560,7 @@ async function loadSites() {
     const qs = buildSiteQueryParams(0);
     currentSiteQuery = qs.toString();
     const data = await fetchSitePage(qs);
+    if (runId !== siteLoadRunId) return;
     if (data.access) {
       accountState.access = data.access;
       renderAuthUI();
@@ -1561,8 +1570,10 @@ async function loadSites() {
     refreshZoneOptions();
     updateHardCostOverrideUI();
     console.log('[ParceLLA] Loaded first page', allSites.length, 'of', sitePageTotal, 'sites in', Date.now() - startedAt, 'ms');
+    g('albl').textContent = 'Loaded';
     applyFilters();
   } catch (e) {
+    if (runId !== siteLoadRunId) return;
     g('rct').textContent = 'Could not load sites';
     g('albl').textContent = 'API issue';
     const msg = escapeText(e.message || e);
