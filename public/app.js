@@ -584,7 +584,7 @@ function renderAuthUI() {
   }
 
   if (!accountState.user) {
-    const googleButton = authConfig?.googleEnabled
+    const googleButton = authConfig?.googleEnabled && authConfig?.googleProviderReady
       ? '<button class="authprimary" onclick="signInWithGoogle()">Continue with Google</button><div class="authsplit"><span></span><em>or</em><span></span></div>'
       : '<div class="authmsg">Google sign-in is not enabled yet. Use email link for now.</div>';
     body.innerHTML = `<div class="authcopy">
@@ -692,7 +692,7 @@ function friendlyAuthError(message = '') {
 
 async function signInWithGoogle() {
   if (!authClient) return openAuthDialog('Login is not configured yet.');
-  if (!authConfig?.googleEnabled) return openAuthDialog('Google sign-in is not enabled yet. Use email link for now.');
+  if (!authConfig?.googleEnabled || !authConfig?.googleProviderReady) return openAuthDialog('Google sign-in is not enabled yet. Use email link for now.');
   const { error } = await authClient.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: window.location.origin + window.location.pathname },
