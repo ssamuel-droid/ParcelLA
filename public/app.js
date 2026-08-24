@@ -220,6 +220,50 @@ function siteBuildingSf(s) {
   return units > 0 && avg > 0 ? units * avg : 0;
 }
 
+function houseResalePsfForSite(s) {
+  return FRONTEND_HOUSE_RESALE_PSF[siteNeighborhood(s)] || FRONTEND_HOUSE_RESALE_PSF.Koreatown || 650;
+}
+
+function valueAmount(value) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'object') {
+    for (const key of ['value', 'price', 'estimate', 'estimatedValue', 'valueEstimate', 'valuation']) {
+      const n = valueAmount(value[key]);
+      if (n > 0) return n;
+    }
+    return 0;
+  }
+  const match = String(value).match(/-?\d[\d,]*(?:\.\d+)?/);
+  if (!match) return 0;
+  const n = Number(match[0].replace(/,/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function houseExitValueForSite(s) {
+  if (s?.type !== 'New House') return null;
+  const external = valueAmount(s.externalValueEstimate || s.external_value_estimate);
+  if (external > 0) {
+    return {
+      value: Math.round(external),
+      source: 'External value estimate',
+      formula: 'Third-party value estimate',
+      metricValue: Math.round(external),
+      basisQuantity: 1,
+    };
+  }
+  const sf = siteBuildingSf(s);
+  if (!sf) return null;
+  const psf = houseResalePsfForSite(s);
+  return {
+    value: Math.round(sf * psf),
+    source: 'House resale $/SF assumption',
+    formula: `${Math.round(sf).toLocaleString()} SF x ${fmtD(psf)}/SF`,
+    metricValue: psf,
+    basisQuantity: Math.round(sf),
+  };
+}
+
 function landPricePerUnitText(s, land) {
   const units = Number(s?.units || 0);
   if (!units) return 'Units TBD';
@@ -494,6 +538,15 @@ const MAP_TRANSIT_NODES = [
 ];
 const mapLayers = { forSale:true, rti:true, offMarket:true, watchlist:true, transit:true };
 const FRONTEND_HARD_COST_PSF = {'Multifamily':285,'Mixed-Use':320,'Condo/TH':340,'New House':275};
+const FRONTEND_HOUSE_RESALE_PSF = {
+  'Pacific Palisades':1150,'Brentwood':1050,'Venice':1000,'West LA':900,
+  'Culver City':875,'Mar Vista':825,'Silver Lake':825,'Los Feliz':850,
+  'Hollywood Hills':950,'Studio City':775,'Sherman Oaks':725,'Encino':675,
+  'Highland Park':700,'Eagle Rock':725,'Koreatown':650,'Mid-Wilshire':725,
+  'West Adams':625,'North Hollywood':575,'Woodland Hills':600,'Northridge':525,
+  'Reseda':500,'Van Nuys':500,'Canoga Park':500,'Granada Hills':550,
+  'Chatsworth':550,'Boyle Heights':525,'El Sereno':550,'Lincoln Heights':575,
+};
 const FRONTEND_CAP_RATES = {
   'Venice':0.0425,'Pacific Palisades':0.0400,'Brentwood':0.0425,'Playa Vista':0.0425,
   'Silver Lake':0.0475,'Los Feliz':0.0475,'Hollywood Hills':0.0475,'Culver City':0.0450,
@@ -2231,7 +2284,8 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
   const noi = Math.round(income.noi || 0);
   const rentGrowth = metricRate('rentGrowthPct');
   const year5Noi = Math.round(noi * Math.pow(1 + rentGrowth, 4));
-  const exitValue = exitCap ? Math.round(year5Noi / exitCap) : 0;
+  const houseExit = houseExitValueForSite(s);
+  const exitValue = houseExit?.value || (exitCap ? Math.round(year5Noi / exitCap) : 0);
   const netProfit = exitValue - costs.totalCost;
   const loanAmount = Math.round(costs.totalCost * ((Number(metrics.loanToCostPct) || 0) / 100));
   const equity = Math.max(0, costs.totalCost - loanAmount);
@@ -2240,9 +2294,9 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
   const cashflows = [-equity];
   for (let year = 1; year < holdYears; year++) {
     const yearNoi = Math.round(noi * Math.pow(1 + rentGrowth, year - 1));
-    cashflows.push(yearNoi - debtService);
+    cashflows.push(s.type === 'New House' ? -debtService : yearNoi - debtService);
   }
-  cashflows.push((year5Noi - debtService) + Math.max(0, exitValue - loanAmount));
+  cashflows.push((s.type === 'New House' ? -debtService : year5Noi - debtService) + Math.max(0, exitValue - loanAmount));
   const leveragedIRR = equity > 0 ? calcIRR(cashflows) * 100 : 0;
   return {
     entryCap,
@@ -2259,6 +2313,10 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
     equityMultiple: equity > 0 ? Math.max(0, exitValue - loanAmount) / equity : 0,
     capOnCost: costs.totalCost ? Math.round((noi / costs.totalCost) * 10000) / 100 : 0,
     devSpreadPct: costs.totalCost ? (exitValue - costs.totalCost) / costs.totalCost : 0,
+    exitValueSource: houseExit?.source || s.exitValueSource || 'Income cap rate',
+    exitValueFormula: houseExit?.formula || `${fmtD(year5Noi)} / ${(exitCap * 100).toFixed(2)}%`,
+    exitValueMetricValue: houseExit?.metricValue || s.exitValueMetricValue || null,
+    exitValueBasisQuantity: houseExit?.basisQuantity || s.exitValueBasisQuantity || null,
   };
 }
 function renderDetail(s) {
@@ -2680,6 +2738,12 @@ function appraisalPct(value) {
 }
 
 function valuationWithAppraisal(base, appraisal, costs, income) {
+  if (/house resale|external value/i.test(String(base?.exitValueSource || ''))) {
+    return {
+      ...base,
+      capRateSource: base.exitValueSource,
+    };
+  }
   const entryCap = appraisal?.entryCap || base.entryCap;
   const exitCap = appraisal?.exitCap || base.exitCap;
   const year5Noi = base.year5Noi || Math.round((income?.noi || 0) * Math.pow(1 + metricRate('rentGrowthPct'), 4));
@@ -2716,14 +2780,16 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
 
 function valuationTableHTML(valuation, costs, sourceNote = '') {
   const profitColor = (valuation.netProfit || 0) >= 0 ? '#1d9e75' : '#e24b4a';
+  const houseValuation = /house resale|external value/i.test(String(valuation.exitValueSource || ''));
   return `<table class="ct">
       <tr><td>NOI (stabilized)</td><td>${fmtD(valuation.noi)}</td></tr>
-      <tr><td>Entry cap rate</td><td>${(valuation.entryCap*100).toFixed(2)}%</td></tr>
+      ${houseValuation ? '' : `<tr><td>Entry cap rate</td><td>${(valuation.entryCap*100).toFixed(2)}%</td></tr>
       <tr><td>Exit cap rate</td><td>${(valuation.exitCap*100).toFixed(2)}%</td></tr>
-      <tr><td>Cap source</td><td>${escapeText(sourceNote || valuation.capRateSource || 'base market cap rate')}</td></tr>
+      <tr><td>Cap source</td><td>${escapeText(sourceNote || valuation.capRateSource || 'base market cap rate')}</td></tr>`}
       <tr><td>Year 5 NOI</td><td>${fmtD(valuation.year5Noi)}</td></tr>
       <tr><td>Exit value</td><td>${fmtD(valuation.exitValue)}</td></tr>
-      <tr><td>Valuation formula</td><td>${fmtD(valuation.year5Noi)} / ${(valuation.exitCap*100).toFixed(2)}%</td></tr>
+      <tr><td>Valuation source</td><td>${escapeText(valuation.exitValueSource || 'Income cap rate')}</td></tr>
+      <tr><td>Valuation formula</td><td>${escapeText(valuation.exitValueFormula || `${fmtD(valuation.year5Noi)} / ${(valuation.exitCap*100).toFixed(2)}%`)}</td></tr>
       <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">-${fmtD(costs.totalCost || 0)}</td></tr>
       <tr class="tot"><td style="color:${profitColor}">Net profit</td><td style="color:${profitColor};font-size:14px">${fmtD(valuation.netProfit)}</td></tr>
     </table>`;

@@ -205,6 +205,15 @@ const CAPS = {
   'Panorama City':0.0600,'Pacoima':0.0625,'Chatsworth':0.0525,
 };
 const HC = {'Multifamily':285,'Mixed-Use':320,'Condo/TH':340,'New House':275};
+const HOUSE_RESALE_PSF = {
+  'Pacific Palisades': 1150, 'Brentwood': 1050, 'Venice': 1000, 'West LA': 900,
+  'Culver City': 875, 'Mar Vista': 825, 'Silver Lake': 825, 'Los Feliz': 850,
+  'Hollywood Hills': 950, 'Studio City': 775, 'Sherman Oaks': 725, 'Encino': 675,
+  'Highland Park': 700, 'Eagle Rock': 725, 'Koreatown': 650, 'Mid-Wilshire': 725,
+  'West Adams': 625, 'North Hollywood': 575, 'Woodland Hills': 600, 'Northridge': 525,
+  'Reseda': 500, 'Van Nuys': 500, 'Canoga Park': 500, 'Granada Hills': 550,
+  'Chatsworth': 550, 'Boyle Heights': 525, 'El Sereno': 550, 'Lincoln Heights': 575,
+};
 let LAND_BENCHMARKS = null;
 let estimateLandBasisFromComps = () => null;
 let LAND_COMP_RECENCY_DAYS = 1095;
@@ -359,28 +368,42 @@ function buildingSizeFromPermit(p, units, type) {
   );
   const textMatches = textAreaMatches([p.work_description, p.project_description, p.description]);
   const textSf = textMatches.length ? Math.max(...textMatches.map(m => m.value)) : 0;
-  const sourceValue = rawSf || textSf;
-  const source = rawSf ? 'Permit source field' : (textSf ? 'Permit work description' : 'Model assumption');
+  const valuationSf = type === 'New House' && Number(p.valuation || 0) > 0
+    ? Math.round(Number(p.valuation) / (HC['New House'] || 275))
+    : 0;
+  const candidates = [
+    textSf ? { value: textSf, source: 'Permit work description', parsed: true } : null,
+    rawSf ? { value: rawSf, source: 'Permit source field', parsed: true } : null,
+    valuationSf ? { value: valuationSf, source: 'Permit valuation-derived estimate', parsed: false } : null,
+  ].filter(Boolean);
   const count = Math.max(1, Number(units || 1));
   const fallback = 800 * count;
 
-  let totalSf = sourceValue;
-  if (totalSf > 0 && type !== 'New House' && totalSf < count * 250 && totalSf >= 250 && totalSf <= 5000) {
-    totalSf *= count;
-  }
+  const normalized = candidates.map(candidate => {
+    let totalSf = candidate.value;
+    if (totalSf > 0 && type !== 'New House' && totalSf < count * 250 && totalSf >= 250 && totalSf <= 5000) {
+      totalSf *= count;
+    }
+    return { ...candidate, totalSf, avgUnitSf: totalSf / count };
+  });
+  const plausible = normalized.filter(candidate => {
+    if (!candidate.totalSf) return false;
+    if (type === 'New House') return candidate.totalSf >= 900 && candidate.totalSf <= 25000;
+    return candidate.avgUnitSf >= 250 && candidate.avgUnitSf <= 5000;
+  });
+  const picked = plausible.find(c => c.source === 'Permit work description')
+    || plausible.find(c => c.source === 'Permit source field')
+    || plausible.find(c => c.source === 'Permit valuation-derived estimate');
 
-  const avg = totalSf > 0 ? totalSf / count : 0;
-  const plausibleHouse = type === 'New House' && totalSf >= 500 && totalSf <= 25000;
-  const plausibleProject = type !== 'New House' && avg >= 250 && avg <= 5000;
-  if (!totalSf || !(plausibleHouse || plausibleProject)) {
+  if (!picked) {
     return { totalSf: fallback, avgUnitSf: 800, source: 'Model assumption', parsed: false };
   }
 
   return {
-    totalSf: Math.round(totalSf),
-    avgUnitSf: Math.round(totalSf / count),
-    source,
-    parsed: true,
+    totalSf: Math.round(picked.totalSf),
+    avgUnitSf: Math.round(picked.avgUnitSf),
+    source: picked.source,
+    parsed: picked.parsed,
   };
 }
 
@@ -554,6 +577,10 @@ function irr(cfs) {
   return Math.round(r*1000)/10;
 }
 
+function houseResalePsf(hood) {
+  return HOUSE_RESALE_PSF[hood] || HOUSE_RESALE_PSF['Koreatown'] || 650;
+}
+
 function uw(p, inspectionCheck = null) {
   const h = hood(p.lat, p.lng, p.address);
   // Get actual unit count from multiple sources
@@ -601,11 +628,13 @@ function uw(p, inspectionCheck = null) {
   const carry = loan*0.065*1.5;
   const total = pre+carry;
   const year5Noi = noi*Math.pow(1.03,4);
-  const exit = year5Noi/(cap+0.0025);
+  const housePsf = t === 'New House' ? houseResalePsf(h) : null;
+  const incomeExit = year5Noi/(cap+0.0025);
+  const exit = t === 'New House' ? Math.round(totalSF * housePsf) : incomeExit;
   const profit = exit-total;
   const eq = total-loan;
   const ds = loan*0.065;
-  const cf = noi-ds;
+  const cf = t === 'New House' ? -ds : noi-ds;
   const irrV = eq>500 ? Math.min(Math.max(irr([-eq,cf,cf,cf,cf,cf+exit-loan]),-50),100) : 0;
   return {
     neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:buildingSize.avgUnitSf, lot_sf:lotSize.lotSf,
@@ -627,6 +656,11 @@ function uw(p, inspectionCheck = null) {
       building_sf_parsed:buildingSize.parsed,
       avg_unit_sf_source:buildingSize.source,
       lot_sf_source:lotSize.source,
+      permit_valuation:p.valuation || null,
+      exit_value_source:t === 'New House' ? 'house_resale_psf_assumption' : 'income_cap_rate',
+      exit_value_metric:t === 'New House' ? 'estimated resale price per SF' : 'NOI / exit cap',
+      exit_value_metric_value:t === 'New House' ? housePsf : Math.round((cap + 0.0025) * 10000) / 100,
+      exit_value_basis_quantity:t === 'New House' ? totalSF : Math.round(year5Noi),
       owner_info:ownerInfo,
       inspection_check: inspectionCheck || {
         checked: false,

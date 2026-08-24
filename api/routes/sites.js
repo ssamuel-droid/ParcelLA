@@ -35,6 +35,15 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
+const HOUSE_RESALE_PSF = {
+  'Pacific Palisades': 1150, 'Brentwood': 1050, 'Venice': 1000, 'West LA': 900,
+  'Culver City': 875, 'Mar Vista': 825, 'Silver Lake': 825, 'Los Feliz': 850,
+  'Hollywood Hills': 950, 'Studio City': 775, 'Sherman Oaks': 725, 'Encino': 675,
+  'Highland Park': 700, 'Eagle Rock': 725, 'Koreatown': 650, 'Mid-Wilshire': 725,
+  'West Adams': 625, 'North Hollywood': 575, 'Woodland Hills': 600, 'Northridge': 525,
+  'Reseda': 500, 'Van Nuys': 500, 'Canoga Park': 500, 'Granada Hills': 550,
+  'Chatsworth': 550, 'Boyle Heights': 525, 'El Sereno': 550, 'Lincoln Heights': 575,
+};
 const SITE_LIST_SELECT = [
   'id',
   'address',
@@ -71,6 +80,11 @@ const SITE_LIST_SELECT = [
   'underwritten_at',
   'external_enriched_at',
   'external_data_sources',
+  'external_property_record',
+  'external_rent_estimate',
+  'external_value_estimate',
+  'external_rent_comps',
+  'external_sale_comps',
   'data_quality',
   'rentcast_enriched_at',
   'regrid_enriched_at',
@@ -317,6 +331,76 @@ function ownerInfoFromRaw(raw = {}, site = {}) {
   };
 }
 
+function houseResalePsf(hood) {
+  return HOUSE_RESALE_PSF[hood] || HOUSE_RESALE_PSF.Koreatown || 650;
+}
+
+function numberFromValue(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const match = String(value).match(/-?\d[\d,]*(?:\.\d+)?/);
+  if (!match) return null;
+  const n = Number(match[0].replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+function externalValueAmount(value) {
+  if (!value) return null;
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : null;
+  if (typeof value === 'object') {
+    for (const key of ['value', 'price', 'estimate', 'estimatedValue', 'valueEstimate', 'valuation']) {
+      const n = numberFromValue(value[key]);
+      if (n && n > 0) return n;
+    }
+  }
+  return numberFromValue(value);
+}
+
+function irr(cfs) {
+  let r = 0.15;
+  for (let i = 0; i < 60; i++) {
+    let n = 0;
+    let d = 0;
+    for (let t = 0; t < cfs.length; t++) {
+      n += cfs[t] / Math.pow(1 + r, t);
+      d -= t * cfs[t] / Math.pow(1 + r, t + 1);
+    }
+    if (!Number.isFinite(n) || !Number.isFinite(d) || Math.abs(d) < 0.000001) break;
+    const delta = n / d;
+    r -= delta;
+    if (!Number.isFinite(r)) return 0;
+    if (Math.abs(delta) < 0.00001) break;
+  }
+  return Math.round(r * 1000) / 10;
+}
+
+function houseExitEstimate(site = {}, rawPermit = {}, hood = '') {
+  const type = site.project_type ?? site.type;
+  if (type !== 'New House') return null;
+  const external = externalValueAmount(site.external_value_estimate || site.externalValueEstimate);
+  if (external) {
+    return {
+      value: Math.round(external),
+      source: 'external_value_estimate',
+      metric: 'third-party value estimate',
+      metricValue: Math.round(external),
+      basisQuantity: 1,
+    };
+  }
+
+  const buildingSf = Number(rawPermit.building_sf || site.buildingSf || 0)
+    || (Number(site.units || 0) * Number(site.avg_unit_sf || site.usf || 0));
+  if (!buildingSf) return null;
+  const psf = houseResalePsf(hood);
+  return {
+    value: Math.round(buildingSf * psf),
+    source: 'house_resale_psf_assumption',
+    metric: 'estimated resale price per SF',
+    metricValue: psf,
+    basisQuantity: Math.round(buildingSf),
+  };
+}
+
 // ── Shared underwriting defaults ───────────────────────────────────────────────
 const DEFAULT_GLOBALS = {
   exitCapSpread: 0.0025,
@@ -420,11 +504,18 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const landMeta = doorLand || compLand || {};
   const recastCarry = usedDynamicLand ? Math.round((landCost + hardCosts + softCosts) * interestCarryPct) : carryCost;
   const recastTotalCost = usedDynamicLand ? landCost + hardCosts + softCosts + recastCarry : totalCost;
-  const exitValue = s.exit_value || 0;
-  const noi = unitMix.source === 'Parsed from permit text'
+  const houseExit = houseExitEstimate(s, rawPermit, neighborhood);
+  const exitValue = houseExit?.value || s.exit_value || 0;
+  const noi = type === 'New House' ? 0 : (unitMix.source === 'Parsed from permit text'
     ? Math.round(((grossPotentialRent * 0.95) + (units * 600)) * 0.65)
-    : (s.noi || 0);
+    : (s.noi || 0));
   const netProfit = usedDynamicLand && exitValue ? exitValue - recastTotalCost : (s.net_profit || 0);
+  const loanAmount = recastTotalCost * 0.65;
+  const equity = recastTotalCost * 0.35;
+  const storedIrr = Number(s.irr_v || 0);
+  const recastIrr = type === 'New House' && equity > 500 && exitValue
+    ? Math.min(Math.max(irr([-equity, -loanAmount * 0.065, -loanAmount * 0.065, -loanAmount * 0.065, -loanAmount * 0.065, exitValue - loanAmount]), -50), 100)
+    : storedIrr;
 
   return {
     noi,
@@ -439,10 +530,14 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     landValueRecencyDays: landMeta.recencyDays || rawPermit.land_value_recency_days || LAND_COMP_RECENCY_DAYS,
     landValueComps: landMeta.comps || rawPermit.land_value_comps || [],
     exitValue,
+    exitValueSource: houseExit?.source || rawPermit.exit_value_source || 'income_cap_rate',
+    exitValueMetric: houseExit?.metric || rawPermit.exit_value_metric || null,
+    exitValueMetricValue: houseExit?.metricValue || rawPermit.exit_value_metric_value || null,
+    exitValueBasisQuantity: houseExit?.basisQuantity || rawPermit.exit_value_basis_quantity || null,
     exitProceeds:  netProfit,
     netProfit,
     grossPotentialRent: unitMix.source === 'Parsed from permit text' ? grossPotentialRent : undefined,
-    leveragedIRR:  s.irr_v        || 0,
+    leveragedIRR:  recastIrr,
     capRateOnCost: recastTotalCost ? noi / recastTotalCost : (s.cap_on_cost || 0) / 100,
     devSpreadPct:  recastTotalCost ? (exitValue - recastTotalCost) / recastTotalCost : (s.dev_spread_pct || 0) / 100,
     marketCapRate: 0.0500,
@@ -450,9 +545,9 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     hardCosts,
     softCosts,
     carryCost: recastCarry,
-    loanAmount:    recastTotalCost * 0.65,
-    equity:        recastTotalCost * 0.35,
-    equityMultiple: recastTotalCost > 0 ? (exitValue / (recastTotalCost * 0.35)) : 0,
+    loanAmount,
+    equity,
+    equityMultiple: equity > 0 ? (exitValue / equity) : 0,
     buildingSf,
     buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source || null,
     buildingSfParsed: rawPermit.building_sf_parsed ?? null,
@@ -484,6 +579,10 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source || null,
     buildingSfParsed: rawPermit.building_sf_parsed ?? null,
     lotSfSource:  rawPermit.lot_sf_source || null,
+    exitValueSource: rawPermit.exit_value_source || model.exitValueSource || null,
+    exitValueMetric: rawPermit.exit_value_metric || model.exitValueMetric || null,
+    exitValueMetricValue: rawPermit.exit_value_metric_value || model.exitValueMetricValue || null,
+    exitValueBasisQuantity: rawPermit.exit_value_basis_quantity || model.exitValueBasisQuantity || null,
     rti:          s.rti ?? false,
     status,
     listingStatus: offMarket ? 'Off-market / not for sale' : 'For sale',
@@ -1094,6 +1193,10 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         buildingSfSource: s.buildingSfSource ?? s._m.buildingSfSource,
         buildingSfParsed: s.buildingSfParsed ?? s._m.buildingSfParsed,
         lotSfSource:  s.lotSfSource ?? s._m.lotSfSource,
+        exitValueSource: s.exitValueSource ?? s._m.exitValueSource,
+        exitValueMetric: s.exitValueMetric ?? s._m.exitValueMetric,
+        exitValueMetricValue: s.exitValueMetricValue ?? s._m.exitValueMetricValue,
+        exitValueBasisQuantity: s.exitValueBasisQuantity ?? s._m.exitValueBasisQuantity,
         rti:          s.rti,
         permitStatus: s.permitStatus,
         developmentStatus: s.developmentStatus,
