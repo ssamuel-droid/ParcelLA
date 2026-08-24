@@ -4,6 +4,7 @@
 const https = require('https');
 const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
+const SOCRATA_APP_TOKEN = process.env.SOCRATA_APP_TOKEN;
 
 if (!SB_URL || !SB_KEY) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY are required');
@@ -14,7 +15,11 @@ const EXCLUDE_WORK = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\brem
 
 function get(url) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers: { 'Accept': 'application/json' }, timeout: 30000 }, res => {
+    const headers = {
+      'Accept': 'application/json',
+      ...(SOCRATA_APP_TOKEN ? { 'X-App-Token': SOCRATA_APP_TOKEN } : {}),
+    };
+    const req = https.get(url, { headers, timeout: 30000 }, res => {
       let d = '';
       res.on('data', c => d += c);
       res.on('end', () => {

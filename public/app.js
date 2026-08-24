@@ -8,6 +8,8 @@ const GMAPS_KEY = 'AIzaSyAC7R0Wlh41L71vexWCYqdn3WAjx8PJeQ0';
 // LA City Open Data — fetched client-side (browser not blocked like Railway)
 const SOCRATA_TOKEN = 'Mj7n61b8beE9ZbxZPhNMSUrh';
 const SOCRATA_BASE  = 'https://data.lacity.org/resource';
+const SITE_FIRST_PAGE_TIMEOUT_MS = 15000;
+const SITE_RETRY_TIMEOUT_MS = 30000;
 
 let authClient = null;
 let authSession = null;
@@ -1585,14 +1587,14 @@ async function fetchSitePage(qs) {
   const url = API + '/api/sites?' + qs.toString();
   let data;
   try {
-    data = await fetchJSONWithTimeout(url, {}, 30000);
+    data = await fetchJSONWithTimeout(url, {}, SITE_FIRST_PAGE_TIMEOUT_MS);
   } catch (e) {
     if (!String(e.message || '').includes('too long')) throw e;
     const list = g('list');
     if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...<br><small style="margin-top:8px;color:#768295">This can take up to 45 seconds after the server sleeps.</small></div>';
     g('albl').textContent = 'Retrying API';
-    await wait(1800);
-    data = await fetchJSONWithTimeout(url, {}, 45000);
+    await wait(800);
+    data = await fetchJSONWithTimeout(url, {}, SITE_RETRY_TIMEOUT_MS);
   }
   return {
     results: data.results || [],
@@ -1616,13 +1618,6 @@ async function loadSites(autoRetry = 0) {
       g('albl').textContent = 'API waking up';
     }
   }, 7000);
-  const recoveryTimer = setTimeout(() => {
-    const list = g('list');
-    if (runId === siteLoadRunId && autoRetry < 1 && list && list.textContent.includes('Still loading')) {
-      g('albl').textContent = 'Retrying API';
-      loadSites(autoRetry + 1);
-    }
-  }, 12000);
   try {
     const qs = buildSiteQueryParams(0);
     currentSiteQuery = qs.toString();
@@ -1647,7 +1642,6 @@ async function loadSites(autoRetry = 0) {
     g('list').innerHTML = '<div class="empty">Could not load sites<br><small style="color:#e24b4a">' + msg + '</small><br><button class="gb" onclick="loadSites()">Retry</button><br><small style="display:block;margin-top:8px;color:#888">API: ' + escapeText(API || 'same server') + '/api/sites</small></div>';
   } finally {
     clearTimeout(slowTimer);
-    clearTimeout(recoveryTimer);
   }
 }
 
