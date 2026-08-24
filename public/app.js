@@ -290,6 +290,18 @@ const HOOD_COORDS = {
   'Studio City':    { lat: 34.1486, lng: -118.3965 },
   'Sherman Oaks':   { lat: 34.1511, lng: -118.4492 },
   'Encino':         { lat: 34.1517, lng: -118.5214 },
+  'Tarzana':        { lat: 34.1495, lng: -118.5506 },
+  'Eagle Rock':     { lat: 34.1390, lng: -118.2141 },
+  'Atwater Village': { lat: 34.1181, lng: -118.2614 },
+  'Glassell Park':  { lat: 34.1170, lng: -118.2287 },
+  'Mount Washington': { lat: 34.0983, lng: -118.2135 },
+  'Lincoln Heights': { lat: 34.0700, lng: -118.2097 },
+  'El Sereno':      { lat: 34.0811, lng: -118.1778 },
+  'Leimert Park':   { lat: 34.0089, lng: -118.3305 },
+  'Hyde Park':      { lat: 33.9817, lng: -118.3301 },
+  'Granada Hills':  { lat: 34.2794, lng: -118.5022 },
+  'Panorama City':  { lat: 34.2243, lng: -118.4480 },
+  'Pacoima':        { lat: 34.2625, lng: -118.4270 },
 };
 
 const HOOD_BOXES = [
@@ -461,10 +473,16 @@ const MAP_TRANSIT_NODES = [
 const mapLayers = { forSale:true, rti:true, offMarket:true, watchlist:true, transit:true };
 const FRONTEND_HARD_COST_PSF = {'Multifamily':285,'Mixed-Use':320,'Condo/TH':340,'New House':275};
 const FRONTEND_CAP_RATES = {
-  'Silver Lake':0.0475,'Echo Park':0.0500,'Highland Park':0.0525,'Los Feliz':0.0475,
-  'Koreatown':0.0525,'Mid-Wilshire':0.0500,'Culver City':0.0475,'Mar Vista':0.0500,
-  'West Adams':0.0525,'Boyle Heights':0.0575,'Hollywood':0.0500,'North Hollywood':0.0525,
-  'Northridge':0.0550,'Van Nuys':0.0550,'Reseda':0.0575,'Panorama City':0.0600
+  'Venice':0.0425,'Pacific Palisades':0.0400,'Brentwood':0.0425,'Playa Vista':0.0425,
+  'Silver Lake':0.0475,'Los Feliz':0.0475,'Hollywood Hills':0.0475,'Culver City':0.0450,
+  'West LA':0.0450,'Mar Vista':0.0475,'Studio City':0.0475,'Hancock Park':0.0475,
+  'Echo Park':0.0500,'Atwater Village':0.0500,'Mid-Wilshire':0.0500,'Hollywood':0.0500,
+  'Sherman Oaks':0.0500,'Encino':0.0500,'East Hollywood':0.0525,'Highland Park':0.0525,
+  'Eagle Rock':0.0500,'Glassell Park':0.0525,'Mount Washington':0.0525,'Koreatown':0.0525,
+  'West Adams':0.0525,'Lincoln Heights':0.0550,'North Hollywood':0.0525,'Woodland Hills':0.0525,
+  'Granada Hills':0.0525,'Northridge':0.0550,'Leimert Park':0.0550,'El Sereno':0.0575,
+  'Boyle Heights':0.0575,'Van Nuys':0.0550,'Reseda':0.0575,'Canoga Park':0.0575,
+  'Panorama City':0.0600,'Pacoima':0.0625,'Chatsworth':0.0525,
 };
 const FRONTEND_RENTS = {
   'Silver Lake':{studio:2600,one:3400,two:4400,three:5800},'Echo Park':{studio:2400,one:3100,two:4000,three:5300},
@@ -491,6 +509,11 @@ const FRONTEND_RENTS = {
   'West Adams (Jefferson Park)':{studio:2100,one:2700,two:3500,three:4600},'Leimert Park':{studio:2000,one:2550,two:3300,three:4350},
   'Hyde Park':{studio:1900,one:2400,two:3100,three:4100},
 };
+const NEIGHBORHOOD_OPTIONS = Object.keys(FRONTEND_RENTS).sort((a, b) => a.localeCompare(b));
+function neighborhoodOptionsHTML() {
+  return '<option value="">All neighborhoods</option>' +
+    NEIGHBORHOOD_OPTIONS.map(hood => `<option>${escapeText(hood)}</option>`).join('');
+}
 const DEFAULT_UNIT_MIX = { studio:0.25, one:0.50, two:0.20, three:0.05 };
 const DEFAULT_USER_METRICS = {
   hardCostMultifamily:285,
@@ -823,13 +846,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-nh" checked> New house</label>
       <h4>Neighborhood</h4>
       <select id="f-hood" class="sbs">
-        <option value="">All neighborhoods</option>
-        <option>Silver Lake</option><option>Echo Park</option><option>Highland Park</option>
-        <option>Los Feliz</option><option>Koreatown</option><option>Mid-Wilshire</option>
-        <option>Culver City</option><option>Mar Vista</option><option>West Adams</option>
-        <option>Boyle Heights</option><option>Studio City</option><option>Sherman Oaks</option>
-        <option>Encino</option><option>North Hollywood</option><option>Van Nuys</option>
-        <option>Woodland Hills</option><option>Reseda</option><option>Northridge</option>
+        ${neighborhoodOptionsHTML()}
       </select>
       <h4>Units</h4>
       <div class="sb2"><input type="number" id="f-umin" placeholder="Min"><input type="number" id="f-umax" placeholder="Max"></div>

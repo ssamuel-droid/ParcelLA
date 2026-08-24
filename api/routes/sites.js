@@ -150,6 +150,9 @@ function guessHood(address, zone) {
   if (addr.includes('LOS FELIZ')) return 'Los Feliz';
   if (addr.includes('CULVER')) return 'Culver City';
   if (addr.includes('MAR VISTA')) return 'Mar Vista';
+  if (addr.includes('PACIFIC PALISADES') || addr.includes('PALISADES')) return 'Pacific Palisades';
+  if (addr.includes('BRENTWOOD')) return 'Brentwood';
+  if (addr.includes('VENICE')) return 'Venice';
   if (addr.includes('WEST ADAMS')) return 'West Adams';
   if (addr.includes('BOYLE')) return 'Boyle Heights';
   if (addr.includes('MID-WILSHIRE') || addr.includes('WILSHIRE')) return 'Mid-Wilshire';

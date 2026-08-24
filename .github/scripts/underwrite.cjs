@@ -161,6 +161,8 @@ function hood(lat, lng, addr) {
   if (a.includes('HIGHLAND PARK')) return 'Highland Park';
   if (a.includes('CULVER')) return 'Culver City';
   if (a.includes('MAR VISTA')) return 'Mar Vista';
+  if (a.includes('PACIFIC PALISADES') || a.includes('PALISADES')) return 'Pacific Palisades';
+  if (a.includes('BRENTWOOD')) return 'Brentwood';
   if (a.includes('WEST ADAMS')) return 'West Adams';
   if (a.includes('BOYLE')) return 'Boyle Heights';
   if (a.includes('WILSHIRE')) return 'Mid-Wilshire';
