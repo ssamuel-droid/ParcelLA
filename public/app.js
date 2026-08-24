@@ -198,6 +198,15 @@ function siteAvgUnitSfText(s) {
   return assumed ? '800 SF avg (assumed)' : `${Math.round(avg).toLocaleString()} SF avg`;
 }
 
+function siteUnitSourceNote(s) {
+  const units = Number(s?.units || 0);
+  const avg = Number(s?.usf || s?.avgUnitSf || 0);
+  const avgAssumed = !avg || (avg === 800 && (s?.permitNumber || s?.permitSourceId || /default/i.test(String(s?.unitMixSource || ''))));
+  const unitSource = units > 0 ? 'Unit count from permit/source data.' : 'Unit count was not provided.';
+  const avgSource = avgAssumed ? 'Avg SF is a model assumption.' : 'Avg SF came from source data.';
+  return `${unitSource} ${avgSource}`;
+}
+
 function landPricePerUnitText(s, land) {
   const units = Number(s?.units || 0);
   if (!units) return 'Units TBD';
@@ -1152,9 +1161,9 @@ function imputedLandFromDoorSetting(s) {
 }
 
 function landValueSourceNote(s) {
-  if (!isOffMarketSite(s)) return 'Used as land basis in underwriting';
+  if (!isOffMarketSite(s)) return 'Listing ask price used as land basis.';
   if (canUseDoorLandBasis(s)) {
-    return `Land setting: ${fmtD(landPerDoorForSite(s))}/door x ${(s.units || 0).toLocaleString()} doors`;
+    return `User land setting, not a sale comp: ${fmtD(landPerDoorForSite(s))}/door x ${(s.units || 0).toLocaleString()} doors.`;
   }
   if (s?.landValueSource === 'recent_sales_comps') {
     const metric = s.landValueMetric || 'sales comp metric';
@@ -1163,9 +1172,27 @@ function landValueSourceNote(s) {
     const match = s.landValueMatch || 'recent sales';
     const suffix = /unit/i.test(metric) ? '/unit' : '/SF';
     const metricText = metricValue ? fmtD(metricValue) + suffix : metric;
-    return `Recent land sales comps: ${metricText}, ${count || 'saved'} comp${count===1?'':'s'}, ${match}`;
+    return `Recent land sales comp estimate: ${metricText}, ${count || 'saved'} comp${count===1?'':'s'}, ${match}.`;
   }
-  return 'Permit valuation fallback; recent land sales comps were not available';
+  if (s?.landValueSource === 'permit_valuation_fallback') {
+    return 'Permit valuation fallback, not a sale comp. No recent matching land comps were available.';
+  }
+  return 'Fallback land basis. No asking price or recent matching land comps were available.';
+}
+
+function landBasisLabel(s) {
+  if (!isOffMarketSite(s)) return 'Asking price';
+  if (canUseDoorLandBasis(s)) return 'User land basis';
+  if (s?.landValueSource === 'recent_sales_comps') return 'Comp land basis';
+  if (s?.landValueSource === 'permit_valuation_fallback') return 'Permit valuation';
+  return 'Land basis';
+}
+
+function siteLocationSourceNote(s) {
+  if (Number.isFinite(Number(s?.lat)) && Number.isFinite(Number(s?.lng))) {
+    return 'Neighborhood/map use permit or geocoded coordinates.';
+  }
+  return 'No parcel coordinates; map uses a neighborhood fallback.';
 }
 
 function siteListingStatus(s) {
@@ -2222,7 +2249,7 @@ function renderDetail(s) {
   const listingStatus = siteListingStatus(s);
   const devStatus = developmentStatusLabel(s);
   const offMarket = isOffMarketSite(s);
-  const landLabel=offMarket?'Imputed land value':'Asking price';
+  const landLabel=landBasisLabel(s);
   const landNote=landValueSourceNote(s);
   const metrics = currentUserMetrics();
   const vacancyLabel = Math.round(metrics.vacancyPct * 10) / 10;
@@ -2265,10 +2292,10 @@ function renderDetail(s) {
   }, 100);
   g('d-body').innerHTML = `
     <div class="ig">
-      <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${siteNeighborhood(s)}</div></div>
+      <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${siteNeighborhood(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${siteLocationSourceNote(s)}</span></div></div>
       <div class="ic"><div class="icl">Listing status</div><div class="icv">${listingStatus}</div></div>
       <div class="ic"><div class="icl">Development status</div><div class="icv">${devStatus}</div></div>
-      <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${escapeText(siteUnitsText(s))} / ${siteAvgUnitSfText(s)}</div></div>
+      <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${escapeText(siteUnitsText(s))} / ${siteAvgUnitSfText(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${siteUnitSourceNote(s)}</span></div></div>
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${land?fmtD(land):'Not provided'} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
@@ -3310,7 +3337,7 @@ function constructionCostRows(s, tc, land) {
     xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current plan budget, not a contractor bid. Replace with GC pricing when available.' + (currentHardCostOverride() ? ' User hard-cost override applied across all deals: $' + currentHardCostOverride().toLocaleString() + '/SF.' : ''), 'String', 'note']]),
     xlsRow(['']),
     xlsHeaderRow(['Budget Category', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
-    xlsRow([isOffMarketSite(s) ? 'Imputed Land Value' : 'Asking Price / Land Basis', cellMoney(Math.round(landBasis)), totalSF ? cellMoney(costPerSf(landBasis, totalSF)) : '', units ? cellMoney(costPerUnit(landBasis, units)) : '', totalCost ? cellPct(costPct(landBasis, totalCost)) : '', landValueSourceNote(s)]),
+    xlsRow([landBasisLabel(s), cellMoney(Math.round(landBasis)), totalSF ? cellMoney(costPerSf(landBasis, totalSF)) : '', units ? cellMoney(costPerUnit(landBasis, units)) : '', totalCost ? cellPct(costPct(landBasis, totalCost)) : '', landValueSourceNote(s)]),
     xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), totalCost ? cellPct(costPct(hardCosts, totalCost)) : '', 'Detailed schedule below: HVAC, framing, plumbing, electrical, etc.']),
     xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(softPerSf) : '', units ? cellMoney(softPerUnit) : '', totalCost ? cellPct(costPct(softCosts, totalCost)) : '', 'A&E, permits, fees, legal, developer fee, contingency']),
     xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(carryPerSf) : '', units ? cellMoney(carryPerUnit) : '', totalCost ? cellPct(costPct(carryCost, totalCost)) : '', 'Interest reserve, loan fees, taxes and lease-up carry']),
