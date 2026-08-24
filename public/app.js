@@ -1541,14 +1541,14 @@ async function fetchSitePage(qs) {
   const url = API + '/api/sites?' + qs.toString();
   let data;
   try {
-    data = await fetchJSONWithTimeout(url, {}, 12000);
+    data = await fetchJSONWithTimeout(url, {}, 30000);
   } catch (e) {
     if (!String(e.message || '').includes('too long')) throw e;
     const list = g('list');
-    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...<br><small style="margin-top:8px;color:#768295">This should finish within 15 seconds.</small></div>';
+    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...<br><small style="margin-top:8px;color:#768295">This can take up to 45 seconds after the server sleeps.</small></div>';
     g('albl').textContent = 'Retrying API';
     await wait(1800);
-    data = await fetchJSONWithTimeout(url, {}, 16000);
+    data = await fetchJSONWithTimeout(url, {}, 45000);
   }
   return {
     results: data.results || [],
@@ -1568,7 +1568,7 @@ async function loadSites() {
     if (list && list.textContent.includes('Loading first 50')) {
       const qs = currentSiteQuery || buildSiteQueryParams(0).toString();
       const apiUrl = (API || '') + '/api/sites?' + qs;
-      list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...<br><button class="gb" style="margin-top:10px" onclick="loadSites()">Retry now</button><br><a style="display:block;margin-top:8px;font-size:11px;color:#667790" href="' + escapeText(apiUrl) + '" target="_blank" rel="noopener">Open API test</a></div>';
+      list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...<br><small style="display:block;margin-top:8px;color:#768295">Keeping the request open so the first page can finish.</small><br><button class="gb" style="margin-top:10px" onclick="loadSites()">Retry now</button><br><a style="display:block;margin-top:8px;font-size:11px;color:#667790" href="' + escapeText(apiUrl) + '" target="_blank" rel="noopener">Open API test</a></div>';
       g('albl').textContent = 'API waking up';
     }
   }, 7000);
