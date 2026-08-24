@@ -68,11 +68,12 @@ function getSupabase() {
 }
 
 authRouter.get('/config', (req, res) => {
+  const googleProviderReady = process.env.GOOGLE_AUTH_ENABLED !== 'false';
   res.json({
     supabaseUrl: process.env.SUPABASE_URL || '',
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
-    googleEnabled: process.env.GOOGLE_AUTH_ENABLED === 'true',
-    googleProviderReady: process.env.GOOGLE_AUTH_ENABLED === 'true',
+    googleEnabled: googleProviderReady,
+    googleProviderReady,
     freeAccessHours: 24,
     introPrice: 29.99,
     checkoutTrialDays: 3,
