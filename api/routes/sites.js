@@ -14,7 +14,7 @@ import { runModel, runScenarios } from '../../src/model/financialModel.js';
 import { RENTS } from '../../src/data/submarkets.js';
 import { enrichSite }    from '../../src/data/laOpenData.js';
 import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/DemandScore.js';
-import { requireAuth, optionalAuth, getUserAccess } from '../middleware/auth.js';
+import { requireAuth, optionalAuth, getUserAccessFast } from '../middleware/auth.js';
 import { validateSiteFilters, validateModelOverrides } from '../middleware/middleware.js';
 import { supabase } from '../../src/data/supabase.js';
 import {
@@ -1014,7 +1014,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     const total = usedFastPage ? fastTotal : filtered.length;
     const paginated = usedFastPage ? filtered : filtered.slice(requestedOffset, requestedOffset + requestedLimit);
 
-    const access = await getUserAccess(req.user);
+    const access = await getUserAccessFast(req.user);
 
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
@@ -1128,7 +1128,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
-    const access = await getUserAccess(req.user);
+    const access = await getUserAccessFast(req.user);
     if (!access.active) {
       return res.json({
         site: redactSiteResult({

@@ -12,6 +12,15 @@ const supabase = createClient(
 
 const FREE_ACCESS_HOURS = 24;
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing']);
+const AUTH_LOOKUP_TIMEOUT_MS = Number(process.env.AUTH_LOOKUP_TIMEOUT_MS || 2500);
+
+function timeoutAfter(ms, value) {
+  return new Promise(resolve => setTimeout(() => resolve(value), ms));
+}
+
+async function withAuthTimeout(promise, fallback, timeoutMs = AUTH_LOOKUP_TIMEOUT_MS) {
+  return Promise.race([promise, timeoutAfter(timeoutMs, fallback)]);
+}
 
 function trialEndIso() {
   return new Date(Date.now() + FREE_ACCESS_HOURS * 60 * 60 * 1000).toISOString();
@@ -96,6 +105,19 @@ export async function getUserAccess(user) {
   return accessForProfile(profile);
 }
 
+export async function getUserAccessFast(user, timeoutMs = AUTH_LOOKUP_TIMEOUT_MS) {
+  if (!user) return accessForProfile(null);
+
+  try {
+    const profile = await withAuthTimeout(ensureUserProfile(user), undefined, timeoutMs);
+    if (profile === undefined) return accessForProfile(null);
+    return accessForProfile(profile);
+  } catch (err) {
+    console.warn('[auth] Access profile lookup failed; returning locked access:', err.message);
+    return accessForProfile(null);
+  }
+}
+
 /**
  * requireAuth — hard gate, returns 401 if no valid session
  */
@@ -140,8 +162,13 @@ export async function optionalAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) return next();
 
-  const token = authHeader.slice(7);
-  const { data: { user } } = await supabase.auth.getUser(token);
-  if (user) req.user = user;
+  try {
+    const token = authHeader.slice(7);
+    const result = await withAuthTimeout(supabase.auth.getUser(token), null);
+    const user = result?.data?.user;
+    if (user) req.user = user;
+  } catch (err) {
+    console.warn('[auth] Optional auth lookup failed; continuing anonymously:', err.message);
+  }
   next();
 }
