@@ -67,6 +67,7 @@ const SITE_LIST_SELECT = [
   'owner_last_sale_date',
   'owner_last_sale_amount',
   'owner_source',
+  'owner_enriched_at',
   'underwritten_at',
   'raw_permit_data',
 ].join(',');
@@ -307,6 +308,7 @@ function ownerInfoFromRaw(raw = {}, site = {}) {
     ownerLastSaleDate: firstText(stored.last_sale_date, stored.lastSaleDate, raw.last_sale_date, raw.lastSaleDate, raw.sale_date, site.owner_last_sale_date),
     ownerLastSaleAmount: firstText(stored.last_sale_amount, stored.lastSaleAmount, raw.last_sale_amount, raw.lastSaleAmount, raw.sale_price, site.owner_last_sale_amount),
     ownerSource: stored.source || raw.owner_source || site.owner_source || 'Permit/source record',
+    ownerEnrichedAt: firstText(stored.enriched_at, stored.owner_enriched_at, raw.owner_enriched_at, site.owner_enriched_at),
   };
 }
 
@@ -458,6 +460,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const model = modelFromSupabaseSite(s, landCompBenchmarks);
   const unitMix = unitMixForSite(rawPermit, s, s.project_type ?? s.type);
   const ownerInfo = ownerInfoFromRaw(rawPermit, s);
+  const externalSources = Array.isArray(s.external_data_sources) ? s.external_data_sources : [];
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
@@ -482,6 +485,16 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     developmentStatus: rawPermit.development_status || null,
     workDescription: rawPermit.work_description || rawPermit.project_description || null,
     addressAliases,
+    externalEnrichedAt: s.external_enriched_at || null,
+    externalDataSources: externalSources,
+    dataQuality: s.data_quality || null,
+    rentcastEnrichedAt: s.rentcast_enriched_at || null,
+    regridEnrichedAt: s.regrid_enriched_at || null,
+    externalPropertyRecord: s.external_property_record || null,
+    externalRentEstimate: s.external_rent_estimate || null,
+    externalValueEstimate: s.external_value_estimate || null,
+    externalRentComps: Array.isArray(s.external_rent_comps) ? s.external_rent_comps : [],
+    externalSaleComps: Array.isArray(s.external_sale_comps) ? s.external_sale_comps : [],
     ...ownerInfo,
     unitMixSource: unitMix.source,
     unitMixCounts: unitMix.counts,
@@ -582,6 +595,17 @@ function redactSiteResult(site, hasAccess) {
     ownerLastSaleDate: null,
     ownerLastSaleAmount: null,
     ownerSource: null,
+    ownerEnrichedAt: null,
+    externalEnrichedAt: null,
+    externalDataSources: [],
+    dataQuality: null,
+    rentcastEnrichedAt: null,
+    regridEnrichedAt: null,
+    externalPropertyRecord: null,
+    externalRentEstimate: null,
+    externalValueEstimate: null,
+    externalRentComps: [],
+    externalSaleComps: [],
     lat: null,
     lng: null,
     landValueMatch: null,

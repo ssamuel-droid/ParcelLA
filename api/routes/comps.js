@@ -25,10 +25,23 @@ const HOOD_ZIPS = {
   'Los Feliz':     '90027',
   'Koreatown':     '90006',
   'Mid-Wilshire':  '90036',
+  'Hollywood':     '90028',
   'Culver City':   '90232',
   'Mar Vista':     '90066',
   'West Adams':    '90016',
   'Boyle Heights': '90033',
+  'Venice':        '90291',
+  'West LA':       '90064',
+  'Brentwood':     '90049',
+  'Pacific Palisades': '90272',
+  'Studio City':   '91604',
+  'Sherman Oaks':  '91423',
+  'Encino':        '91316',
+  'Van Nuys':      '91405',
+  'North Hollywood': '91601',
+  'Woodland Hills': '91364',
+  'Reseda':        '91335',
+  'Northridge':    '91325',
 };
 
 function asNumber(value) {
@@ -133,6 +146,47 @@ function mapRentcastListing(r, siteLat, siteLng) {
   };
 }
 
+function mapRentcastSaleRecord(r, hood, siteLat, siteLng) {
+  const lat = r.latitude ?? r.lat;
+  const lng = r.longitude ?? r.lng;
+  const address = r.formattedAddress || [r.addressLine1, r.city, r.state, r.zipCode].filter(Boolean).join(', ');
+  const salePrice = asNumber(r.lastSalePrice ?? r.lastSoldPrice ?? r.salePrice ?? r.price);
+  const saleDate = r.lastSaleDate || r.lastSoldDate || r.saleDate || r.soldDate;
+  if (!address || !salePrice || !saleDate) return null;
+  const units = asNumber(r.units ?? r.propertyUnits ?? r.numberOfUnits ?? r.unitCount);
+  const sf = asNumber(r.squareFootage ?? r.livingArea ?? r.buildingArea);
+  return {
+    id:           r.id || `rentcast-${address}-${saleDate}`,
+    address,
+    neighborhood: r.neighborhood || hood,
+    zip:          r.zipCode || r.zip,
+    lat,
+    lng,
+    distanceMiles: distanceMiles(siteLat, siteLng, lat, lng),
+    project_type: r.propertyType || 'Apartment',
+    units,
+    avg_unit_sf:  units && sf ? Math.round(sf / units) : null,
+    year_built:   r.yearBuilt,
+    amenities:    r.amenities || r.features || '',
+    sale_date:    saleDate,
+    sale_price:   salePrice,
+    cap_rate:     null,
+    noi:          null,
+    price_per_unit: units ? Math.round(salePrice / units) : asNumber(r.pricePerUnit),
+    price_per_sf:   sf ? Math.round(salePrice / sf) : asNumber(r.pricePerSf),
+    buyer:        r.buyer || '',
+    seller:       r.seller || '',
+    source:       'RentCast monthly property records',
+    apn:          r.apn || '',
+    recorder_document_number: '',
+    document_type: '',
+    transfer_tax:  null,
+    sale_price_confidence: r.lastSalePrice ? 'reported' : 'rentcast',
+    sale_price_method: 'monthly cache',
+    notes:        'Cached monthly RentCast property record; refreshes on the monthly enrichment workflow.',
+  };
+}
+
 function mapStoredRentComp(d, siteLat, siteLng) {
   const lat = d.lat;
   const lng = d.lng;
@@ -192,6 +246,47 @@ async function fetchRentcastListings({ hood, siteLat, siteLng, bedrooms, limit }
     console.warn('[comps] RentCast listing lookup failed:', err.message);
     return [];
   }
+}
+
+function cacheRows(cacheRow) {
+  const normalized = cacheRow?.normalized;
+  if (Array.isArray(normalized?.rows)) return normalized.rows;
+  if (Array.isArray(normalized?.listings)) return normalized.listings;
+  if (Array.isArray(normalized?.comps)) return normalized.comps;
+  const payload = cacheRow?.payload;
+  if (Array.isArray(payload)) return payload;
+  return payload?.rows || payload?.data || payload?.results || [];
+}
+
+async function fetchMonthlyRentcastCache(client, purpose, hood) {
+  const zip = HOOD_ZIPS[hood];
+  if (!zip) return [];
+  try {
+    const { data, error } = await client
+      .from('property_enrichment_cache')
+      .select('normalized,payload,fetched_at,expires_at')
+      .eq('provider', 'rentcast')
+      .eq('purpose', purpose)
+      .eq('cache_key', `zip:${zip}`)
+      .gte('expires_at', new Date().toISOString())
+      .maybeSingle();
+    if (error || !data) return [];
+    return cacheRows(data);
+  } catch {
+    return [];
+  }
+}
+
+function dedupeByAddressDate(rows) {
+  const seen = new Set();
+  const out = [];
+  for (const row of rows || []) {
+    const key = `${String(row.address || row.formattedAddress || '').toUpperCase()}|${String(row.sale_date || row.saleDate || row.lastSaleDate || row.period || '')}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
 }
 
 function rentSummary(rows) {
@@ -391,6 +486,21 @@ router.get('/submarket/:hood', async (req, res, next) => {
         : `latest citywide comps, last ${recencyMonths} months`;
     }
 
+    const storedCount = data?.length || 0;
+    const cachedSales = await fetchMonthlyRentcastCache(client, 'recent_sales', hood);
+    const cachedRows = cachedSales
+      .map(row => mapRentcastSaleRecord(row, hood, siteLat, siteLng))
+      .filter(row => row && row.sale_date >= cutoff);
+    if (cachedRows.length) {
+      data = dedupeByAddressDate([...(data || []), ...cachedRows]);
+      if (!storedCount) {
+        matchType = 'monthly_rentcast_recent_sales';
+        matchLabel = `monthly RentCast cached sales, last ${recencyMonths} months`;
+      } else {
+        matchLabel += ' plus monthly RentCast cache';
+      }
+    }
+
     if (!data?.length) {
       return res.json({
         hood,
@@ -434,7 +544,13 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
     const recencyDays = Math.min(Math.max(parseInt(req.query.recencyDays, 10) || 365, 90), 730);
     const client = sb();
 
-    const liveComps = await fetchRentcastListings({ hood, siteLat, siteLng, bedrooms, limit });
+    const cachedRentcastRows = await fetchMonthlyRentcastCache(client, 'rental_listings', hood);
+    const cachedComps = cachedRentcastRows
+      .map(row => mapRentcastListing(row, siteLat, siteLng))
+      .filter(row => row.address && row.monthlyRent);
+    const liveComps = cachedComps.length
+      ? []
+      : await fetchRentcastListings({ hood, siteLat, siteLng, bedrooms, limit });
 
     let matchType = 'exact_neighborhood_benchmarks';
     let matchLabel = 'exact neighborhood saved rent benchmarks';
@@ -463,16 +579,20 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
       .filter(c => c.address && isRecentPeriod(c.period, recencyDays));
     const staleSavedPropertyCount = storedComps
       .filter(c => c.address && !isRecentPeriod(c.period, recencyDays)).length;
-    const propertyComps = rankRentComps([...liveComps, ...recentStoredPropertyComps]).slice(0, limit);
+    const propertyComps = rankRentComps([...cachedComps, ...liveComps, ...recentStoredPropertyComps]).slice(0, limit);
     const benchmarkComps = propertyComps.length ? [] : benchmarkRentRows(hood, storedComps, siteLat, siteLng).slice(0, limit);
     const returnedComps = propertyComps.length ? propertyComps : benchmarkComps;
     const hasRentcast = Boolean(process.env.RENTCAST_API_KEY);
-    const source = liveComps.length
+    const source = cachedComps.length
+      ? 'monthly rentcast cache'
+      : liveComps.length
       ? 'rentcast active listings'
       : propertyComps.length
         ? 'recent saved database'
         : 'market benchmark fallback';
-    const returnedMatchLabel = liveComps.length
+    const returnedMatchLabel = cachedComps.length
+      ? 'monthly cached active apartment listings'
+      : liveComps.length
       ? 'active apartment listings plus saved recent comps'
       : propertyComps.length
         ? `saved rent comps, last ${Math.round(recencyDays / 30)} months`
@@ -483,7 +603,9 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
       ? staleSavedPropertyCount
         ? `${staleSavedPropertyCount} older saved rent comp(s) were hidden because they are outside the ${recencyDays}-day recency window.`
         : ''
-      : hasRentcast
+      : cachedComps.length
+        ? ''
+        : hasRentcast
         ? 'RentCast did not return nearby active apartment listings, and saved property-level rent comps are older than the recency window.'
         : 'RENTCAST_API_KEY is not configured, so benchmark rents are shown until recent property-level comps are added.';
 
@@ -496,7 +618,7 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
       staleSavedPropertyCount,
       comps: returnedComps.length,
       recentComps: returnedComps,
-      marketRents: rentSummary([...storedComps, ...benchmarkComps]),
+      marketRents: rentSummary([...cachedComps, ...liveComps, ...storedComps, ...benchmarkComps]),
       benchmarkRows: benchmarkComps,
       message: propertyComps.length
         ? 'Active or recent property-level rent comps found.'
