@@ -177,6 +177,7 @@ function siteLotText(s) {
 
 function siteUnitsText(s) {
   const units = Number(s?.units || 0);
+  if (s?.type === 'New House') return units > 0 ? `${units.toLocaleString()} house${units === 1 ? '' : 's'}` : 'House count TBD';
   return units > 0 ? `${units.toLocaleString()} units` : 'Units TBD';
 }
 
@@ -196,17 +197,27 @@ function landPricePerSfText(s, land) {
 
 function siteAvgUnitSfText(s) {
   const avg = Number(s?.usf || s?.avgUnitSf || 0);
-  const assumed = !avg || (avg === 800 && (s?.permitNumber || s?.permitSourceId || /default/i.test(String(s?.unitMixSource || ''))));
+  const source = String(s?.buildingSfSource || s?.avgUnitSfSource || '');
+  const assumed = !avg || /model assumption/i.test(source) || (avg === 800 && (s?.permitNumber || s?.permitSourceId || /default/i.test(String(s?.unitMixSource || ''))));
   return assumed ? '800 SF avg (assumed)' : `${Math.round(avg).toLocaleString()} SF avg`;
 }
 
 function siteUnitSourceNote(s) {
   const units = Number(s?.units || 0);
   const avg = Number(s?.usf || s?.avgUnitSf || 0);
-  const avgAssumed = !avg || (avg === 800 && (s?.permitNumber || s?.permitSourceId || /default/i.test(String(s?.unitMixSource || ''))));
+  const source = String(s?.buildingSfSource || s?.avgUnitSfSource || '');
+  const avgAssumed = !avg || /model assumption/i.test(source) || (avg === 800 && (s?.permitNumber || s?.permitSourceId || /default/i.test(String(s?.unitMixSource || ''))));
   const unitSource = units > 0 ? 'Unit count from permit/source data.' : 'Unit count was not provided.';
-  const avgSource = avgAssumed ? 'Avg SF is a model assumption.' : 'Avg SF came from source data.';
+  const avgSource = avgAssumed ? 'Avg SF is a model assumption.' : `Avg SF from ${source || 'source data'}.`;
   return `${unitSource} ${avgSource}`;
+}
+
+function siteBuildingSf(s) {
+  const parsed = Number(s?.buildingSf || s?.totalBuildingSf || 0);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  const units = Number(s?.units || 0);
+  const avg = Number(s?.usf || s?.avgUnitSf || 0);
+  return units > 0 && avg > 0 ? units * avg : 0;
 }
 
 function landPricePerUnitText(s, land) {
@@ -3717,7 +3728,7 @@ async function exportPDF(id) {
       <tr><td>Project Type</td><td>${s.type || 'Multifamily'}</td></tr>
       <tr><td>Proposed Units</td><td>${escapeText(siteUnitsText(s))}</td></tr>
       <tr><td>Avg Unit Size</td><td>${siteAvgUnitSfText(s)}</td></tr>
-      <tr><td>Total Building SF</td><td>${((s.units||12)*(s.usf||800)).toLocaleString()} SF</td></tr>
+      <tr><td>Total Building SF</td><td>${(siteBuildingSf(s) || ((s.units||12)*(s.usf||800))).toLocaleString()} SF</td></tr>
     </table>
     <h3>Owner / Contact</h3>
     <table>

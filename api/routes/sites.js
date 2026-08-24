@@ -378,6 +378,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const type = s.project_type ?? s.type ?? 'Multifamily';
   const units = Number(s.units || 0);
   const avgUnitSf = Number(s.avg_unit_sf || s.usf || 800);
+  const buildingSf = Number(rawPermit.building_sf || 0) || (units * avgUnitSf);
   const neighborhood = normalizedNeighborhood(s) || 'Koreatown';
   const unitMix = unitMixForSite(rawPermit, s, type);
   const rents = RENTS[neighborhood] || RENTS.Koreatown;
@@ -452,6 +453,10 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     loanAmount:    recastTotalCost * 0.65,
     equity:        recastTotalCost * 0.35,
     equityMultiple: recastTotalCost > 0 ? (exitValue / (recastTotalCost * 0.35)) : 0,
+    buildingSf,
+    buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source || null,
+    buildingSfParsed: rawPermit.building_sf_parsed ?? null,
+    lotSfSource: rawPermit.lot_sf_source || null,
   };
 }
 
@@ -475,6 +480,10 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     lot:          lotSf,
     units:        s.units ?? null,
     usf:          s.avg_unit_sf ?? s.usf ?? 800,
+    buildingSf:   rawPermit.building_sf || model.buildingSf || null,
+    buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source || null,
+    buildingSfParsed: rawPermit.building_sf_parsed ?? null,
+    lotSfSource:  rawPermit.lot_sf_source || null,
     rti:          s.rti ?? false,
     status,
     listingStatus: offMarket ? 'Off-market / not for sale' : 'For sale',
@@ -1081,6 +1090,10 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         lot:          s.lot  ?? s.lot_sf,
         units:        s.units,
         usf:          s.usf  ?? s.avg_unit_sf,
+        buildingSf:   s.buildingSf ?? s._m.buildingSf,
+        buildingSfSource: s.buildingSfSource ?? s._m.buildingSfSource,
+        buildingSfParsed: s.buildingSfParsed ?? s._m.buildingSfParsed,
+        lotSfSource:  s.lotSfSource ?? s._m.lotSfSource,
         rti:          s.rti,
         permitStatus: s.permitStatus,
         developmentStatus: s.developmentStatus,

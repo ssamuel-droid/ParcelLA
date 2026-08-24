@@ -302,6 +302,97 @@ function unitsFromText(value) {
   return match ? parseInt(match[1].replace(/,/g, ''), 10) || 0 : 0;
 }
 
+function numberFromValue(value) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const text = String(value).trim();
+  if (!text || /^null$/i.test(text)) return 0;
+  const match = text.match(/-?\d[\d,]*(?:\.\d+)?/);
+  if (!match) return 0;
+  const n = Number(match[0].replace(/,/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function firstPositiveNumber(...values) {
+  for (const value of values) {
+    const n = numberFromValue(value);
+    if (n > 0) return n;
+  }
+  return 0;
+}
+
+function textAreaMatches(values, { lotOnly = false } = {}) {
+  const text = values.map(value => String(value || '')).filter(Boolean).join(' ');
+  if (!text.trim()) return [];
+  const matches = [];
+  const areaPattern = /(\d[\d,]{2,})\s*(?:sq\.?\s*ft|square\s*feet|s\.?f\.?|sf)\b/gi;
+  for (const match of text.matchAll(areaPattern)) {
+    const value = numberFromValue(match[1]);
+    if (value < 300 || value > 5000000) continue;
+    const start = Math.max(0, match.index - 55);
+    const end = Math.min(text.length, match.index + match[0].length + 75);
+    const context = text.slice(start, end).toLowerCase();
+    const lotContext = /\b(lot|site area|parcel|land area|property area)\b/.test(context);
+    const buildingContext = /\b(building|floor|dwelling|residential|apartment|house|sfd|mixed[- ]use|habitable|living)\b/.test(context);
+    if (lotOnly && !lotContext) continue;
+    if (!lotOnly && lotContext && !buildingContext) continue;
+    matches.push({ value, context });
+  }
+  return matches;
+}
+
+function buildingSizeFromPermit(p, units, type) {
+  const rawSf = firstPositiveNumber(
+    p.floor_area,
+    p.floorarea,
+    p.building_area,
+    p.building_sf,
+    p.total_floor_area,
+    p.new_floor_area,
+    p.proposed_floor_area,
+    p.project_floor_area,
+    p.square_footage,
+    p.sqft,
+    p.gross_floor_area,
+    p.gross_building_area,
+    p.residential_floor_area
+  );
+  const textMatches = textAreaMatches([p.work_description, p.project_description, p.description]);
+  const textSf = textMatches.length ? Math.max(...textMatches.map(m => m.value)) : 0;
+  const sourceValue = rawSf || textSf;
+  const source = rawSf ? 'Permit source field' : (textSf ? 'Permit work description' : 'Model assumption');
+  const count = Math.max(1, Number(units || 1));
+  const fallback = 800 * count;
+
+  let totalSf = sourceValue;
+  if (totalSf > 0 && type !== 'New House' && totalSf < count * 250 && totalSf >= 250 && totalSf <= 5000) {
+    totalSf *= count;
+  }
+
+  const avg = totalSf > 0 ? totalSf / count : 0;
+  const plausibleHouse = type === 'New House' && totalSf >= 500 && totalSf <= 25000;
+  const plausibleProject = type !== 'New House' && avg >= 250 && avg <= 5000;
+  if (!totalSf || !(plausibleHouse || plausibleProject)) {
+    return { totalSf: fallback, avgUnitSf: 800, source: 'Model assumption', parsed: false };
+  }
+
+  return {
+    totalSf: Math.round(totalSf),
+    avgUnitSf: Math.round(totalSf / count),
+    source,
+    parsed: true,
+  };
+}
+
+function lotSizeFromPermit(p) {
+  const rawLot = firstPositiveNumber(p.lot_size, p.lot_area, p.lot_sf, p.parcel_area, p.site_area);
+  const textMatches = textAreaMatches([p.work_description, p.project_description, p.description], { lotOnly: true });
+  const textLot = textMatches.length ? Math.max(...textMatches.map(m => m.value)) : 0;
+  const lot = rawLot || textLot;
+  if (lot < 1000 || lot > 2000000) return { lotSf: null, source: null };
+  return { lotSf: Math.round(lot), source: rawLot ? 'Permit source field' : 'Permit work description' };
+}
+
 function excludedProject(...values) {
   return values.some(value => EXCLUDED_PROJECT_TEXT.test(String(value || '')));
 }
@@ -362,7 +453,7 @@ function unitMixForPermit(p, type) {
   if (type === 'New House') {
     return { mix: { s: 0, o: 0, t: 0, th: 1 }, counts: null, parsedTotal: 0, source: 'New house assumption' };
   }
-  const parsed = parseUnitMixFromText(p.work_description, p.use_desc, p.permit_type, p.permit_subtype);
+  const parsed = parseUnitMixFromText(p.work_description, p.project_description, p.use_desc, p.permit_type, p.permit_subtype);
   if (parsed) return { ...parsed, source: 'Parsed from permit text' };
   return { mix: { ...DEFAULT_UNIT_MIX }, counts: null, parsedTotal: 0, source: 'Default market mix' };
 }
@@ -486,17 +577,19 @@ function uw(p, inspectionCheck = null) {
   const hc = HC[t]||285;
   const unitMix = unitMixForPermit(p, t);
   const ownerInfo = ownerInfoForPermit(p);
+  const buildingSize = buildingSizeFromPermit(p, u, t);
+  const lotSize = lotSizeFromPermit(p);
   const blend = R.s*unitMix.mix.s+R.o*unitMix.mix.o+R.t*unitMix.mix.t+R.th*unitMix.mix.th;
   const grossRent = blend*12*u;
   const otherIncome = u*600;
   const egi = grossRent*0.95 + otherIncome;
   const noi = egi*0.65;
-  const totalSF = 800*u;
+  const totalSF = buildingSize.totalSf;
   const hard = hc*totalSF;
   const soft = hard*0.18;
   const fallbackLand = p.valuation>hard ? p.valuation : hard*0.45;
   const compLand = estimateLandBasisFromComps({
-    neighborhood:h, project_type:t, units:u, avg_unit_sf:800, lot_sf:null,
+    neighborhood:h, project_type:t, units:u, avg_unit_sf:buildingSize.avgUnitSf, lot_sf:lotSize.lotSf,
     totalSF, lat:p.lat, lng:p.lng,
   }, LAND_BENCHMARKS);
   const doorLand = ['Multifamily','Mixed-Use'].includes(t)
@@ -515,7 +608,7 @@ function uw(p, inspectionCheck = null) {
   const cf = noi-ds;
   const irrV = eq>500 ? Math.min(Math.max(irr([-eq,cf,cf,cf,cf,cf+exit-loan]),-50),100) : 0;
   return {
-    neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:800, lot_sf:null,
+    neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:buildingSize.avgUnitSf, lot_sf:lotSize.lotSf,
     price:Math.round(land),
     status:'off-market', data_source:'ladbs_permit', rti:p.is_rti||false,
     lat:p.lat, lng:p.lng,
@@ -529,6 +622,11 @@ function uw(p, inspectionCheck = null) {
       unit_mix_counts:unitMix.counts,
       unit_mix_source:unitMix.source,
       unit_mix_parsed_total:unitMix.parsedTotal,
+      building_sf:buildingSize.totalSf,
+      building_sf_source:buildingSize.source,
+      building_sf_parsed:buildingSize.parsed,
+      avg_unit_sf_source:buildingSize.source,
+      lot_sf_source:lotSize.source,
       owner_info:ownerInfo,
       inspection_check: inspectionCheck || {
         checked: false,
@@ -567,7 +665,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>project_description,raw_data->>description,raw_data->>floor_area,raw_data->>floorarea,raw_data->>building_area,raw_data->>building_sf,raw_data->>total_floor_area,raw_data->>new_floor_area,raw_data->>proposed_floor_area,raw_data->>project_floor_area,raw_data->>square_footage,raw_data->>sqft,raw_data->>gross_floor_area,raw_data->>gross_building_area,raw_data->>residential_floor_area,raw_data->>lot_size,raw_data->>lot_area,raw_data->>lot_sf,raw_data->>parcel_area,raw_data->>site_area,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;
