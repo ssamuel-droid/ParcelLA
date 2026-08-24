@@ -1557,7 +1557,7 @@ async function fetchSitePage(qs) {
   };
 }
 
-async function loadSites() {
+async function loadSites(autoRetry = 0) {
   const runId = ++siteLoadRunId;
   g('rct').textContent = 'Loading first 50 sites...';
   g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loading first 50 sites...</div>';
@@ -1572,6 +1572,13 @@ async function loadSites() {
       g('albl').textContent = 'API waking up';
     }
   }, 7000);
+  const recoveryTimer = setTimeout(() => {
+    const list = g('list');
+    if (runId === siteLoadRunId && autoRetry < 1 && list && list.textContent.includes('Still loading')) {
+      g('albl').textContent = 'Retrying API';
+      loadSites(autoRetry + 1);
+    }
+  }, 12000);
   try {
     const qs = buildSiteQueryParams(0);
     currentSiteQuery = qs.toString();
@@ -1596,6 +1603,7 @@ async function loadSites() {
     g('list').innerHTML = '<div class="empty">Could not load sites<br><small style="color:#e24b4a">' + msg + '</small><br><button class="gb" onclick="loadSites()">Retry</button><br><small style="display:block;margin-top:8px;color:#888">API: ' + escapeText(API || 'same server') + '/api/sites</small></div>';
   } finally {
     clearTimeout(slowTimer);
+    clearTimeout(recoveryTimer);
   }
 }
 
