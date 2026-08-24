@@ -3,6 +3,8 @@ const https = require('https');
 
 const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
+const SOCRATA_APP_TOKEN = process.env.SOCRATA_APP_TOKEN;
+const INSPECTIONS_DATASET = '9w5z-rg2h';
 
 if (!SB_URL || !SB_KEY) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY are required');
@@ -42,6 +44,105 @@ function req(method, path, body) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function socrataUrl(dataset, params = {}) {
+  const u = new URL('https://data.lacity.org/resource/' + dataset + '.json');
+  for (const [key, value] of Object.entries(params)) u.searchParams.set(key, value);
+  return u.toString();
+}
+
+function socrataGet(url) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.get({
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      timeout: 30000,
+      headers: {
+        Accept: 'application/json',
+        ...(SOCRATA_APP_TOKEN ? { 'X-App-Token': SOCRATA_APP_TOKEN } : {}),
+      },
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        if (res.statusCode >= 300) {
+          reject(new Error('Socrata HTTP ' + res.statusCode + ': ' + d.slice(0, 240)));
+          return;
+        }
+        try { resolve(JSON.parse(d)); }
+        catch (e) { reject(new Error('Invalid Socrata JSON: ' + d.slice(0, 240))); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Socrata request timeout')); });
+    req.on('error', reject);
+  });
+}
+
+function permitKey(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function soqlString(value) {
+  return "'" + String(value || '').replace(/'/g, "''") + "'";
+}
+
+async function loadInspectionChecks(permits) {
+  const candidates = [...new Set((permits || [])
+    .filter(p => p?.permit_number && (
+      p.is_rti ||
+      /ready|approved/i.test(String(p.status || ''))
+    ))
+    .map(p => String(p.permit_number).trim())
+    .filter(Boolean))];
+
+  const checks = new Map(candidates.map(permit => [permitKey(permit), {
+    checked: true,
+    count: 0,
+    latestDate: null,
+    source: 'LADBS Building and Safety Inspections',
+    dataset: INSPECTIONS_DATASET,
+  }]));
+
+  if (!candidates.length) return checks;
+
+  console.log('Checking LADBS inspections for', candidates.length, 'RTI/approved permit(s)...');
+  for (let i = 0; i < candidates.length; i += 30) {
+    const batch = candidates.slice(i, i + 30);
+    const url = socrataUrl(INSPECTIONS_DATASET, {
+      '$select': 'permit,count(*) as inspection_count,max(inspection_date) as latest_inspection_date',
+      '$where': 'permit in(' + batch.map(soqlString).join(',') + ')',
+      '$group': 'permit',
+    });
+    try {
+      const rows = await socrataGet(url);
+      for (const row of rows || []) {
+        checks.set(permitKey(row.permit), {
+          checked: true,
+          count: parseInt(row.inspection_count || row.count || '0', 10) || 0,
+          latestDate: row.latest_inspection_date || null,
+          source: 'LADBS Building and Safety Inspections',
+          dataset: INSPECTIONS_DATASET,
+        });
+      }
+      if ((i + batch.length) % 300 === 0) console.log('  inspection checks:', i + batch.length, '/', candidates.length);
+      await sleep(120);
+    } catch (e) {
+      console.warn('Inspection check failed for batch starting', i, e.message);
+      for (const permit of batch) {
+        checks.set(permitKey(permit), {
+          checked: false,
+          count: null,
+          latestDate: null,
+          source: 'LADBS Building and Safety Inspections',
+          dataset: INSPECTIONS_DATASET,
+          error: e.message,
+        });
+      }
+    }
+  }
+  return checks;
+}
 
 async function loadRecentSoldComps(recencyDays = LAND_COMP_RECENCY_DAYS) {
   const cutoff = new Date(Date.now() - recencyDays * 86400000).toISOString().slice(0, 10);
@@ -335,10 +436,15 @@ function ptype(pt, st, u, desc = '') {
   return 'Multifamily';
 }
 
-function developmentStatus(status, isRti) {
+function developmentStatus(status, isRti, inspectionCheck = null) {
   const s = String(status || '').toLowerCase();
+  if (inspectionCheck?.count > 0) return 'possibly_started_unknown';
   if (s.includes('not ready')) return 'plan_check';
-  if (isRti || s.includes('ready') || s.includes('approved')) return 'city_approved_not_started';
+  if (isRti || s.includes('ready') || s.includes('approved')) {
+    return inspectionCheck?.checked === true && inspectionCheck.count === 0
+      ? 'city_approved_not_started'
+      : 'possibly_started_unknown';
+  }
   if (s.includes('submit') || s.includes('pc assigned') || s.includes('pc in progress') || s.includes('pc info complete') || s.includes('correction') || s.includes('verification') || s.includes('quality review') || s.includes('reviewed by supervisor')) return 'submitted';
   if (s.includes('plan') || s.includes('pc ') || s.includes('pc_') || s.includes('correction') || s.includes('verification') || s.includes('review') || s.includes('hold')) return 'plan_check';
   if (s.includes('issued')) return 'permit_issued';
@@ -357,7 +463,7 @@ function irr(cfs) {
   return Math.round(r*1000)/10;
 }
 
-function uw(p) {
+function uw(p, inspectionCheck = null) {
   const h = hood(p.lat, p.lng, p.address);
   // Get actual unit count from multiple sources
   const rawUnits = parseInt(p['of_residential_dwelling_units'] || p['number_of_units'] || p.du_changed || '0') || unitsFromText(p.work_description);
@@ -370,7 +476,7 @@ function uw(p) {
 
   const t = ptype(p.permit_type, p.permit_subtype, actualUnits, p.work_description);
   if (!t) return null;
-  const devStatus = developmentStatus(p.status, p.is_rti);
+  const devStatus = developmentStatus(p.status, p.is_rti, inspectionCheck);
   // Estimate units from valuation if not available
   const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='New House'?220000:228000;
   const estimatedUnits = Math.max(Math.round((p.valuation||228000)/costPerUnit), t==='New House' ? 1 : 2);
@@ -424,6 +530,12 @@ function uw(p) {
       unit_mix_source:unitMix.source,
       unit_mix_parsed_total:unitMix.parsedTotal,
       owner_info:ownerInfo,
+      inspection_check: inspectionCheck || {
+        checked: false,
+        count: null,
+        source: 'LADBS Building and Safety Inspections',
+        dataset: INSPECTIONS_DATASET,
+      },
       land_value_source:doorLand ? 'default_market_per_door' : (compLand?.source || 'permit_valuation_fallback'),
       land_value_metric:doorLand ? 'price per door' : (compLand?.metricLabel || (p.valuation>hard ? 'permit valuation' : 'hard cost percentage fallback')),
       land_value_metric_value:doorLand ? DEFAULT_MARKET_LAND_PER_DOOR : (compLand?.metricValue ? Math.round(compLand.metricValue) : null),
@@ -466,6 +578,7 @@ async function main() {
     await sleep(200);
   }
   console.log('Total to underwrite:',all.length);
+  const inspectionChecks = await loadInspectionChecks(all);
 
   // Underwrite in batches. ADUs/additions are deliberately skipped by uw().
   let done=0, skipped=0, failed=0;
@@ -473,7 +586,7 @@ async function main() {
   for(let i=0;i<all.length;i+=50) {
     const batch=all.slice(i,i+50);
     const rows=batch.map(p=>{
-      const model = uw(p);
+      const model = uw(p, inspectionChecks.get(permitKey(p.permit_number)));
       if (!model) {
         skipped++;
         return null;

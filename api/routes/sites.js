@@ -69,6 +69,11 @@ const SITE_LIST_SELECT = [
   'owner_source',
   'owner_enriched_at',
   'underwritten_at',
+  'external_enriched_at',
+  'external_data_sources',
+  'data_quality',
+  'rentcast_enriched_at',
+  'regrid_enriched_at',
   'raw_permit_data',
 ].join(',');
 const SITE_SEARCH_SELECT = SITE_LIST_SELECT
@@ -483,6 +488,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     permitNumber: rawPermit.permit_number || null,
     permitStatus: rawPermit.permit_status || rawPermit.status || null,
     developmentStatus: rawPermit.development_status || null,
+    inspectionCheck: rawPermit.inspection_check || null,
     workDescription: rawPermit.work_description || rawPermit.project_description || null,
     addressAliases,
     externalEnrichedAt: s.external_enriched_at || null,
@@ -838,11 +844,18 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   ) return null;
 
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
+  const devStatuses = listParam(queryParams.devStatus);
+  const canPushDevStatus = devStatuses.every(status => [
+    'submitted',
+    'plan_check',
+    'city_approved_not_started',
+    'permit_issued',
+    'possibly_started_unknown',
+  ].includes(status));
   const needsPostFilter = Boolean(
     search ||
     queryParams.hood ||
-    queryParams.listing ||
-    queryParams.devStatus ||
+    (queryParams.devStatus && !canPushDevStatus) ||
     queryParams.minPrice ||
     queryParams.maxPrice
   );
@@ -899,6 +912,15 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     if (listings.includes('for_sale')) clauses.push('status.eq.active');
     if (listings.includes('rti')) clauses.push('rti.eq.true');
     if (listings.includes('off_market')) clauses.push('status.eq.off-market');
+    if (clauses.length) query = query.or(clauses.join(','));
+  }
+
+  if (devStatuses.length && canPushDevStatus) {
+    const clauses = [];
+    for (const status of devStatuses) {
+      clauses.push(`raw_permit_data->>development_status.eq.${status}`);
+      if (status === 'city_approved_not_started') clauses.push('rti.eq.true');
+    }
     if (clauses.length) query = query.or(clauses.join(','));
   }
 
@@ -1062,6 +1084,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         rti:          s.rti,
         permitStatus: s.permitStatus,
         developmentStatus: s.developmentStatus,
+        inspectionCheck: s.inspectionCheck,
         permitNumber:  s.permitNumber,
         workDescription: s.workDescription,
         addressAliases: s.addressAliases || [],

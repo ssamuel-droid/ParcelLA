@@ -1177,7 +1177,7 @@ function landValueSourceNote(s) {
     return `Recent land sales comp estimate: ${metricText}, ${count || 'saved'} comp${count===1?'':'s'}, ${match}.`;
   }
   if (s?.landValueSource === 'permit_valuation_fallback') {
-    return 'Permit valuation fallback, not a sale comp. No recent matching land comps were available.';
+    return 'Model placeholder only. No active asking price or recent matching land comps were available.';
   }
   return 'Fallback land basis. No asking price or recent matching land comps were available.';
 }
@@ -1186,8 +1186,25 @@ function landBasisLabel(s) {
   if (!isOffMarketSite(s)) return 'Asking price';
   if (canUseDoorLandBasis(s)) return 'User land basis';
   if (s?.landValueSource === 'recent_sales_comps') return 'Comp land basis';
-  if (s?.landValueSource === 'permit_valuation_fallback') return 'Permit valuation';
+  if (s?.landValueSource === 'permit_valuation_fallback') return 'Land basis';
   return 'Land basis';
+}
+
+function hasReliableLandBasis(s) {
+  if (!isOffMarketSite(s)) return siteAskPrice(s) > 0;
+  return canUseDoorLandBasis(s) || s?.landValueSource === 'recent_sales_comps';
+}
+
+function inspectionStatusBadgeHTML(s) {
+  const check = s?.inspectionCheck;
+  if (developmentStatusKey(s) !== 'city_approved_not_started') return '';
+  if (check?.checked === true && Number(check.count || 0) === 0) {
+    return '<span class="bdg b1">No inspections found</span>';
+  }
+  if (check?.checked === true && Number(check.count || 0) > 0) {
+    return '<span class="bdg b4">Inspections found</span>';
+  }
+  return '<span class="bdg b4">Inspection check needed</span>';
 }
 
 function siteLocationSourceNote(s) {
@@ -1813,10 +1830,12 @@ function renderCards() {
     const ask = siteAskPrice(s);
     const landBasis = costs.land || s.landCost || ask || 0;
     const offMarket = isOffMarketSite(s);
-    const status = siteListingStatus(s);
     const devStatus = developmentStatusLabel(s);
     const priceMain = isForSaleSite(s) ? fmtM(ask) : 'Not for sale';
-    const priceSub = offMarket ? 'land basis ' + fmtM(landBasis) : (ask ? 'asking price / land basis' : 'asking price missing');
+    const reliableLand = hasReliableLandBasis(s);
+    const priceSub = offMarket
+      ? (reliableLand ? 'land basis ' + fmtM(landBasis) : 'land basis unavailable')
+      : (ask ? 'asking price / land basis' : 'asking price missing');
     const watched = isWatched(s.id);
     const displayAddr = gatedDisplayAddress(s);
     const addrNote = siteAddressNote(s);
@@ -1827,7 +1846,7 @@ function renderCards() {
       </div>
       <div class="bdgs">
         ${offMarket?'<span class="bdg b4">Off-market</span>':s.rti?'<span class="bdg b1">RTI</span>':'<span class="bdg b2">For sale</span>'}
-        <span class="bdg b3">${s.type}</span><span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${offMarket?'<span class="bdg b4">' + status + '</span>':''}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
+        <span class="bdg b3">${s.type}</span><span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${!reliableLand?'<span class="bdg b4">Land comp needed</span>':''}${inspectionStatusBadgeHTML(s)}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${pc}">${fmtM(prof)}</div></div>
@@ -2245,6 +2264,7 @@ function renderDetail(s) {
   const offMarket = isOffMarketSite(s);
   const landLabel=landBasisLabel(s);
   const landNote=landValueSourceNote(s);
+  const landDisplay = hasReliableLandBasis(s) ? fmtD(land) : 'Not provided';
   const metrics = currentUserMetrics();
   const vacancyLabel = Math.round(metrics.vacancyPct * 10) / 10;
   const totalSF=(s.units||0)*(s.usf||800);
@@ -2290,7 +2310,7 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">Listing status</div><div class="icv">${listingStatus}</div></div>
       <div class="ic"><div class="icl">Development status</div><div class="icv">${devStatus}</div></div>
       <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${escapeText(siteUnitsText(s))} / ${siteAvgUnitSfText(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${siteUnitSourceNote(s)}</span></div></div>
-      <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${land?fmtD(land):'Not provided'} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
+      <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${landDisplay} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
     <button class="ab as" onclick="toggleWatch(${s.id}, event)">${isWatched(s.id)?'Remove from watchlist':'Save to watchlist'}</button>
