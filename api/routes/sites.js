@@ -197,31 +197,25 @@ function perDoorLandBasis(type, units) {
 }
 
 function isNewHousePermitPlaceholder(site = {}, rawPermit = {}) {
-  const type = site.project_type ?? site.type;
-  if (type !== 'New House') return false;
+  const type = String(site.project_type ?? site.type ?? '').trim().toLowerCase();
+  if (type !== 'new house') return false;
   const source = String(rawPermit.land_value_source || site.landValueSource || '').toLowerCase();
-  const price = Number(site.price || 0);
-  const hasPermitRecord = Boolean(
-    site.permit_source_id ||
-    rawPermit.permit_number ||
-    rawPermit.permit_status ||
-    rawPermit.development_status ||
-    rawPermit.work_description ||
-    rawPermit.project_description
-  );
-  return hasPermitRecord && (
+  const price = numberFromValue(site.price ?? site.askPrice ?? site.landCost) || 0;
+  return (
     source.includes('permit_valuation_fallback') ||
     source.includes('land_comp_needed') ||
     source.includes('hard cost percentage fallback') ||
+    source.includes('asking_price') ||
     (price > 0 && price <= 150000)
   );
 }
 
 function needsLandCompForHouse(site = {}, rawPermit = {}, compLand = null, doorLand = null) {
-  const type = site.project_type ?? site.type;
-  if (type !== 'New House') return false;
+  const type = String(site.project_type ?? site.type ?? '').trim().toLowerCase();
+  if (type !== 'new house') return false;
   if (doorLand?.value || compLand?.value) return false;
-  return isNewHousePermitPlaceholder(site, rawPermit) || (isOffMarketSiteRow(site) && Number(site.price || 0) <= 150000);
+  const price = numberFromValue(site.price ?? site.askPrice ?? site.landCost) || 0;
+  return isNewHousePermitPlaceholder(site, rawPermit) || (isOffMarketSiteRow(site) && price <= 150000);
 }
 
 const DEFAULT_UNIT_MIX = { studio: 0.25, one: 0.50, two: 0.20, three: 0.05 };
