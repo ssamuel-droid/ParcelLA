@@ -196,17 +196,33 @@ function perDoorLandBasis(type, units) {
   };
 }
 
-function needsLandCompForHouse(site = {}, rawPermit = {}, compLand = null, doorLand = null) {
+function isNewHousePermitPlaceholder(site = {}, rawPermit = {}) {
   const type = site.project_type ?? site.type;
-  if (type !== 'New House' || !isOffMarketSiteRow(site)) return false;
-  if (doorLand?.value || compLand?.value) return false;
-  if (externalValueAmount(site.external_value_estimate || site.externalValueEstimate)) return false;
+  if (type !== 'New House') return false;
   const source = String(rawPermit.land_value_source || site.landValueSource || '').toLowerCase();
   const price = Number(site.price || 0);
-  return source.includes('permit_valuation_fallback') ||
+  const hasPermitRecord = Boolean(
+    site.permit_source_id ||
+    rawPermit.permit_number ||
+    rawPermit.permit_status ||
+    rawPermit.development_status ||
+    rawPermit.work_description ||
+    rawPermit.project_description
+  );
+  return hasPermitRecord && (
+    source.includes('permit_valuation_fallback') ||
     source.includes('land_comp_needed') ||
     source.includes('hard cost percentage fallback') ||
-    price <= 150000;
+    (price > 0 && price <= 150000)
+  );
+}
+
+function needsLandCompForHouse(site = {}, rawPermit = {}, compLand = null, doorLand = null) {
+  const type = site.project_type ?? site.type;
+  if (type !== 'New House') return false;
+  if (doorLand?.value || compLand?.value) return false;
+  if (externalValueAmount(site.external_value_estimate || site.externalValueEstimate)) return false;
+  return isNewHousePermitPlaceholder(site, rawPermit) || (isOffMarketSiteRow(site) && Number(site.price || 0) <= 150000);
 }
 
 const DEFAULT_UNIT_MIX = { studio: 0.25, one: 0.50, two: 0.20, three: 0.05 };
@@ -498,7 +514,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const softCosts = s.soft_costs ?? s.softCosts ?? softFallback;
   const carryCost = s.carry_cost ?? s.carryCost ?? carryFallback;
   const fallbackLandCost = Math.max(0, Math.round(preCarryCost - hardCosts - softCosts));
-  const offMarket = /off|not for sale/i.test(String(s.status || ''));
+  const offMarket = /off|not for sale/i.test(String(s.status || '')) || isNewHousePermitPlaceholder(s, rawPermit);
   const doorLand = offMarket ? perDoorLandBasis(type, units) : null;
   const compLand = offMarket ? estimateLandBasisFromComps({
     neighborhood,
@@ -574,11 +590,11 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
 function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const rawPermit = s.raw_permit_data || {};
   const addressAliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
-  const status = s.status || 'active';
-  const offMarket = /off|not for sale/i.test(status);
   const neighborhood = normalizedNeighborhood(s) || 'Neighborhood TBD';
   const lotSf = normalizedLotSf(s);
   const model = modelFromSupabaseSite(s, landCompBenchmarks);
+  const status = model.needsLandComp ? 'off-market' : (s.status || 'active');
+  const offMarket = model.needsLandComp || /off|not for sale/i.test(status);
   const unitMix = unitMixForSite(rawPermit, s, s.project_type ?? s.type);
   const ownerInfo = ownerInfoFromRaw(rawPermit, s);
   const externalSources = Array.isArray(s.external_data_sources) ? s.external_data_sources : [];
@@ -604,7 +620,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     listingStatus: offMarket ? 'Off-market / not for sale' : 'For sale',
     forSale:      !offMarket,
     isComp:       s.is_comp ?? false,
-    price:        s.price ?? model.landCost ?? null,
+    price:        model.needsLandComp ? null : (s.price ?? model.landCost ?? null),
     demo:         s.has_demo ?? false,
     lat:          s.lat,
     lng:          s.lng,
@@ -1244,7 +1260,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         isComp:       s.isComp ?? s.is_comp ?? false,
         lat:          s.lat,
         lng:          s.lng,
-        askPrice:     s.price ?? s.askPrice ?? s._m.price ?? null,
+        askPrice:     (s.needsLandComp || s._m.needsLandComp) ? null : (s.price ?? s.askPrice ?? s._m.price ?? null),
         // Pre-underwritten metrics
         totalCost:    s._m.totalCost,
         hardCosts:    s._m.hardCosts,
@@ -1265,7 +1281,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         irrV:         s._m.leveragedIRR,
         capOnCost:    Math.round(s._m.capRateOnCost * 10000) / 100,
         devSpreadPct: s._m.devSpreadPct,
-        landCost:     s._m.landCost ?? s._m.price ?? s.price ?? s.askPrice ?? null,
+        landCost:     (s.needsLandComp || s._m.needsLandComp) ? null : (s._m.landCost ?? s._m.price ?? s.price ?? s.askPrice ?? null),
         landValueSource: s._m.landValueSource,
         landValueMetric: s._m.landValueMetric,
         landValueMetricValue: s._m.landValueMetricValue,

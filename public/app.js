@@ -1173,12 +1173,13 @@ function siteAskPrice(s) {
 
 function isForSaleSite(s) {
   const status = String(s?.status || s?.listingStatus || '').toLowerCase();
+  if (s?.needsLandComp || s?.landBasisReliable === false || s?.landValueSource === 'land_comp_needed' || s?.landValueSource === 'permit_valuation_fallback') return false;
   return !isOffMarketSite(s) && (status.includes('active') || status.includes('for sale') || siteAskPrice(s) > 0);
 }
 
 function isOffMarketSite(s) {
   const status = String(s?.status || s?.listingStatus || '').toLowerCase();
-  return !!(s?.isComp || s?.offMarket || status.includes('off') || status.includes('not for sale'));
+  return !!(s?.isComp || s?.offMarket || s?.needsLandComp || s?.landBasisReliable === false || status.includes('off') || status.includes('not for sale'));
 }
 
 function listingCategory(s) {
@@ -4165,7 +4166,8 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
 }
 
 function resetFilters() {
-  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-nh','f-d-submitted','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
+  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-d-submitted','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
+  const newHouse=g('f-nh'); if(newHouse)newHouse.checked=false;
   const watch=g('f-watch'); if(watch)watch.checked=false;
   ['f-hood'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-q','f-umin','f-umax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c','mf-hc','mf-rate'].forEach(id=>{const el=g(id);if(el)el.value='';});
