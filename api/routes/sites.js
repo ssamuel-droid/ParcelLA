@@ -221,7 +221,6 @@ function needsLandCompForHouse(site = {}, rawPermit = {}, compLand = null, doorL
   const type = site.project_type ?? site.type;
   if (type !== 'New House') return false;
   if (doorLand?.value || compLand?.value) return false;
-  if (externalValueAmount(site.external_value_estimate || site.externalValueEstimate)) return false;
   return isNewHousePermitPlaceholder(site, rawPermit) || (isOffMarketSiteRow(site) && Number(site.price || 0) <= 150000);
 }
 
