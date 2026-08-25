@@ -196,6 +196,19 @@ function perDoorLandBasis(type, units) {
   };
 }
 
+function needsLandCompForHouse(site = {}, rawPermit = {}, compLand = null, doorLand = null) {
+  const type = site.project_type ?? site.type;
+  if (type !== 'New House' || !isOffMarketSiteRow(site)) return false;
+  if (doorLand?.value || compLand?.value) return false;
+  if (externalValueAmount(site.external_value_estimate || site.externalValueEstimate)) return false;
+  const source = String(rawPermit.land_value_source || site.landValueSource || '').toLowerCase();
+  const price = Number(site.price || 0);
+  return source.includes('permit_valuation_fallback') ||
+    source.includes('land_comp_needed') ||
+    source.includes('hard cost percentage fallback') ||
+    price <= 150000;
+}
+
 const DEFAULT_UNIT_MIX = { studio: 0.25, one: 0.50, two: 0.20, three: 0.05 };
 
 function normalizeUnitMix(mix = {}) {
@@ -497,10 +510,11 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     lat: s.lat,
     lng: s.lng,
   }, landCompBenchmarks) : null;
+  const needsLandComp = needsLandCompForHouse(s, rawPermit, compLand, doorLand);
   const landCost = offMarket
-    ? (doorLand?.value || compLand?.value || price || fallbackLandCost)
+    ? (needsLandComp ? null : (doorLand?.value || compLand?.value || price || fallbackLandCost))
     : (price || fallbackLandCost);
-  const usedDynamicLand = offMarket && !!(doorLand?.value || (compLand?.value && !price));
+  const usedDynamicLand = offMarket && !needsLandComp && !!(doorLand?.value || (compLand?.value && !price));
   const landMeta = doorLand || compLand || {};
   const recastCarry = usedDynamicLand ? Math.round((landCost + hardCosts + softCosts) * interestCarryPct) : carryCost;
   const recastTotalCost = usedDynamicLand ? landCost + hardCosts + softCosts + recastCarry : totalCost;
@@ -509,19 +523,21 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const noi = type === 'New House' ? 0 : (unitMix.source === 'Parsed from permit text'
     ? Math.round(((grossPotentialRent * 0.95) + (units * 600)) * 0.65)
     : (s.noi || 0));
-  const netProfit = usedDynamicLand && exitValue ? exitValue - recastTotalCost : (s.net_profit || 0);
+  const netProfit = needsLandComp ? null : (usedDynamicLand && exitValue ? exitValue - recastTotalCost : (s.net_profit || 0));
   const loanAmount = recastTotalCost * 0.65;
   const equity = recastTotalCost * 0.35;
   const storedIrr = Number(s.irr_v || 0);
-  const recastIrr = type === 'New House' && equity > 500 && exitValue
+  const recastIrr = needsLandComp ? null : (type === 'New House' && equity > 500 && exitValue
     ? Math.min(Math.max(irr([-equity, -loanAmount * 0.065, -loanAmount * 0.065, -loanAmount * 0.065, -loanAmount * 0.065, exitValue - loanAmount]), -50), 100)
-    : storedIrr;
+    : storedIrr);
 
   return {
+    needsLandComp,
+    landBasisReliable: !needsLandComp,
     noi,
     totalCost: recastTotalCost,
     landCost,
-    landValueSource: landMeta.source || rawPermit.land_value_source || (offMarket ? 'permit_valuation_fallback' : 'asking_price'),
+    landValueSource: needsLandComp ? 'land_comp_needed' : (landMeta.source || rawPermit.land_value_source || (offMarket ? 'permit_valuation_fallback' : 'asking_price')),
     landValueMetric: landMeta.metricLabel || rawPermit.land_value_metric || null,
     landValueMetricValue: landMeta.metricValue || rawPermit.land_value_metric_value || null,
     landValueBasisQuantity: landMeta.basisQuantity || rawPermit.land_value_basis_quantity || null,
@@ -952,6 +968,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   ) return null;
 
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
+  const hasExplicitTypeFilter = Boolean(queryParams.types || queryParams.type);
   const devStatuses = listParam(queryParams.devStatus);
   const canPushDevStatus = devStatuses.every(status => [
     'submitted',
@@ -995,6 +1012,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
 
   const types = listParam(queryParams.types || queryParams.type);
   if (types.length) query = query.in('project_type', types);
+  if (!hasExplicitTypeFilter && !search) query = query.neq('project_type', 'New House');
   if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
   if (queryParams.minUnits) query = query.gte('units', Number(queryParams.minUnits));
   if (queryParams.maxUnits) query = query.lte('units', Number(queryParams.maxUnits));
@@ -1197,6 +1215,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         exitValueMetric: s.exitValueMetric ?? s._m.exitValueMetric,
         exitValueMetricValue: s.exitValueMetricValue ?? s._m.exitValueMetricValue,
         exitValueBasisQuantity: s.exitValueBasisQuantity ?? s._m.exitValueBasisQuantity,
+        needsLandComp: s.needsLandComp ?? s._m.needsLandComp ?? false,
+        landBasisReliable: s.landBasisReliable ?? s._m.landBasisReliable ?? true,
         rti:          s.rti,
         permitStatus: s.permitStatus,
         developmentStatus: s.developmentStatus,

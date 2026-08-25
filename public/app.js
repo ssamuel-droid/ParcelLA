@@ -918,7 +918,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-mf" checked> Multifamily</label>
       <label class="cb"><input type="checkbox" id="f-mx" checked> Mixed-use</label>
       <label class="cb"><input type="checkbox" id="f-cn" checked> Condo / TH</label>
-      <label class="cb"><input type="checkbox" id="f-nh" checked> New house</label>
+      <label class="cb"><input type="checkbox" id="f-nh"> New house / permit feed</label>
       <h4>Neighborhood</h4>
       <select id="f-hood" class="sbs">
         ${neighborhoodOptionsHTML()}
@@ -1255,8 +1255,15 @@ function landBasisLabel(s) {
 }
 
 function hasReliableLandBasis(s) {
+  if (s?.needsLandComp || s?.landBasisReliable === false) return false;
   if (!isOffMarketSite(s)) return siteAskPrice(s) > 0;
   return canUseDoorLandBasis(s) || s?.landValueSource === 'recent_sales_comps';
+}
+
+function sortableMetric(s, key) {
+  if (!hasReliableLandBasis(s)) return -Infinity;
+  const v = valuationForSite(s, costModelForSite(s));
+  return Number(v?.[key] || 0);
 }
 
 function inspectionStatusBadgeHTML(s) {
@@ -1633,7 +1640,7 @@ function buildSiteQueryParams(offset = 0) {
   if (g('f-mx')?.checked) types.push('Mixed-Use');
   if (g('f-cn')?.checked) types.push('Condo/TH');
   if (g('f-nh')?.checked) types.push('New House');
-  if (types.length && types.length < 4) qs.set('types', types.join(','));
+  if (types.length) qs.set('types', types.join(','));
 
   const listings = [];
   if (g('f-fs')?.checked) listings.push('for_sale');
@@ -1798,13 +1805,13 @@ function applyFilters() {
   });
 
   filtered.sort((a,b) => {
-    if (srt==='irr')     return (valuationForSite(b, costModelForSite(b)).leveragedIRR||0)-(valuationForSite(a, costModelForSite(a)).leveragedIRR||0);
-    if (srt==='spread')  return (valuationForSite(b, costModelForSite(b)).devSpreadPct||0)-(valuationForSite(a, costModelForSite(a)).devSpreadPct||0);
-    if (srt==='capoc')   return (valuationForSite(b, costModelForSite(b)).capOnCost||0)-(valuationForSite(a, costModelForSite(a)).capOnCost||0);
+    if (srt==='irr')     return sortableMetric(b, 'leveragedIRR')-sortableMetric(a, 'leveragedIRR');
+    if (srt==='spread')  return sortableMetric(b, 'devSpreadPct')-sortableMetric(a, 'devSpreadPct');
+    if (srt==='capoc')   return sortableMetric(b, 'capOnCost')-sortableMetric(a, 'capOnCost');
     if (srt==='price-a') return (siteAskPrice(a)||Infinity)-(siteAskPrice(b)||Infinity);
     if (srt==='price-d') return (siteAskPrice(b)||0)-(siteAskPrice(a)||0);
     if (srt==='units')   return b.units-a.units;
-    return (valuationForSite(b, costModelForSite(b)).netProfit||0)-(valuationForSite(a, costModelForSite(a)).netProfit||0);
+    return sortableMetric(b, 'netProfit')-sortableMetric(a, 'netProfit');
   });
 
   const hcpsf = currentHardCostOverride();
@@ -1881,7 +1888,7 @@ function renderCards() {
   const el = g('list');
   if (!filtered.length) { el.innerHTML = '<div class="empty">No sites match your filters</div>' + loadMoreHTML(); return; }
   if (activeView === 'map') { renderMapView(); return; }
-  const maxP = Math.max(...filtered.map(s => valuationForSite(s, costModelForSite(s)).netProfit || 0), 1);
+  const maxP = Math.max(...filtered.map(s => hasReliableLandBasis(s) ? (valuationForSite(s, costModelForSite(s)).netProfit || 0) : 0), 1);
   el.innerHTML = filtered.map(s => {
     const costs = costModelForSite(s);
     const valuation = valuationForSite(s, costs);
@@ -1897,6 +1904,8 @@ function renderCards() {
     const devStatus = developmentStatusLabel(s);
     const priceMain = isForSaleSite(s) ? fmtM(ask) : 'Not for sale';
     const reliableLand = hasReliableLandBasis(s);
+    const needsLand = valuation.needsLandComp || !reliableLand;
+    const barColor = needsLand ? '#b98b2f' : pc;
     const priceSub = offMarket
       ? (reliableLand ? 'land basis ' + fmtM(landBasis) : 'land basis unavailable')
       : (ask ? 'asking price / land basis' : 'asking price missing');
@@ -1913,15 +1922,15 @@ function renderCards() {
         <span class="bdg b3">${s.type}</span><span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${!reliableLand?'<span class="bdg b4">Land comp needed</span>':''}${inspectionStatusBadgeHTML(s)}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
-        <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${pc}">${fmtM(prof)}</div></div>
-        <div class="kp"><div class="kpl">IRR</div><div class="kpv" style="color:${irrC(irr)}">${Math.round(irr*10)/10}%</div></div>
-        <div class="kp"><div class="kpl">Dev spread</div><div class="kpv">${spd}%</div></div>
-        <div class="kp"><div class="kpl">Cap on cost</div><div class="kpv">${valuation.capOnCost||0}%</div></div>
+        <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${barColor}">${needsLand?'Needs land':fmtM(prof)}</div></div>
+        <div class="kp"><div class="kpl">IRR</div><div class="kpv" style="color:${needsLand?'#b98b2f':irrC(irr)}">${needsLand?'n/a':Math.round(irr*10)/10 + '%'}</div></div>
+        <div class="kp"><div class="kpl">Dev spread</div><div class="kpv">${needsLand?'n/a':spd + '%'}</div></div>
+        <div class="kp"><div class="kpl">Cap on cost</div><div class="kpv">${needsLand?'n/a':(valuation.capOnCost||0) + '%'}</div></div>
       </div>
       <div class="pb">
         <span class="pbl">Exit ${fmtM(valuation.exitValue)}</span>
-        <div class="pbt"><div class="pbf" style="width:${pp}%;background:${pc}"></div></div>
-        <span class="pbv" style="color:${pc}">${fmtM(prof)}</span>
+        <div class="pbt"><div class="pbf" style="width:${needsLand?4:pp}%;background:${barColor}"></div></div>
+        <span class="pbv" style="color:${barColor}">${needsLand?'Needs land':fmtM(prof)}</span>
       </div>
     </div>`;
   }).join('') + loadMoreHTML();
@@ -2279,6 +2288,7 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
 
 function valuationForSite(s, costs = costModelForSite(s), income = incomeStatementForSite(s, costs)) {
   const metrics = currentUserMetrics();
+  const needsLandComp = isOffMarketSite(s) && !hasReliableLandBasis(s);
   const entryCap = Number(s.entryCap) || FRONTEND_CAP_RATES[siteNeighborhood(s)] || 0.0525;
   const exitCap = entryCap + ((Number(metrics.exitCapSpreadBps) || 0) / 10000);
   const noi = Math.round(income.noi || 0);
@@ -2286,7 +2296,7 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
   const year5Noi = Math.round(noi * Math.pow(1 + rentGrowth, 4));
   const houseExit = houseExitValueForSite(s);
   const exitValue = houseExit?.value || (exitCap ? Math.round(year5Noi / exitCap) : 0);
-  const netProfit = exitValue - costs.totalCost;
+  const netProfit = needsLandComp ? null : exitValue - costs.totalCost;
   const loanAmount = Math.round(costs.totalCost * ((Number(metrics.loanToCostPct) || 0) / 100));
   const equity = Math.max(0, costs.totalCost - loanAmount);
   const debtService = Math.round(income.debtService ?? loanAmount * ((Number(metrics.interestRatePct) || 0) / 100));
@@ -2297,8 +2307,9 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
     cashflows.push(s.type === 'New House' ? -debtService : yearNoi - debtService);
   }
   cashflows.push((s.type === 'New House' ? -debtService : year5Noi - debtService) + Math.max(0, exitValue - loanAmount));
-  const leveragedIRR = equity > 0 ? calcIRR(cashflows) * 100 : 0;
+  const leveragedIRR = needsLandComp ? null : (equity > 0 ? calcIRR(cashflows) * 100 : 0);
   return {
+    needsLandComp,
     entryCap,
     exitCap,
     noi,
