@@ -1146,7 +1146,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     const page = matches.slice(requestedOffset, requestedOffset + requestedLimit);
     const hasMoreRawRows = rows.length === dbLimit;
     const total = hasMoreRawRows
-      ? Math.max(matches.length, requestedOffset + page.length + requestedLimit)
+      ? (matches.length ? Math.max(matches.length, requestedOffset + page.length + requestedLimit) : 0)
       : matches.length;
     return { sites: page, total };
   }
