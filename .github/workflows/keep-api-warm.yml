@@ -8,10 +8,10 @@ on:
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 4
     steps:
       - name: Warm health endpoint
-        run: curl --fail --silent --show-error --max-time 20 https://parcella-api-production.up.railway.app/api/health
+        run: curl --fail --silent --show-error --max-time 45 https://parcella-api-production.up.railway.app/api/health
 
       - name: Warm first sites page
-        run: curl --fail --silent --show-error --max-time 60 "https://parcella-api-production.up.railway.app/api/sites?sort=profit&limit=50&offset=0" > /dev/null
+        run: curl --fail --silent --show-error --max-time 120 "https://parcella-api-production.up.railway.app/api/sites?sort=profit&limit=50&offset=0" > /dev/null

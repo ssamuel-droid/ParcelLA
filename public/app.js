@@ -8,8 +8,8 @@ const GMAPS_KEY = 'AIzaSyAC7R0Wlh41L71vexWCYqdn3WAjx8PJeQ0';
 // LA City Open Data — fetched client-side (browser not blocked like Railway)
 const SOCRATA_TOKEN = 'Mj7n61b8beE9ZbxZPhNMSUrh';
 const SOCRATA_BASE  = 'https://data.lacity.org/resource';
-const SITE_FIRST_PAGE_TIMEOUT_MS = 15000;
-const SITE_RETRY_TIMEOUT_MS = 30000;
+const SITE_FIRST_PAGE_TIMEOUT_MS = 45000;
+const SITE_RETRY_TIMEOUT_MS = 120000;
 
 let authClient = null;
 let authSession = null;
@@ -71,7 +71,7 @@ async function fetchJSONWithTimeout(url, options = {}, timeoutMs = 60000) {
     return data;
   } catch (e) {
     if (e.name === 'AbortError') {
-      throw new Error('The data server took too long to respond. It may be waking up. Retry once, then narrow the search with a street number if it still times out.');
+      throw new Error('The data server took too long to respond. It may be waking up. Leave this open or click Retry; use a street number for very broad searches if it still times out.');
     }
     throw e;
   } finally {
@@ -1672,7 +1672,7 @@ async function fetchSitePage(qs) {
   } catch (e) {
     if (!String(e.message || '').includes('too long')) throw e;
     const list = g('list');
-    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...<br><small style="margin-top:8px;color:#768295">This can take up to 45 seconds after the server sleeps.</small></div>';
+    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...<br><small style="margin-top:8px;color:#768295">This can take up to 2 minutes after the server sleeps.</small></div>';
     g('albl').textContent = 'Retrying API';
     await wait(800);
     data = await fetchJSONWithTimeout(url, {}, SITE_RETRY_TIMEOUT_MS);
@@ -1695,7 +1695,7 @@ async function loadSites(autoRetry = 0) {
     if (list && list.textContent.includes('Loading first 50')) {
       const qs = currentSiteQuery || buildSiteQueryParams(0).toString();
       const apiUrl = (API || '') + '/api/sites?' + qs;
-      list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...<br><small style="display:block;margin-top:8px;color:#768295">Keeping the request open so the first page can finish.</small><br><button class="gb" style="margin-top:10px" onclick="loadSites()">Retry now</button><br><a style="display:block;margin-top:8px;font-size:11px;color:#667790" href="' + escapeText(apiUrl) + '" target="_blank" rel="noopener">Open API test</a></div>';
+      list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...<br><small style="display:block;margin-top:8px;color:#768295">Keeping the request open for up to 2 minutes so the first page can finish.</small><br><button class="gb" style="margin-top:10px" onclick="loadSites()">Retry now</button><br><a style="display:block;margin-top:8px;font-size:11px;color:#667790" href="' + escapeText(apiUrl) + '" target="_blank" rel="noopener">Open API test</a></div>';
       g('albl').textContent = 'API waking up';
     }
   }, 7000);
