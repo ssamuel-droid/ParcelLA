@@ -218,6 +218,60 @@ function needsLandCompForHouse(site = {}, rawPermit = {}, compLand = null, doorL
   return isNewHousePermitPlaceholder(site, rawPermit) || (isOffMarketSiteRow(site) && price <= 150000);
 }
 
+function isNewHouseSite(site = {}) {
+  return String(site.project_type ?? site.type ?? '').trim().toLowerCase() === 'new house';
+}
+
+function hasUsableNewHousePlanData(site = {}, model = site._m || {}) {
+  if (!isNewHouseSite(site)) return true;
+  const rawPermit = site.raw_permit_data || {};
+  const buildingSf = numberFromValue(
+    rawPermit.building_sf ??
+    site.buildingSf ??
+    site.building_sf ??
+    model.buildingSf
+  ) || 0;
+  const buildingSfSource = String(
+    rawPermit.building_sf_source ||
+    site.buildingSfSource ||
+    model.buildingSfSource ||
+    ''
+  ).toLowerCase();
+  const buildingSfParsed = rawPermit.building_sf_parsed ?? site.buildingSfParsed ?? model.buildingSfParsed;
+  const hasRealBuildingSize = buildingSf > 0
+    && buildingSf !== 800
+    && (
+      buildingSfParsed === true ||
+      buildingSfSource.includes('permit work description') ||
+      buildingSfSource.includes('permit source field')
+    );
+
+  const landSource = String(
+    model.landValueSource ||
+    rawPermit.land_value_source ||
+    site.landValueSource ||
+    ''
+  ).toLowerCase();
+  const landCost = numberFromValue(
+    model.landCost ??
+    model.price ??
+    site.price ??
+    site.askPrice ??
+    site.landCost
+  ) || 0;
+  const landIsPlaceholder = landSource.includes('land_comp_needed')
+    || landSource.includes('permit_valuation_fallback')
+    || landSource.includes('hard cost percentage fallback')
+    || (landCost > 0 && landCost <= 150000);
+
+  return hasRealBuildingSize && landCost > 150000 && !landIsPlaceholder;
+}
+
+function sitePassesDataQualityGate(site = {}, queryParams = {}) {
+  if (String(queryParams.includePermitLeads || '').toLowerCase() === 'true') return true;
+  return hasUsableNewHousePlanData(site, site._m || {});
+}
+
 const DEFAULT_UNIT_MIX = { studio: 0.25, one: 0.50, two: 0.20, three: 0.05 };
 
 function normalizeUnitMix(mix = {}) {
@@ -937,6 +991,7 @@ function developmentStatusKey(s) {
 
 function sitePassesQueryFilters(s, queryParams) {
   const m = s._m || {};
+  if (!sitePassesDataQualityGate(s, queryParams)) return false;
   if (!siteMatchesSearch(s, queryParams.q || queryParams.search)) return false;
 
   const typeList = listParam(queryParams.types || queryParams.type);
@@ -978,6 +1033,10 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
 
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
   const hasExplicitTypeFilter = Boolean(queryParams.types || queryParams.type);
+  const types = listParam(queryParams.types || queryParams.type);
+  const excludesNewHouseInMixedView = types.includes('New House') && types.length > 1 && !search;
+  const dbTypes = excludesNewHouseInMixedView ? types.filter(type => type !== 'New House') : types;
+  const mayReturnNewHouse = (types.includes('New House') && !excludesNewHouseInMixedView) || (!types.length && search);
   const devStatuses = listParam(queryParams.devStatus);
   const canPushDevStatus = devStatuses.every(status => [
     'submitted',
@@ -988,6 +1047,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   ].includes(status));
   const needsPostFilter = Boolean(
     search ||
+    mayReturnNewHouse ||
     queryParams.hood ||
     (queryParams.devStatus && !canPushDevStatus) ||
     queryParams.minPrice ||
@@ -1019,8 +1079,8 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     .in('status', ['active', 'off-market'])
     .not('net_profit', 'is', null);
 
-  const types = listParam(queryParams.types || queryParams.type);
-  if (types.length) query = query.in('project_type', types);
+  if (dbTypes.length) query = query.in('project_type', dbTypes);
+  if (types.length === 1 && types[0] === 'New House') query = query.gt('price', 150000);
   if (!hasExplicitTypeFilter && !search) query = query.neq('project_type', 'New House');
   if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
   if (queryParams.minUnits) query = query.gte('units', Number(queryParams.minUnits));
@@ -1155,6 +1215,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     // Filter
     let filtered = usedFastPage ? modelled : modelled.filter(s => {
       const m = s._m;
+      if (!sitePassesDataQualityGate(s, req.query)) return false;
       if (!siteMatchesSearch(s, req.query.q || req.query.search)) return false;
       const typeList = listParam(req.query.types || type);
       if (typeList.length && !typeList.includes(s.type)) return false;

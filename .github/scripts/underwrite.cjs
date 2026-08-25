@@ -622,6 +622,9 @@ function uw(p, inspectionCheck = null) {
   const doorLand = ['Multifamily','Mixed-Use'].includes(t)
     ? u * DEFAULT_MARKET_LAND_PER_DOOR
     : 0;
+  if (t === 'New House' && (!buildingSize.parsed || !compLand?.value)) {
+    return null;
+  }
   const land = doorLand || compLand?.value || fallbackLand;
   const pre = land+hard+soft;
   const loan = pre*0.65;
