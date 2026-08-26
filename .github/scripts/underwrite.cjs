@@ -352,6 +352,8 @@ function textAreaMatches(values, { lotOnly = false } = {}) {
 
 function buildingSizeFromPermit(p, units, type) {
   const rawSf = firstPositiveNumber(
+    p.floor_area_l_a_building_code_definition,
+    p.floor_area_l_a_zoning_code_definition,
     p.floor_area,
     p.floorarea,
     p.building_area,
@@ -366,7 +368,7 @@ function buildingSizeFromPermit(p, units, type) {
     p.gross_building_area,
     p.residential_floor_area
   );
-  const textMatches = textAreaMatches([p.work_description, p.project_description, p.description]);
+  const textMatches = textAreaMatches([permitWorkDescription(p), p.project_description, p.description]);
   const textSf = textMatches.length ? Math.max(...textMatches.map(m => m.value)) : 0;
   const valuationSf = type === 'New House' && Number(p.valuation || 0) > 0
     ? Math.round(Number(p.valuation) / (HC['New House'] || 275))
@@ -407,9 +409,94 @@ function buildingSizeFromPermit(p, units, type) {
   };
 }
 
+function permitWorkDescription(p = {}) {
+  const text = firstText(
+    p.work_description,
+    p.work_desc,
+    p.workdescription,
+    p.project_description,
+    p.description,
+    p.use_desc
+  );
+  return text ? String(text).replace(/\s+/g, ' ').trim() : null;
+}
+
+function usefulPermitWorkDescription(p = {}) {
+  const text = permitWorkDescription(p);
+  if (!text || text.length < 12) return null;
+  if (/^(?:new house|single family|sfd|residential)$/i.test(text)) return null;
+  return text;
+}
+
+function storyCountFromPermit(p = {}) {
+  const direct = firstPositiveNumber(p.of_stories, p.stories, p.number_of_stories, p.story_count);
+  if (direct > 0) return direct;
+  const text = permitWorkDescription(p) || '';
+  const numeric = text.match(/\b(\d+(?:\.\d+)?)\s*[- ]?\s*stor(?:y|ies)\b/i);
+  if (numeric) return numberFromValue(numeric[1]);
+  const words = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+  const word = text.match(/\b(one|two|three|four|five)\s*[- ]?\s*stor(?:y|ies)\b/i);
+  return word ? words[word[1].toLowerCase()] : 0;
+}
+
+function contractorInfoForPermit(p = {}) {
+  const contractorName = firstText(
+    p.contractor_name,
+    p.contractors_business_name,
+    p.contractor_business_name,
+    p.contractor
+  );
+  const applicantName = firstText(
+    p.applicant_name,
+    p.applicantName,
+    p.applicant,
+    p.contact_name,
+    [p.applicant_first_name, p.applicant_last_name].filter(Boolean).join(' ')
+  );
+  return {
+    contractor_name: contractorName,
+    contractor_address: firstText(p.contractor_address),
+    contractor_city: firstText(p.contractor_city),
+    contractor_state: firstText(p.contractor_state),
+    applicant_name: applicantName,
+    applicant_business_name: firstText(p.applicant_business_name),
+  };
+}
+
+function hasRealNewHousePermitDetail(p = {}, units = 0, buildingSize = {}) {
+  const work = usefulPermitWorkDescription(p);
+  const stories = storyCountFromPermit(p);
+  const permitValuation = numberFromValue(p.valuation) || 0;
+  const rawUnits = firstPositiveNumber(p.of_residential_dwelling_units, p.number_of_units, p.du_changed, p.units);
+  const hasUnitCount = rawUnits > 0 || /\b(?:single[- ]family|sfd|one[- ]family|1\s*(?:dwelling|unit))\b/i.test(work || '');
+  return {
+    ok: Boolean(
+      buildingSize.parsed &&
+      buildingSize.source !== 'Model assumption' &&
+      buildingSize.source !== 'Permit valuation-derived estimate' &&
+      work &&
+      permitValuation > 0 &&
+      hasUnitCount &&
+      stories > 0
+    ),
+    work,
+    stories,
+    permitValuation,
+    rawUnits,
+    hasUnitCount,
+    missing: [
+      buildingSize.parsed ? '' : 'real floor area',
+      work ? '' : 'work description',
+      permitValuation > 0 ? '' : 'permit valuation',
+      hasUnitCount ? '' : 'unit count',
+      stories > 0 ? '' : 'stories',
+    ].filter(Boolean),
+  };
+}
+
 function lotSizeFromPermit(p) {
   const rawLot = firstPositiveNumber(p.lot_size, p.lot_area, p.lot_sf, p.parcel_area, p.site_area);
-  const textMatches = textAreaMatches([p.work_description, p.project_description, p.description], { lotOnly: true });
+  const textMatches = textAreaMatches([permitWorkDescription(p), p.project_description, p.description], { lotOnly: true });
   const textLot = textMatches.length ? Math.max(...textMatches.map(m => m.value)) : 0;
   const lot = rawLot || textLot;
   if (lot < 1000 || lot > 2000000) return { lotSf: null, source: null };
@@ -476,7 +563,7 @@ function unitMixForPermit(p, type) {
   if (type === 'New House') {
     return { mix: { s: 0, o: 0, t: 0, th: 1 }, counts: null, parsedTotal: 0, source: 'New house assumption' };
   }
-  const parsed = parseUnitMixFromText(p.work_description, p.project_description, p.use_desc, p.permit_type, p.permit_subtype);
+  const parsed = parseUnitMixFromText(permitWorkDescription(p), p.project_description, p.use_desc, p.permit_type, p.permit_subtype);
   if (parsed) return { ...parsed, source: 'Parsed from permit text' };
   return { mix: { ...DEFAULT_UNIT_MIX }, counts: null, parsedTotal: 0, source: 'Default market mix' };
 }
@@ -518,7 +605,7 @@ function ownerInfoForPermit(p = {}) {
 
 function addressAliasesForPermit(p) {
   const addr = String(p.address || '').toUpperCase();
-  const desc = String(p.work_description || '').toUpperCase();
+  const desc = String(permitWorkDescription(p) || '').toUpperCase();
   if (addr === '6091 W PICO BLVD' && desc.includes('138 UNITS') && desc.includes('110,620')) {
     return [
       '6075 W PICO BLVD',
@@ -583,16 +670,17 @@ function houseResalePsf(hood) {
 
 function uw(p, inspectionCheck = null) {
   const h = hood(p.lat, p.lng, p.address);
+  const workDescription = permitWorkDescription(p);
   // Get actual unit count from multiple sources
-  const rawUnits = parseInt(p['of_residential_dwelling_units'] || p['number_of_units'] || p.du_changed || '0') || unitsFromText(p.work_description);
+  const rawUnits = parseInt(p['of_residential_dwelling_units'] || p['number_of_units'] || p.du_changed || '0') || unitsFromText(workDescription);
   const actualUnits = rawUnits > 0 ? rawUnits : (p.units > 0 ? p.units : 0);
   // Skip ADUs and additions — not development opportunities
   const subtype = (p.permit_subtype || '').toLowerCase();
   if (subtype.includes('adu') || subtype.includes('accessory') || subtype.includes('addition')) return null;
   if (/standard plan way/i.test(String(p.address || ''))) return null;
-  if (p.adu_changed || p.junior_adu || excludedProject(p.permit_subtype, p.use_desc, p.work_description)) return null;
+  if (p.adu_changed || p.junior_adu || excludedProject(p.permit_subtype, p.use_desc, workDescription)) return null;
 
-  const t = ptype(p.permit_type, p.permit_subtype, actualUnits, p.work_description);
+  const t = ptype(p.permit_type, p.permit_subtype, actualUnits, workDescription);
   if (!t) return null;
   const devStatus = developmentStatus(p.status, p.is_rti, inspectionCheck);
   // Estimate units from valuation if not available
@@ -605,6 +693,7 @@ function uw(p, inspectionCheck = null) {
   const unitMix = unitMixForPermit(p, t);
   const ownerInfo = ownerInfoForPermit(p);
   const buildingSize = buildingSizeFromPermit(p, u, t);
+  const housePermitDetail = hasRealNewHousePermitDetail(p, u, buildingSize);
   const lotSize = lotSizeFromPermit(p);
   const blend = R.s*unitMix.mix.s+R.o*unitMix.mix.o+R.t*unitMix.mix.t+R.th*unitMix.mix.th;
   const grossRent = blend*12*u;
@@ -625,12 +714,7 @@ function uw(p, inspectionCheck = null) {
   const hasPermitValuationEstimate = t === 'New House'
     && buildingSize.source !== 'Permit valuation-derived estimate'
     && Number(p.valuation || 0) > 0;
-  if (t === 'New House' && (
-    buildingSize.source === 'Model assumption' ||
-    buildingSize.source === 'Permit valuation-derived estimate'
-  )) {
-    return null;
-  }
+  if (t === 'New House' && !housePermitDetail.ok) return null;
   if (t === 'New House' && !compLand?.value && !hasPermitValuationEstimate) {
     return null;
   }
@@ -657,7 +741,20 @@ function uw(p, inspectionCheck = null) {
       permit_status:p.status||null,
       development_status:devStatus,
       permit_number:p.permit_number||null,
-      work_description:p.work_description||null,
+      work_description:workDescription||null,
+      project_detail_status:'available',
+      project_detail_fields:{
+        has_floor_area:true,
+        has_work_description:true,
+        has_valuation:true,
+        has_units:true,
+        has_stories:true,
+      },
+      permit_units:rawUnits || actualUnits || (housePermitDetail.hasUnitCount ? 1 : null),
+      stories:housePermitDetail.stories || null,
+      floor_area_l_a_building_code_definition:numberFromValue(p.floor_area_l_a_building_code_definition) || null,
+      floor_area_l_a_zoning_code_definition:numberFromValue(p.floor_area_l_a_zoning_code_definition) || null,
+      ...contractorInfoForPermit(p),
       address_aliases:addressAliasesForPermit(p),
       unit_mix:unitMix.mix,
       unit_mix_counts:unitMix.counts,
@@ -711,7 +808,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>project_description,raw_data->>description,raw_data->>floor_area,raw_data->>floorarea,raw_data->>building_area,raw_data->>building_sf,raw_data->>total_floor_area,raw_data->>new_floor_area,raw_data->>proposed_floor_area,raw_data->>project_floor_area,raw_data->>square_footage,raw_data->>sqft,raw_data->>gross_floor_area,raw_data->>gross_building_area,raw_data->>residential_floor_area,raw_data->>lot_size,raw_data->>lot_area,raw_data->>lot_sf,raw_data->>parcel_area,raw_data->>site_area,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>project_description,raw_data->>description,raw_data->>work_desc,raw_data->>workdescription,raw_data->>floor_area_l_a_building_code_definition,raw_data->>floor_area_l_a_zoning_code_definition,raw_data->>floor_area,raw_data->>floorarea,raw_data->>building_area,raw_data->>building_sf,raw_data->>total_floor_area,raw_data->>new_floor_area,raw_data->>proposed_floor_area,raw_data->>project_floor_area,raw_data->>square_footage,raw_data->>sqft,raw_data->>gross_floor_area,raw_data->>gross_building_area,raw_data->>residential_floor_area,raw_data->>of_stories,raw_data->>stories,raw_data->>number_of_stories,raw_data->>story_count,raw_data->>lot_size,raw_data->>lot_area,raw_data->>lot_sf,raw_data->>parcel_area,raw_data->>site_area,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>applicant_first_name,raw_data->>applicant_last_name,raw_data->>applicant_business_name,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>contractors_business_name,raw_data->>contractor_business_name,raw_data->>contractor_address,raw_data->>contractor_city,raw_data->>contractor_state,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;

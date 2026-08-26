@@ -247,7 +247,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     const generated = text(p.generatedAt) || new Date().toISOString().slice(0, 10);
     const unitsValue = num(site.units, 0);
     const avgUnitSfValue = num(site.avgUnitSf || site.usf, 800);
-    const totalSfValue = money(costs.totalSF || unitsValue * avgUnitSfValue);
+    const totalSfValue = money(site.buildingSf || costs.totalSF || unitsValue * avgUnitSfValue);
     const landValue = money(costs.land || site.landBasis || site.askPrice || 0);
     const hardCostValue = money(costs.hardCosts || 0);
     const softCostValue = money(costs.softCosts || 0);
@@ -301,6 +301,23 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     writeRow(ownerWs, ['Owner', owner.ownerName]);
     writeRow(ownerWs, ['Date sold', owner.lastSaleDate]);
     writeRow(ownerWs, ['Sale price', cell(owner.lastSaleAmount, FMT.money)]);
+
+    const permitWs = wb.addWorksheet('Permit Details');
+    setupSheet(permitWs, [28, 72]);
+    writeRow(permitWs, ['Permit Details', siteName], 'title');
+    writeRow(permitWs, ['Field', 'Value'], 'header');
+    writeRow(permitWs, ['Permit number', text(site.permitNumber)]);
+    writeRow(permitWs, ['Development status', text(site.developmentStatus)]);
+    writeRow(permitWs, ['Permit status', text(site.permitStatus)]);
+    writeRow(permitWs, ['Project type', text(site.type)]);
+    writeRow(permitWs, ['Units / houses', cell(unitsValue, FMT.whole)]);
+    writeRow(permitWs, ['Stories', text(site.stories)]);
+    writeRow(permitWs, ['Total building SF', cell(totalSfValue, FMT.whole)]);
+    writeRow(permitWs, ['Building SF source', text(site.buildingSfSource)]);
+    writeRow(permitWs, ['Permit valuation', cell(money(site.permitValuation), FMT.money)]);
+    writeRow(permitWs, ['Work description', text(site.workDescription)]);
+    writeRow(permitWs, ['Contractor', text([site.contractorName, site.contractorAddress].filter(Boolean).join(' - '))]);
+    writeRow(permitWs, ['Applicant', text([site.applicantName, site.applicantBusinessName].filter(Boolean).join(' - '))]);
 
     const rentWs = wb.addWorksheet('Rent Roll');
     setupSheet(rentWs, [22, 12, 16, 16, 16, 18]);

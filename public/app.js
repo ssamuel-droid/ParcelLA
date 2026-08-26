@@ -530,6 +530,7 @@ const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
 let siteLoadRunId = 0;
 let sitePageTotal = 0, sitePageLimit = 50, currentSiteQuery = '';
+let siteNotice = null;
 let authBooted = false, authMessage = '';
 const g = id => document.getElementById(id);
 const LA_MAP_VIEW = { centerLat: 34.0522, centerLng: -118.2851, zoom: 10, width: 960, height: 620 };
@@ -1708,6 +1709,7 @@ async function fetchSitePage(qs) {
   return {
     results: data.results || [],
     total: Number.isFinite(Number(data.total)) ? Number(data.total) : (data.results || []).length,
+    notice: data.notice || null,
     access: data.access || null,
   };
 }
@@ -1738,6 +1740,7 @@ async function loadSites(autoRetry = 0) {
     }
     allSites = data.results;
     sitePageTotal = data.total;
+    siteNotice = data.notice || null;
     refreshZoneOptions();
     updateHardCostOverrideUI();
     console.log('[ParceLLA] Loaded first page', allSites.length, 'of', sitePageTotal, 'sites in', Date.now() - startedAt, 'ms');
@@ -1770,6 +1773,7 @@ async function loadMoreSites() {
     const seen = new Set(allSites.map(s => String(s.id)));
     allSites = allSites.concat(data.results.filter(s => !seen.has(String(s.id))));
     sitePageTotal = data.total;
+    siteNotice = data.notice || siteNotice;
     refreshZoneOptions();
     applyFilters();
   } catch (e) {
@@ -1934,7 +1938,11 @@ function activeFilterSummaryHTML() {
 }
 
 function emptyResultsHTML() {
+  const notice = siteNotice?.message
+    ? '<small style="display:block;margin:8px auto 12px;max-width:580px;color:#b98b2f">' + escapeText(siteNotice.message) + '</small>'
+    : '';
   return '<div class="empty"><b>No sites match your filters</b>' +
+    notice +
     activeFilterSummaryHTML() +
     '<button class="gb" onclick="resetFilters()">Reset filters</button></div>' + loadMoreHTML();
 }
@@ -2402,7 +2410,7 @@ function renderDetail(s) {
   const landDisplay = hasReliableLandBasis(s) ? fmtD(land) : 'Not provided';
   const metrics = currentUserMetrics();
   const vacancyLabel = Math.round(metrics.vacancyPct * 10) / 10;
-  const totalSF=(s.units||0)*(s.usf||800);
+  const totalSF=siteBuildingSf(s)||((s.units||0)*(s.usf||800));
   const hardCostOverride=currentHardCostOverride();
   const hardCosts=costs.hardCosts;
   const softCosts=costs.softCosts;
@@ -2415,6 +2423,14 @@ function renderDetail(s) {
   const hardCostRead = hardPerUnit >= 400000
     ? 'High hard cost per unit is being driven by unit size/count. Compare hard cost per SF first; per-unit cost is only reliable against similar unit sizes.'
     : 'Hard cost per SF is the primary construction benchmark. Per-unit cost is a secondary check and rises quickly for larger units.';
+  const contractorLine = [s.contractorName, [s.contractorAddress, s.contractorCity, s.contractorState].filter(Boolean).join(', ')].filter(Boolean).join(' - ');
+  const applicantLine = [s.applicantName, s.applicantBusinessName].filter(Boolean).join(' - ');
+  const projectDetailRows = [
+    s.workDescription ? `<tr><td>Work description</td><td>${escapeText(s.workDescription)}</td></tr>` : '',
+    s.stories ? `<tr><td>Stories</td><td>${escapeText(String(s.stories))}</td></tr>` : '',
+    contractorLine ? `<tr><td>Contractor</td><td>${escapeText(contractorLine)}</td></tr>` : '',
+    applicantLine ? `<tr><td>Applicant</td><td>${escapeText(applicantLine)}</td></tr>` : '',
+  ].filter(Boolean).join('');
   const bars=[
     [land,'#0f1f3d','Land'+(offMarket?' (imputed)':'')],
     [hardCosts,'#378add','Hard costs'],
@@ -2470,6 +2486,7 @@ function renderDetail(s) {
       <tr><td>Construction plan</td><td>${costs.planLabel}</td></tr>
       <tr><td>Total building SF</td><td>${totalSF.toLocaleString()} SF</td></tr>
       <tr><td>Permit valuation</td><td>${s.permitValuation ? fmtD(s.permitValuation) : 'Not provided'}</td></tr>
+      ${projectDetailRows}
       <tr><td>Hard construction</td><td>${fmtD(hardCosts)}</td></tr>
       <tr><td>Hard cost / SF</td><td>${fmtD(hardPerSf)}/SF${hardCostOverride?' <span style="color:#b98b2f;font-size:9px">custom input</span>':''}</td></tr>
       <tr><td>Hard cost / unit</td><td>${fmtD(hardPerUnit)}/unit</td></tr>
@@ -3588,6 +3605,16 @@ async function exportExcel(id) {
       listingStatus: siteListingStatus(s),
       developmentStatus: developmentStatusLabel(s),
       permitStatus: s.permitStatus || '',
+      permitNumber: s.permitNumber || '',
+      permitValuation: s.permitValuation || 0,
+      workDescription: s.workDescription || '',
+      stories: s.stories || '',
+      buildingSf: siteBuildingSf(s),
+      buildingSfSource: s.buildingSfSource || '',
+      contractorName: s.contractorName || '',
+      contractorAddress: [s.contractorAddress, s.contractorCity, s.contractorState].filter(Boolean).join(', '),
+      applicantName: s.applicantName || '',
+      applicantBusinessName: s.applicantBusinessName || '',
       askPrice: siteAskPrice(s),
       landBasis: costs.land || siteAskPrice(s) || 0,
       landSource: landValueSourceNote(s),
@@ -3723,6 +3750,8 @@ async function exportPDF(id) {
   const pdfRentGrowth = metrics.rentGrowthPct / 100;
   const pdfRentImpact = signedPlanPct(costs.rentPremium);
   const pdfCompQuery = compQueryForSite(s, 12);
+  const pdfContractorLine = [s.contractorName, [s.contractorAddress, s.contractorCity, s.contractorState].filter(Boolean).join(', ')].filter(Boolean).join(' - ');
+  const pdfApplicantLine = [s.applicantName, s.applicantBusinessName].filter(Boolean).join(' - ');
   const [pdfComps, pdfRentComps, pdfOwner] = await Promise.all([
     fetchJSON('/api/comps/submarket/' + encodeURIComponent(siteNeighborhood(s)) + pdfCompQuery).catch(() => null),
     fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(siteNeighborhood(s)) + pdfCompQuery).catch(() => null),
@@ -3865,6 +3894,7 @@ async function exportPDF(id) {
       <tr><td>Avg Unit Size</td><td>${siteAvgUnitSfText(s)}</td></tr>
       <tr><td>Total Building SF</td><td>${(siteBuildingSf(s) || ((s.units||12)*(s.usf||800))).toLocaleString()} SF</td></tr>
       <tr><td>Building SF Source</td><td>${escapeText(s.buildingSfSource || 'Not provided')}</td></tr>
+      ${s.stories ? `<tr><td>Stories</td><td>${escapeText(String(s.stories))}</td></tr>` : ''}
     </table>
     <h3>Owner / Contact</h3>
     <table>
@@ -3876,7 +3906,11 @@ async function exportPDF(id) {
     <table>
       <tr><td>Development Status</td><td class="${developmentStatusKey(s) === 'city_approved_not_started' ? 'green' : 'amber'}">${developmentStatusLabel(s)}</td></tr>
       <tr><td>Raw Permit Status</td><td>${s.permitStatus || ''}</td></tr>
+      ${s.permitNumber ? `<tr><td>Permit Number</td><td>${escapeText(s.permitNumber)}</td></tr>` : ''}
       <tr><td>Permit Valuation</td><td>${s.permitValuation ? fmtD(s.permitValuation) : 'Not provided'}</td></tr>
+      ${s.workDescription ? `<tr><td>Work Description</td><td>${escapeText(s.workDescription)}</td></tr>` : ''}
+      ${pdfContractorLine ? `<tr><td>Contractor</td><td>${escapeText(pdfContractorLine)}</td></tr>` : ''}
+      ${pdfApplicantLine ? `<tr><td>Applicant</td><td>${escapeText(pdfApplicantLine)}</td></tr>` : ''}
       <tr><td>Listing Status</td><td>${siteListingStatus(s)}</td></tr>
       <tr><td>Demo Required</td><td>${s.demo ? 'Yes' : 'No'}</td></tr>
       <tr><td>Asking Price</td><td>${isForSaleSite(s) ? fmtD(siteAskPrice(s)) : 'Not for sale (imputed)'}</td></tr>

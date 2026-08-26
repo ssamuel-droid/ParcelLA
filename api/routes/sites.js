@@ -90,10 +90,7 @@ const SITE_LIST_SELECT = [
   'regrid_enriched_at',
   'raw_permit_data',
 ].join(',');
-const SITE_SEARCH_SELECT = SITE_LIST_SELECT
-  .split(',')
-  .filter(column => column !== 'raw_permit_data')
-  .join(',');
+const SITE_SEARCH_SELECT = SITE_LIST_SELECT;
 
 const NEIGHBORHOOD_BOXES = [
   {h:'Silver Lake',lat0:34.070,lat1:34.105,lng0:-118.290,lng1:-118.250},
@@ -246,11 +243,78 @@ function isNewHouseSite(site = {}) {
   return String(site.project_type ?? site.type ?? '').trim().toLowerCase() === 'new house';
 }
 
-function hasUsableNewHousePlanData(site = {}, model = site._m || {}) {
-  if (!isNewHouseSite(site)) return true;
+function realPermitWorkDescription(site = {}, rawPermit = {}) {
+  const text = firstText(
+    rawPermit.work_description,
+    rawPermit.work_desc,
+    rawPermit.workdescription,
+    rawPermit.project_description,
+    rawPermit.description,
+    site.workDescription,
+    site.description
+  );
+  if (!text) return null;
+  const clean = String(text).replace(/\s+/g, ' ').trim();
+  if (clean.length < 12) return null;
+  if (/^(?:new house|single family|sfd|residential)$/i.test(clean)) return null;
+  return clean;
+}
+
+function storyCountFromPermit(site = {}, rawPermit = {}) {
+  const direct = numberFromValue(
+    rawPermit.stories ??
+    rawPermit.of_stories ??
+    rawPermit.number_of_stories ??
+    rawPermit.story_count ??
+    site.stories
+  );
+  if (direct > 0) return direct;
+  const workDescription = realPermitWorkDescription(site, rawPermit) || '';
+  const numeric = workDescription.match(/\b(\d+(?:\.\d+)?)\s*[- ]?\s*stor(?:y|ies)\b/i);
+  if (numeric) return numberFromValue(numeric[1]);
+  const words = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+  const word = workDescription.match(/\b(one|two|three|four|five)\s*[- ]?\s*stor(?:y|ies)\b/i);
+  return word ? words[word[1].toLowerCase()] : 0;
+}
+
+function contractorOrApplicantFromPermit(site = {}, rawPermit = {}) {
+  const contractor = firstText(
+    rawPermit.contractor_name,
+    rawPermit.contractors_business_name,
+    rawPermit.contractor_business_name,
+    rawPermit.contractor,
+    site.contractorName
+  );
+  const applicant = firstText(
+    rawPermit.applicant_name,
+    rawPermit.applicantName,
+    rawPermit.applicant,
+    rawPermit.applicant_business_name,
+    [rawPermit.applicant_first_name, rawPermit.applicant_last_name].filter(Boolean).join(' '),
+    site.applicantName
+  );
+  return { contractor, applicant };
+}
+
+function newHousePermitDetail(site = {}, model = site._m || {}) {
+  if (!isNewHouseSite(site)) return { isUsable: true, missing: [] };
   const rawPermit = site.raw_permit_data || {};
   const buildingSf = numberFromValue(
     rawPermit.building_sf ??
+    rawPermit.floor_area_l_a_building_code_definition ??
+    rawPermit.floor_area_l_a_zoning_code_definition ??
+    rawPermit.floor_area ??
+    rawPermit.floorarea ??
+    rawPermit.building_area ??
+    rawPermit.total_floor_area ??
+    rawPermit.new_floor_area ??
+    rawPermit.proposed_floor_area ??
+    rawPermit.project_floor_area ??
+    rawPermit.square_footage ??
+    rawPermit.sqft ??
+    rawPermit.gross_floor_area ??
+    rawPermit.gross_building_area ??
+    rawPermit.residential_floor_area ??
     site.buildingSf ??
     site.building_sf ??
     model.buildingSf
@@ -267,8 +331,28 @@ function hasUsableNewHousePlanData(site = {}, model = site._m || {}) {
     && (
       buildingSfParsed === true ||
       buildingSfSource.includes('permit work description') ||
-      buildingSfSource.includes('permit source field')
+      buildingSfSource.includes('permit source field') ||
+      !!(rawPermit.floor_area_l_a_building_code_definition || rawPermit.floor_area_l_a_zoning_code_definition)
     );
+  const workDescription = realPermitWorkDescription(site, rawPermit);
+  const permitValuation = numberFromValue(
+    rawPermit.permit_valuation ??
+    rawPermit.valuation ??
+    site.permitValuation ??
+    site.valuation ??
+    model.permitValuation
+  ) || 0;
+  const units = numberFromValue(
+    rawPermit.permit_units ??
+    rawPermit.raw_units ??
+    rawPermit.of_residential_dwelling_units ??
+    rawPermit.number_of_units ??
+    site.units
+  ) || 0;
+  const hasRealUnitCount = units > 0 || /\b(?:single[- ]family|sfd|one[- ]family|1\s*(?:dwelling|unit))\b/i.test(workDescription || '');
+  const stories = storyCountFromPermit(site, rawPermit);
+  const hasRealStories = stories > 0;
+  const contacts = contractorOrApplicantFromPermit(site, rawPermit);
 
   const landSource = String(
     model.landValueSource ||
@@ -289,7 +373,32 @@ function hasUsableNewHousePlanData(site = {}, model = site._m || {}) {
     || landSource.includes('hard cost percentage fallback')
     || (landCost > 0 && landCost <= 150000);
 
-  return hasRealBuildingSize && landCost > 150000 && !landIsPlaceholder;
+  const missing = [];
+  if (!hasRealBuildingSize) missing.push('real floor area');
+  if (!workDescription) missing.push('work description');
+  if (!permitValuation) missing.push('permit valuation');
+  if (!hasRealUnitCount) missing.push('unit count');
+  if (!hasRealStories) missing.push('stories');
+  if (landCost <= 150000 || landIsPlaceholder) missing.push('reliable land basis');
+
+  return {
+    isUsable: !missing.length,
+    missing,
+    buildingSf,
+    buildingSfSource,
+    buildingSfParsed,
+    workDescription,
+    permitValuation,
+    units,
+    stories,
+    contractorName: contacts.contractor,
+    applicantName: contacts.applicant,
+  };
+}
+
+function hasUsableNewHousePlanData(site = {}, model = site._m || {}) {
+  if (!isNewHouseSite(site)) return true;
+  return newHousePermitDetail(site, model).isUsable;
 }
 
 function sitePassesDataQualityGate(site = {}, queryParams = {}) {
@@ -563,7 +672,24 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const type = s.project_type ?? s.type ?? 'Multifamily';
   const units = Number(s.units || 0);
   const avgUnitSf = Number(s.avg_unit_sf || s.usf || 800);
-  const buildingSf = Number(rawPermit.building_sf || 0) || (units * avgUnitSf);
+  const buildingSf = Number(
+    rawPermit.building_sf ||
+    rawPermit.floor_area_l_a_building_code_definition ||
+    rawPermit.floor_area_l_a_zoning_code_definition ||
+    rawPermit.floor_area ||
+    rawPermit.floorarea ||
+    rawPermit.building_area ||
+    rawPermit.total_floor_area ||
+    rawPermit.new_floor_area ||
+    rawPermit.proposed_floor_area ||
+    rawPermit.project_floor_area ||
+    rawPermit.square_footage ||
+    rawPermit.sqft ||
+    rawPermit.gross_floor_area ||
+    rawPermit.gross_building_area ||
+    rawPermit.residential_floor_area ||
+    0
+  ) || (units * avgUnitSf);
   const permitValuation = numberFromValue(rawPermit.permit_valuation ?? s.valuation) || null;
   const hasPermitValuationEstimate = hasPermitValuationDerivedHouseSize(s, rawPermit, {
     buildingSf,
@@ -676,6 +802,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const neighborhood = normalizedNeighborhood(s) || 'Neighborhood TBD';
   const lotSf = normalizedLotSf(s);
   const model = modelFromSupabaseSite(s, landCompBenchmarks);
+  const permitDetail = newHousePermitDetail(s, model);
   const status = model.needsLandComp ? 'off-market' : (s.status || 'active');
   const offMarket = model.needsLandComp || /off|not for sale/i.test(status);
   const unitMix = unitMixForSite(rawPermit, s, s.project_type ?? s.type);
@@ -690,11 +817,16 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     lot:          lotSf,
     units:        s.units ?? null,
     usf:          s.avg_unit_sf ?? s.usf ?? 800,
-    buildingSf:   rawPermit.building_sf || model.buildingSf || null,
+    buildingSf:   rawPermit.building_sf ||
+      rawPermit.floor_area_l_a_building_code_definition ||
+      rawPermit.floor_area_l_a_zoning_code_definition ||
+      model.buildingSf ||
+      null,
     buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source || null,
     buildingSfParsed: rawPermit.building_sf_parsed ?? null,
     permitValuation: rawPermit.permit_valuation || model.permitValuation || null,
     lotSfSource:  rawPermit.lot_sf_source || null,
+    stories:      rawPermit.stories || rawPermit.of_stories || rawPermit.number_of_stories || permitDetail.stories || null,
     exitValueSource: rawPermit.exit_value_source || model.exitValueSource || null,
     exitValueMetric: rawPermit.exit_value_metric || model.exitValueMetric || null,
     exitValueMetricValue: rawPermit.exit_value_metric_value || model.exitValueMetricValue || null,
@@ -713,7 +845,15 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     permitStatus: rawPermit.permit_status || rawPermit.status || null,
     developmentStatus: rawPermit.development_status || null,
     inspectionCheck: rawPermit.inspection_check || null,
-    workDescription: rawPermit.work_description || rawPermit.project_description || null,
+    workDescription: permitDetail.workDescription || rawPermit.work_description || rawPermit.project_description || null,
+    projectDetailStatus: permitDetail.isUsable ? 'available' : 'not_available',
+    projectDetailUnavailableReason: permitDetail.missing || [],
+    contractorName: rawPermit.contractor_name || rawPermit.contractors_business_name || rawPermit.contractor_business_name || permitDetail.contractorName || null,
+    contractorAddress: rawPermit.contractor_address || null,
+    contractorCity: rawPermit.contractor_city || null,
+    contractorState: rawPermit.contractor_state || null,
+    applicantName: rawPermit.applicant_name || permitDetail.applicantName || null,
+    applicantBusinessName: rawPermit.applicant_business_name || null,
     addressAliases,
     externalEnrichedAt: s.external_enriched_at || null,
     externalDataSources: externalSources,
@@ -816,6 +956,15 @@ function redactSiteResult(site, hasAccess) {
     permitStatus: null,
     permitNumber: null,
     workDescription: null,
+    projectDetailStatus: null,
+    projectDetailUnavailableReason: [],
+    stories: null,
+    contractorName: null,
+    contractorAddress: null,
+    contractorCity: null,
+    contractorState: null,
+    applicantName: null,
+    applicantBusinessName: null,
     addressAliases: [],
     ownerName: null,
     ownerApplicantName: null,
@@ -958,6 +1107,123 @@ function siteMatchesSearch(s, value) {
   return haystack.includes(term) ||
     orderedTokenMatch(haystack, value) ||
     searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
+}
+
+function permitSearchHaystack(p = {}) {
+  const raw = p.raw_data || {};
+  return [
+    p.address,
+    p.permit_number,
+    p.status,
+    p.permit_type,
+    p.permit_subtype,
+    p.work_description,
+    raw.address,
+    raw.primary_address,
+    raw.project_address,
+    raw.pcis_permit,
+    raw.permit_nbr,
+    raw.permitnumber,
+    raw.work_description,
+    raw.work_desc,
+    raw.workdescription,
+    raw.project_description,
+    raw.description,
+    raw.use_desc,
+  ].map(v => String(v || '').toUpperCase()).join(' ');
+}
+
+function permitMatchesSearch(p = {}, value = '') {
+  const term = cleanSearchTerm(value).toUpperCase();
+  if (!term) return false;
+  const haystack = permitSearchHaystack(p);
+  return haystack.includes(term) ||
+    orderedTokenMatch(haystack, value) ||
+    searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
+}
+
+function permitRowAsHouseSite(p = {}) {
+  const raw = p.raw_data || {};
+  const units = numberFromValue(
+    p.units ??
+    raw.of_residential_dwelling_units ??
+    raw.number_of_units ??
+    raw.numberofunits ??
+    raw.du_changed
+  ) || 0;
+  const subtype = p.permit_subtype || raw.permit_sub_type || raw.permitsubtype || raw.use_desc || '';
+  const type = guessType(p.permit_type || raw.permit_type || raw.permittype, subtype, units);
+  const sourceFloorArea = firstText(
+    raw.floor_area_l_a_building_code_definition,
+    raw.floor_area_l_a_zoning_code_definition,
+    raw.floor_area,
+    raw.floorarea,
+    raw.building_area,
+    raw.building_sf,
+    raw.total_floor_area,
+    raw.new_floor_area,
+    raw.proposed_floor_area,
+    raw.project_floor_area,
+    raw.square_footage,
+    raw.sqft,
+    raw.gross_floor_area,
+    raw.gross_building_area,
+    raw.residential_floor_area
+  );
+  return {
+    project_type: type,
+    units: units || null,
+    permitValuation: p.valuation || raw.valuation || null,
+    raw_permit_data: {
+      ...raw,
+      permit_valuation: p.valuation || raw.valuation || null,
+      permit_units: units || null,
+      permit_number: p.permit_number || raw.pcis_permit || raw.permit_nbr || raw.permitnumber || null,
+      permit_status: p.status || raw.status || raw.status_desc || raw.latest_status || null,
+      work_description: p.work_description || raw.work_description || raw.work_desc || raw.workdescription || raw.project_description || raw.description || null,
+      building_sf: sourceFloorArea ? numberFromValue(sourceFloorArea) : null,
+      building_sf_source: sourceFloorArea ? 'Permit source field' : null,
+      building_sf_parsed: !!sourceFloorArea,
+      stories: raw.of_stories || raw.stories || raw.number_of_stories || raw.story_count || null,
+      contractor_name: raw.contractor_name || raw.contractors_business_name || raw.contractor_business_name || null,
+      contractor_address: raw.contractor_address || null,
+      contractor_city: raw.contractor_city || null,
+      contractor_state: raw.contractor_state || null,
+      applicant_name: raw.applicant_name || [raw.applicant_first_name, raw.applicant_last_name].filter(Boolean).join(' ') || null,
+      applicant_business_name: raw.applicant_business_name || null,
+    },
+  };
+}
+
+async function permitDetailNoticeForSearch(searchValue) {
+  if (!process.env.SUPABASE_URL || !cleanSearchTerm(searchValue)) return null;
+  const clauses = [];
+  for (const variant of searchDbVariants(searchValue)) {
+    clauses.push(`address.ilike.%${variant}%`);
+    clauses.push(`permit_number.ilike.%${variant}%`);
+  }
+  if (!clauses.length) return null;
+
+  const { data, error } = await supabase
+    .from('permits')
+    .select('id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,raw_data')
+    .or(clauses.join(','))
+    .limit(25);
+  if (error || !Array.isArray(data) || !data.length) return null;
+
+  const houseMatches = data
+    .filter(row => permitMatchesSearch(row, searchValue))
+    .map(permitRowAsHouseSite)
+    .filter(site => isNewHouseSite(site));
+  if (!houseMatches.length) return null;
+
+  const missing = [...new Set(houseMatches.flatMap(site => newHousePermitDetail(site, {}).missing || []))];
+  return {
+    code: 'house_project_detail_unavailable',
+    message: missing.length
+      ? `The city permit feed has this address, but submitted project details are not available enough to underwrite yet. Missing: ${missing.join(', ')}.`
+      : 'The city permit feed has this address, but it is not available as an underwritable site yet.',
+  };
 }
 
 function numericFilterPass(value, min, max) {
@@ -1194,13 +1460,28 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   const rows = data || [];
   let mapped = rows.map((row, i) => mapSupabaseSite(row, i + dbOffset, null));
   if (needsPostFilter) {
+    const searchValue = queryParams.q || queryParams.search || '';
+    const preQualitySearchMatches = searchValue
+      ? mapped.filter(site => siteMatchesSearch(site, searchValue))
+      : [];
     const matches = mapped.filter(site => sitePassesQueryFilters(site, queryParams));
     const page = matches.slice(requestedOffset, requestedOffset + requestedLimit);
     const hasMoreRawRows = rows.length === dbLimit;
     const total = hasMoreRawRows
       ? (matches.length ? Math.max(matches.length, requestedOffset + page.length + requestedLimit) : 0)
       : matches.length;
-    return { sites: page, total };
+    let notice = searchValue && !matches.length && preQualitySearchMatches.some(site =>
+      isNewHouseSite(site) && !hasUsableNewHousePlanData(site, site._m || {})
+    )
+      ? {
+          code: 'house_project_detail_unavailable',
+          message: 'The city permit feed has this address, but submitted project details are not available enough to underwrite yet. New-house rows only show when LADBS provides real floor area, work description, valuation, and units/stories.',
+        }
+      : null;
+    if (!notice && searchValue && !matches.length) {
+      notice = await permitDetailNoticeForSearch(searchValue);
+    }
+    return { sites: page, total, notice };
   }
   const rollingTotal = requestedOffset + rows.length + (rows.length === requestedLimit ? requestedLimit : 0);
   return { sites: mapped, total: count ?? rollingTotal };
@@ -1226,6 +1507,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     // Fallback: 27 mock sites if permits table is empty
     let sites = [];
     let fastTotal = null;
+    let fastNotice = null;
     let usedFastPage = false;
 
     if (process.env.SUPABASE_URL) {
@@ -1234,6 +1516,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         if (fastPage) {
           sites = fastPage.sites;
           fastTotal = fastPage.total;
+          fastNotice = fastPage.notice || null;
           usedFastPage = true;
           console.log(`[sites] Loaded fast page ${sites.length}/${fastTotal} from Supabase`);
         }
@@ -1323,6 +1606,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       total,
       limit:   +limit,
       offset:  +offset,
+      notice:  fastNotice,
       access,
       results: paginated.map(s => redactSiteResult({
         id:           s.id,
@@ -1350,6 +1634,15 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         inspectionCheck: s.inspectionCheck,
         permitNumber:  s.permitNumber,
         workDescription: s.workDescription,
+        projectDetailStatus: s.projectDetailStatus,
+        projectDetailUnavailableReason: s.projectDetailUnavailableReason,
+        stories:      s.stories,
+        contractorName: s.contractorName,
+        contractorAddress: s.contractorAddress,
+        contractorCity: s.contractorCity,
+        contractorState: s.contractorState,
+        applicantName: s.applicantName,
+        applicantBusinessName: s.applicantBusinessName,
         addressAliases: s.addressAliases || [],
         ownerName:    s.ownerName,
         ownerApplicantName: s.ownerApplicantName,

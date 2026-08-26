@@ -156,7 +156,7 @@ function statusIsRti(value) {
 function buildModernPermitRow(r, i, fallbackPrefix) {
   const status = String(first(r.status_desc, r.status, r.project_status, 'Submitted')).slice(0,50);
   const subtype = first(r.permit_sub_type, r.permitsubtype, r.use_desc);
-  const work = String(first(r.work_desc, r.work_description, '') || '').slice(0,2000);
+  const work = String(first(r.work_desc, r.work_description, r.project_description, r.description, r.use_desc, '') || '').slice(0,2000);
   const permitType = first(r.permit_type, r.permittype, 'Bldg-New');
   if (!/new|bldg-new/i.test(String(permitType))) return null;
   if (shouldSkipSubtype(subtype)) return null;
@@ -245,6 +245,8 @@ async function main() {
     total += await syncDataset('DBS Permits', records, (r, i) => {
       if (shouldSkipSubtype(r.permit_sub_type)) return null;
       const addr = cleanAddress(r.address || [r.address_start, r.street_direction, r.street_name, r.street_suffix].filter(Boolean).join(' '));
+      const work = String(first(r.work_description, r.work_desc, r.project_description, r.description, '') || '').slice(0,2000);
+      if (shouldSkipPermit(r, [r.permit_sub_type, r.use_desc, work])) return null;
       let lat = null, lng = null;
       if (r.location_1 && r.location_1.coordinates) {
         lng = r.location_1.coordinates[0];
@@ -262,6 +264,7 @@ async function main() {
         issued_date: cleanDate(r.issue_date),
         is_rti: /ready|approved/i.test(String(r.latest_status || '')),
         lat, lng,
+        work_description: work || null,
         raw_data: r,
         synced_at: new Date().toISOString(),
       };
@@ -323,13 +326,22 @@ async function main() {
     ]);
 
     total += await syncDataset('New Housing Units', records, (r, i) => {
-      const units = integer(r.units || r.net_units || r.number_of_units);
+      const units = integer(first(r.units, r.net_units, r.number_of_units, r.of_residential_dwelling_units));
+      const work = String(first(r.work_description, r.work_desc, r.project_description, r.description, r.use_desc, '') || '').slice(0,2000);
+      if (shouldSkipPermit(r, [r.permit_sub_type, r.permitsubtype, r.use_desc, work])) return null;
+      const address = cleanAddress(first(
+        r.address,
+        r.primary_address,
+        r.location_address,
+        r.project_address,
+        [r.address_start, r.street_direction, r.street_name, r.street_suffix].filter(Boolean).join(' ')
+      ));
       return {
-        permit_number: String(r.permit_number || r.id || 'hu-' + i).slice(0,100),
-        permit_type: 'Bldg-New',
-        permit_subtype: units <= 1 ? 'New House' : 'Multifamily',
-        status: String(r.status || r.project_status || 'Issued').slice(0,50),
-        address: cleanAddress(r.address || r.location_address || r.project_address),
+        permit_number: String(first(r.permit_number, r.pcis_permit, r.permit_nbr, r.pcisid, r.id, 'hu-' + i)).slice(0,100),
+        permit_type: String(first(r.permit_type, r.permittype, 'Bldg-New')).slice(0,100),
+        permit_subtype: String(first(r.permit_sub_type, r.permitsubtype, units <= 1 ? 'New House' : 'Multifamily')).slice(0,100),
+        status: String(first(r.status, r.project_status, r.latest_status, r.permitstatus, 'Issued')).slice(0,50),
+        address,
         zone: r.zoning || r.zone || null,
         units,
         valuation: number(r.valuation),
@@ -337,6 +349,7 @@ async function main() {
         is_rti: false,
         lat: r.latitude ? parseFloat(r.latitude) : null,
         lng: r.longitude ? parseFloat(r.longitude) : null,
+        work_description: work || null,
         raw_data: r,
         synced_at: new Date().toISOString(),
       };
@@ -354,22 +367,31 @@ async function main() {
     ]);
 
     total += await syncDataset('Building Permits Official', records, (r, i) => {
-      if (shouldSkipSubtype(r.permitsubtype)) return null;
-      const permitType = r.permittype || 'Bldg-New';
+      const subtype = first(r.permit_sub_type, r.permitsubtype);
+      if (shouldSkipSubtype(subtype)) return null;
+      const permitType = first(r.permit_type, r.permittype, 'Bldg-New');
       if (!/new|bldg-new/i.test(permitType)) return null;
+      const work = String(first(r.work_description, r.work_desc, r.project_description, r.description, r.use_desc, '') || '').slice(0,2000);
+      if (shouldSkipPermit(r, [subtype, r.use_desc, work])) return null;
+      const address = cleanAddress(first(
+        r.address,
+        r.primary_address,
+        [r.address_start, r.street_direction, r.street_name, r.street_suffix].filter(Boolean).join(' ')
+      ));
       return {
-        permit_number: String(r.permitnumber || r.pcisid || 'bp-' + i).slice(0,100),
+        permit_number: String(first(r.permit_number, r.pcis_permit, r.permitnumber, r.pcisid, r.id, 'bp-' + i)).slice(0,100),
         permit_type: permitType,
-        permit_subtype: r.permitsubtype || null,
-        status: String(r.permitstatus || 'Issued').slice(0,50),
-        address: cleanAddress(r.address),
+        permit_subtype: subtype || null,
+        status: String(first(r.status, r.project_status, r.latest_status, r.permitstatus, 'Issued')).slice(0,50),
+        address,
         zone: r.zone || null,
-        units: integer(r.numberofunits),
+        units: integer(first(r.numberofunits, r.number_of_units, r.of_residential_dwelling_units)),
         valuation: number(r.valuation),
         issued_date: cleanDate(r.permitissuancedate),
         is_rti: /ready|approved/i.test(String(r.permitstatus || '')),
         lat: null,
         lng: null,
+        work_description: work || null,
         raw_data: r,
         synced_at: new Date().toISOString(),
       };
