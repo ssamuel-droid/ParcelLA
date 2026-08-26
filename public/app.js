@@ -289,6 +289,9 @@ function siteSearchText(s) {
     s?.permitStatus,
     s?.developmentStatus,
     s?.workDescription,
+    siteBuildingSf(s),
+    s?.buildingSf,
+    s?.totalBuildingSf,
     ...siteAddressAliases(s),
   ].map(canonicalAddress).join(' ');
 }
@@ -632,6 +635,7 @@ function accessTimeText(seconds) {
 function accountLabel() {
   const access = accountState.access || {};
   if (!accountState.user) return 'Preview';
+  if (access.reason === 'owner_allowlist') return 'Owner';
   if (access.reason === 'subscription') return (access.plan || 'Pro').toUpperCase();
   if (access.reason === 'free_24h_trial') return 'Trial ' + accessTimeText(access.trialSecondsRemaining);
   return 'Locked';
@@ -701,7 +705,9 @@ function renderAuthUI() {
   const access = accountState.access || {};
   const trialText = access.reason === 'free_24h_trial'
     ? 'Free access: ' + accessTimeText(access.trialSecondsRemaining)
-    : access.reason === 'subscription'
+    : access.reason === 'owner_allowlist'
+      ? 'Owner access active'
+      : access.reason === 'subscription'
       ? 'Subscription active'
       : 'Free access expired';
 
@@ -928,6 +934,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       </select>
       <h4>Units</h4>
       <div class="sb2"><input type="number" id="f-umin" placeholder="Min"><input type="number" id="f-umax" placeholder="Max"></div>
+      <h4>Project SF</h4>
+      <div class="sb2"><input type="number" id="f-sfmin" placeholder="Min SF"><input type="number" id="f-sfmax" placeholder="Max SF"></div>
       <h4>Land price</h4>
       <div class="sb2"><input type="number" id="f-pmin" placeholder="Min $"><input type="number" id="f-pmax" placeholder="Max $"></div>
       <h4>Project cost</h4>
@@ -1670,6 +1678,7 @@ function buildSiteQueryParams(offset = 0) {
 
   const pairs = [
     ['f-hood', 'hood'], ['f-umin', 'minUnits'], ['f-umax', 'maxUnits'],
+    ['f-sfmin', 'minSf'], ['f-sfmax', 'maxSf'],
     ['f-cmin', 'minCost'], ['f-cmax', 'maxCost'],
     ['mf-i', 'minIRR'], ['mf-s', 'minSpread'], ['mf-c', 'minCapoc'],
   ];
@@ -1772,6 +1781,7 @@ function applyFilters() {
   const search = canonicalAddress(searchValue);
   const hood = g('f-hood')?.value||'';
   const umin = +g('f-umin')?.value||0, umax = +g('f-umax')?.value||Infinity;
+  const sfmin = +g('f-sfmin')?.value||0, sfmax = +g('f-sfmax')?.value||Infinity;
   const pmin = +g('f-pmin')?.value||0, pmax = +g('f-pmax')?.value||Infinity;
   const cmin = +g('f-cmin')?.value||0, cmax = +g('f-cmax')?.value||Infinity;
   const mfp = (+g('mf-p')?.value||0)*1000, mfi = +g('mf-i')?.value||0;
@@ -1806,6 +1816,9 @@ function applyFilters() {
     if (!types.length || !types.includes(s.type)) return false;
     if (hood && siteNeighborhood(s) !== hood) return false;
     if (s.units < umin || s.units > umax) return false;
+    const buildingSf = siteBuildingSf(s);
+    if (sfmin && buildingSf < sfmin) return false;
+    if (sfmax !== Infinity && buildingSf > sfmax) return false;
     const landBasis = siteLandBasisForFilter(s, costs);
     if (landBasis && (landBasis < pmin || landBasis > pmax)) return false;
     if ((costs.totalCost || 0) < cmin || (costs.totalCost || 0) > cmax) return false;
@@ -4186,7 +4199,7 @@ function resetFilters() {
   const newHouse=g('f-nh'); if(newHouse)newHouse.checked=false;
   const watch=g('f-watch'); if(watch)watch.checked=false;
   ['f-hood'].forEach(id=>{const el=g(id);if(el)el.value='';});
-  ['f-q','f-umin','f-umax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c','mf-hc','mf-rate'].forEach(id=>{const el=g(id);if(el)el.value='';});
+  ['f-q','f-umin','f-umax','f-sfmin','f-sfmax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c','mf-hc','mf-rate'].forEach(id=>{const el=g(id);if(el)el.value='';});
   const plan=g('mf-plan'); if(plan)plan.value='auto';
   loadSites();
 }

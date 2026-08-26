@@ -13,6 +13,14 @@ const supabase = createClient(
 const FREE_ACCESS_HOURS = 24;
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing']);
 const AUTH_LOOKUP_TIMEOUT_MS = Number(process.env.AUTH_LOOKUP_TIMEOUT_MS || 2500);
+const DEFAULT_ALWAYS_ACCESS_EMAILS = ['ssamuel@goodhealthcorp.com'];
+const ALWAYS_ACCESS_EMAILS = new Set([
+  ...DEFAULT_ALWAYS_ACCESS_EMAILS,
+  ...String(process.env.ALWAYS_ACCESS_EMAILS || '')
+    .split(',')
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean),
+]);
 
 function timeoutAfter(ms, value) {
   return new Promise(resolve => setTimeout(() => resolve(value), ms));
@@ -32,7 +40,30 @@ function expiresInSeconds(value) {
   return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
 }
 
+function emailKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function hasAlwaysAccess(email) {
+  return ALWAYS_ACCESS_EMAILS.has(emailKey(email));
+}
+
+function alwaysAccess(email) {
+  return {
+    active: true,
+    plan: 'enterprise',
+    subscriptionStatus: 'active',
+    trialEndsAt: null,
+    trialSecondsRemaining: 0,
+    freeAccessHours: FREE_ACCESS_HOURS,
+    reason: 'owner_allowlist',
+    email: emailKey(email),
+  };
+}
+
 export function accessForProfile(profile = null) {
+  if (hasAlwaysAccess(profile?.email)) return alwaysAccess(profile.email);
+
   const plan = profile?.plan || 'free';
   const subscriptionStatus = profile?.subscription_status || 'inactive';
   const paidAccess = ['pro', 'enterprise'].includes(plan) && ACTIVE_SUBSCRIPTION_STATUSES.has(subscriptionStatus);
@@ -101,12 +132,14 @@ export async function ensureUserProfile(user) {
 
 export async function getUserAccess(user) {
   if (!user) return accessForProfile(null);
+  if (hasAlwaysAccess(user.email)) return alwaysAccess(user.email);
   const profile = await ensureUserProfile(user);
   return accessForProfile(profile);
 }
 
 export async function getUserAccessFast(user, timeoutMs = AUTH_LOOKUP_TIMEOUT_MS) {
   if (!user) return accessForProfile(null);
+  if (hasAlwaysAccess(user.email)) return alwaysAccess(user.email);
 
   try {
     const profile = await withAuthTimeout(ensureUserProfile(user), undefined, timeoutMs);

@@ -943,6 +943,9 @@ function siteSearchHaystack(s) {
     s.permitStatus,
     s.developmentStatus,
     s.workDescription,
+    s.buildingSf,
+    s.totalBuildingSf,
+    s._m?.buildingSf,
     ...aliases,
     ...knownAliases,
   ].map(v => String(v || '').toUpperCase()).join(' ');
@@ -1047,6 +1050,9 @@ function sitePassesQueryFilters(s, queryParams) {
   if (queryParams.isComp !== undefined && s.isComp !== (queryParams.isComp === 'true')) return false;
   if (queryParams.minUnits && Number(s.units || 0) < Number(queryParams.minUnits)) return false;
   if (queryParams.maxUnits && Number(s.units || 0) > Number(queryParams.maxUnits)) return false;
+  const buildingSf = Number(s.buildingSf ?? s.totalBuildingSf ?? m.buildingSf ?? 0);
+  if (queryParams.minSf && buildingSf < Number(queryParams.minSf)) return false;
+  if (queryParams.maxSf && buildingSf > Number(queryParams.maxSf)) return false;
   if (queryParams.minLot && Number(s.lot || 0) < Number(queryParams.minLot)) return false;
   if (queryParams.maxLot && Number(s.lot || 0) > Number(queryParams.maxLot)) return false;
 
@@ -1088,7 +1094,9 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     queryParams.hood ||
     (queryParams.devStatus && !canPushDevStatus) ||
     queryParams.minPrice ||
-    queryParams.maxPrice
+    queryParams.maxPrice ||
+    queryParams.minSf ||
+    queryParams.maxSf
   );
   const usesSelectiveFilters = !!(
     search ||
@@ -1098,6 +1106,8 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     queryParams.zone ||
     queryParams.minUnits ||
     queryParams.maxUnits ||
+    queryParams.minSf ||
+    queryParams.maxSf ||
     queryParams.minPrice ||
     queryParams.maxPrice ||
     queryParams.minCost ||
@@ -1200,6 +1210,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     const {
       type, hood, zone, rti, isComp,
       minUnits, maxUnits, minLot, maxLot,
+      minSf, maxSf,
       minPrice, maxPrice,
       minCost, maxCost,
       minIRR, minProfit, minSpread, minCapoc,
@@ -1272,6 +1283,9 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       if (isComp  !== undefined && s.isComp !== (isComp === 'true')) return false;
       if (minUnits && s.units < +minUnits)            return false;
       if (maxUnits && s.units > +maxUnits)            return false;
+      const buildingSf = Number(s.buildingSf ?? s.totalBuildingSf ?? m.buildingSf ?? 0);
+      if (minSf && buildingSf < +minSf)                return false;
+      if (maxSf && buildingSf > +maxSf)                return false;
       if (minLot  && s.lot   < +minLot)              return false;
       if (maxLot  && s.lot   > +maxLot)              return false;
       const landBasis = Number(s.price ?? m.landCost ?? 0);

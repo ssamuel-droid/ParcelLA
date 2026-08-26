@@ -137,7 +137,21 @@ authRouter.get('/me', async (req, res, next) => {
     const { data: { user }, error } = await sb.auth.getUser(token);
     if (error || !user) return res.status(401).json({ error: 'Invalid token' });
 
-    const profile = await ensureUserProfile(user);
+    let profile = null;
+    let access = null;
+    try {
+      profile = await ensureUserProfile(user);
+      access = accessForProfile(profile);
+    } catch (profileErr) {
+      access = accessForProfile({ email: user.email });
+      if (!access.active) throw profileErr;
+      profile = {
+        id: user.id,
+        email: user.email,
+        plan: access.plan,
+        subscription_status: access.subscriptionStatus,
+      };
+    }
 
     // Get saved site ids
     const { data: saved } = await sb
@@ -146,7 +160,7 @@ authRouter.get('/me', async (req, res, next) => {
     res.json({
       user,
       profile,
-      access: accessForProfile(profile),
+      access,
       savedSiteIds: saved?.map(s => s.site_id) ?? [],
     });
   } catch (err) { next(err); }
