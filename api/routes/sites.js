@@ -225,7 +225,8 @@ function isNewHousePermitPlaceholder(site = {}, rawPermit = {}) {
   const price = numberFromValue(site.price ?? site.askPrice ?? site.landCost) || 0;
   const hasValuationEstimate = hasPermitValuationDerivedHouseSize(site, rawPermit);
   return (
-    (source.includes('permit_valuation_fallback') && !hasValuationEstimate) ||
+    source.includes('permit_valuation_fallback') ||
+    (source.includes('permit_valuation_estimate') && hasValuationEstimate) ||
     source.includes('land_comp_needed') ||
     source.includes('hard cost percentage fallback') ||
     source.includes('asking_price') ||
@@ -238,7 +239,6 @@ function needsLandCompForHouse(site = {}, rawPermit = {}, compLand = null, doorL
   if (type !== 'new house') return false;
   if (doorLand?.value || compLand?.value) return false;
   const price = numberFromValue(site.price ?? site.askPrice ?? site.landCost) || 0;
-  if (hasPermitValuationDerivedHouseSize(site, rawPermit) && price > 150000) return false;
   return isNewHousePermitPlaceholder(site, rawPermit) || (isOffMarketSiteRow(site) && price <= 150000);
 }
 
@@ -262,14 +262,12 @@ function hasUsableNewHousePlanData(site = {}, model = site._m || {}) {
     ''
   ).toLowerCase();
   const buildingSfParsed = rawPermit.building_sf_parsed ?? site.buildingSfParsed ?? model.buildingSfParsed;
-  const hasValuationEstimate = hasPermitValuationDerivedHouseSize(site, rawPermit, model);
   const hasRealBuildingSize = buildingSf > 0
     && buildingSf !== 800
     && (
       buildingSfParsed === true ||
       buildingSfSource.includes('permit work description') ||
-      buildingSfSource.includes('permit source field') ||
-      hasValuationEstimate
+      buildingSfSource.includes('permit source field')
     );
 
   const landSource = String(
@@ -286,7 +284,8 @@ function hasUsableNewHousePlanData(site = {}, model = site._m || {}) {
     site.landCost
   ) || 0;
   const landIsPlaceholder = landSource.includes('land_comp_needed')
-    || (landSource.includes('permit_valuation_fallback') && !hasValuationEstimate)
+    || landSource.includes('permit_valuation_fallback')
+    || (landSource.includes('permit_valuation_estimate') && !hasRealBuildingSize)
     || landSource.includes('hard cost percentage fallback')
     || (landCost > 0 && landCost <= 150000);
 

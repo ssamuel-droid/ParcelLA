@@ -623,9 +623,12 @@ function uw(p, inspectionCheck = null) {
     ? u * DEFAULT_MARKET_LAND_PER_DOOR
     : 0;
   const hasPermitValuationEstimate = t === 'New House'
-    && buildingSize.source === 'Permit valuation-derived estimate'
+    && buildingSize.source !== 'Permit valuation-derived estimate'
     && Number(p.valuation || 0) > 0;
-  if (t === 'New House' && buildingSize.source === 'Model assumption') {
+  if (t === 'New House' && (
+    buildingSize.source === 'Model assumption' ||
+    buildingSize.source === 'Permit valuation-derived estimate'
+  )) {
     return null;
   }
   if (t === 'New House' && !compLand?.value && !hasPermitValuationEstimate) {
