@@ -1117,7 +1117,12 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     .not('net_profit', 'is', null);
 
   if (dbTypes.length) query = query.in('project_type', dbTypes);
-  if (types.length === 1 && types[0] === 'New House') query = query.gt('price', 150000);
+  if (types.length === 1 && types[0] === 'New House') {
+    query = query
+      .gt('price', 150000)
+      .neq('raw_permit_data->>building_sf_source', 'Permit valuation-derived estimate')
+      .neq('raw_permit_data->>building_sf_source', 'Model assumption');
+  }
   if (!hasExplicitTypeFilter && !search) query = query.neq('project_type', 'New House');
   if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
   if (queryParams.minUnits) query = query.gte('units', Number(queryParams.minUnits));
