@@ -1909,9 +1909,39 @@ function loadMoreHTML() {
     : '';
 }
 
+function activeFilterSummaryHTML() {
+  const items = [];
+  const addValue = (id, label) => {
+    const val = (g(id)?.value || '').trim();
+    if (val) items.push(label + ': ' + val);
+  };
+  addValue('f-q', 'Search');
+  addValue('f-hood', 'Neighborhood');
+  addValue('f-umin', 'Min units');
+  addValue('f-umax', 'Max units');
+  addValue('f-sfmin', 'Min project SF');
+  addValue('f-sfmax', 'Max project SF');
+  addValue('f-pmin', 'Min land price');
+  addValue('f-pmax', 'Max land price');
+  addValue('f-cmin', 'Min project cost');
+  addValue('f-cmax', 'Max project cost');
+  addValue('mf-p', 'Min profit');
+  addValue('mf-i', 'Min IRR');
+  addValue('mf-s', 'Min dev spread');
+  addValue('mf-c', 'Min cap on cost');
+  if (g('f-watch')?.checked) items.push('Watchlist only');
+  return items.length ? '<small style="display:block;margin:8px auto 12px;max-width:520px;color:#667790">Active filters: ' + escapeText(items.join(' | ')) + '</small>' : '';
+}
+
+function emptyResultsHTML() {
+  return '<div class="empty"><b>No sites match your filters</b>' +
+    activeFilterSummaryHTML() +
+    '<button class="gb" onclick="resetFilters()">Reset filters</button></div>' + loadMoreHTML();
+}
+
 function renderCards() {
   const el = g('list');
-  if (!filtered.length) { el.innerHTML = '<div class="empty">No sites match your filters</div>' + loadMoreHTML(); return; }
+  if (!filtered.length) { el.innerHTML = emptyResultsHTML(); return; }
   if (activeView === 'map') { renderMapView(); return; }
   const maxP = Math.max(...filtered.map(s => hasReliableLandBasis(s) ? (valuationForSite(s, costModelForSite(s)).netProfit || 0) : 0), 1);
   el.innerHTML = filtered.map(s => {
