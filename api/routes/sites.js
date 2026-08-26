@@ -387,32 +387,12 @@ function newHousePermitDetail(site = {}, model = site._m || {}) {
   const hasRealStories = stories > 0;
   const contacts = contractorOrApplicantFromPermit(site, rawPermit);
 
-  const landSource = String(
-    model.landValueSource ||
-    rawPermit.land_value_source ||
-    site.landValueSource ||
-    ''
-  ).toLowerCase();
-  const landCost = numberFromValue(
-    model.landCost ??
-    model.price ??
-    site.price ??
-    site.askPrice ??
-    site.landCost
-  ) || 0;
-  const landIsPlaceholder = landSource.includes('land_comp_needed')
-    || landSource.includes('permit_valuation_fallback')
-    || (landSource.includes('permit_valuation_estimate') && !hasRealBuildingSize)
-    || landSource.includes('hard cost percentage fallback')
-    || (landCost > 0 && landCost <= 150000);
-
   const missing = [];
   if (!hasRealBuildingSize) missing.push('real floor area');
   if (!workDescription) missing.push('work description');
   if (!permitValuation) missing.push('permit valuation');
   if (!hasRealUnitCount) missing.push('unit count');
   if (!hasRealStories) missing.push('stories');
-  if (landCost <= 150000 || landIsPlaceholder) missing.push('reliable land basis');
 
   return {
     isUsable: !missing.length,
@@ -1424,9 +1404,9 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
   const hasExplicitTypeFilter = Boolean(queryParams.types || queryParams.type);
   const types = listParam(queryParams.types || queryParams.type).map(canonicalProjectType).filter(Boolean);
-  const excludesNewHouseInMixedView = types.includes('New House') && types.length > 1 && !search;
-  const dbTypes = [...new Set((excludesNewHouseInMixedView ? types.filter(type => type !== 'New House') : types).flatMap(dbProjectTypeVariants))];
-  const mayReturnNewHouse = (types.includes('New House') && !excludesNewHouseInMixedView) || (!types.length && search);
+  const newHouseOnly = types.length === 1 && types[0] === 'New House';
+  const mayReturnNewHouse = types.includes('New House') || (!types.length && search);
+  const dbTypes = [...new Set(types.flatMap(dbProjectTypeVariants))];
   const devStatuses = listParam(queryParams.devStatus);
   const canPushDevStatus = devStatuses.every(status => [
     'submitted',
@@ -1480,12 +1460,6 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     .not('net_profit', 'is', null);
 
   if (dbTypes.length) query = query.in('project_type', dbTypes);
-  if (types.length === 1 && types[0] === 'New House') {
-    query = query
-      .gt('price', 150000)
-      .neq('raw_permit_data->>building_sf_source', 'Permit valuation-derived estimate')
-      .neq('raw_permit_data->>building_sf_source', 'Model assumption');
-  }
   if (!hasExplicitTypeFilter && !search) query = query.neq('project_type', 'New House');
   if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
   const minUnits = activeNumericParam(queryParams.minUnits);
@@ -1543,10 +1517,14 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     units: 'units',
   };
   const sortColumn = sortColumns[sort] || 'net_profit';
-  if (!search) query = query.order(sortColumn, { ascending: sort === 'price-a', nullsFirst: false });
+  if (!search) {
+    query = newHouseOnly
+      ? query.order('id', { ascending: false, nullsFirst: false })
+      : query.order(sortColumn, { ascending: sort === 'price-a', nullsFirst: false });
+  }
   const dbOffset = needsPostFilter ? 0 : requestedOffset;
   const dbLimit = needsPostFilter
-    ? Math.min(5000, Math.max(requestedOffset + requestedLimit * 20, requestedLimit))
+    ? Math.min(newHouseOnly ? 1000 : 5000, Math.max(requestedOffset + requestedLimit * (newHouseOnly ? 50 : 20), requestedLimit))
     : requestedLimit;
   query = query.range(dbOffset, dbOffset + dbLimit - 1);
 
