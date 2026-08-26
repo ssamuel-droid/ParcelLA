@@ -181,6 +181,22 @@ function siteUnitsText(s) {
   return units > 0 ? `${units.toLocaleString()} units` : 'Units TBD';
 }
 
+function canonicalProjectType(value) {
+  const raw = String(value || '').trim();
+  const compact = raw.toLowerCase().replace(/\s+/g, ' ').replace(/\s*\/\s*/g, '/');
+  if (!compact) return '';
+  if (compact === 'mixed-use' || compact === 'mixed use') return 'Mixed-Use';
+  if (compact === 'condo/th' || compact.includes('townhouse')) return 'Condo/TH';
+  if (compact === 'new house' || compact === 'single family' || compact === 'sfd') return 'New House';
+  if (compact === 'multifamily' || compact === 'multi-family' || compact === 'multi family') return 'Multifamily';
+  return raw;
+}
+
+function typeMatchesSelected(s, selectedTypes) {
+  if (!selectedTypes.length) return true;
+  return selectedTypes.map(canonicalProjectType).includes(canonicalProjectType(s?.type));
+}
+
 function siteMetaLine(s) {
   return [
     siteNeighborhood(s),
@@ -1791,7 +1807,8 @@ function applyFilters() {
   const mfp = (+g('mf-p')?.value||0)*1000, mfi = +g('mf-i')?.value||0;
   const mfs = +g('mf-s')?.value||0, mfc = +g('mf-c')?.value||0;
   const srt = g('srt')?.value||'profit';
-  const ffs = g('f-fs')?.checked!==false, frti = g('f-rti')?.checked!==false, fcomp = g('f-comp')?.checked!==false;
+  const ffs = g('f-fs')?.checked === true, frti = g('f-rti')?.checked === true, fcomp = g('f-comp')?.checked === true;
+  const listingFiltersActive = ffs || frti || fcomp;
   const watchOnly = g('f-watch')?.checked === true;
   const devStatuses = [];
   if (g('f-d-submitted')?.checked) devStatuses.push('submitted');
@@ -1799,11 +1816,13 @@ function applyFilters() {
   if (g('f-d-approved')?.checked) devStatuses.push('city_approved_not_started');
   if (g('f-d-issued')?.checked) devStatuses.push('permit_issued');
   if (g('f-d-unknown')?.checked) devStatuses.push('possibly_started_unknown');
+  const devStatusFiltersActive = devStatuses.length > 0;
   const types = [];
   if (g('f-mf')?.checked) types.push('Multifamily');
   if (g('f-mx')?.checked) types.push('Mixed-Use');
   if (g('f-cn')?.checked) types.push('Condo/TH');
   if (g('f-nh')?.checked) types.push('New House');
+  const typeFiltersActive = types.length > 0;
 
   filtered = allSites.filter(s => {
     const costs = costModelForSite(s);
@@ -1811,13 +1830,12 @@ function applyFilters() {
     if (search && !siteMatchesSearchText(s, searchValue)) return false;
     const category = listingCategory(s);
     const listingMatch = (ffs && category === 'for_sale') || (frti && category === 'rti') || (fcomp && category === 'off_market');
-    if (!listingMatch) return false;
+    if (listingFiltersActive && !listingMatch) return false;
     const devKey = developmentStatusKey(s);
     const devMatch = devStatuses.includes(devKey) || (devStatuses.includes('city_approved_not_started') && s.rti);
-    if (!devStatuses.length) return false;
-    if (devStatuses.length && !devMatch) return false;
+    if (devStatusFiltersActive && !devMatch) return false;
     if (watchOnly && !isWatched(s.id)) return false;
-    if (!types.length || !types.includes(s.type)) return false;
+    if (typeFiltersActive && !typeMatchesSelected(s, types)) return false;
     if (hood && siteNeighborhood(s) !== hood) return false;
     if (s.units < umin || s.units > umax) return false;
     const buildingSf = siteBuildingSf(s);
@@ -4259,8 +4277,7 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
 }
 
 function resetFilters() {
-  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-d-submitted','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
-  const newHouse=g('f-nh'); if(newHouse)newHouse.checked=false;
+  ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-nh','f-d-submitted','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
   const watch=g('f-watch'); if(watch)watch.checked=false;
   ['f-hood'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-q','f-umin','f-umax','f-sfmin','f-sfmax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c','mf-hc','mf-rate'].forEach(id=>{const el=g(id);if(el)el.value='';});

@@ -812,7 +812,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
     hood:         neighborhood,
-    type:         s.project_type ?? s.type ?? 'Multifamily',
+    type:         canonicalProjectType(s.project_type ?? s.type) || 'Multifamily',
     zone:         s.zoning ?? s.zone ?? null,
     lot:          lotSf,
     units:        s.units ?? null,
@@ -994,6 +994,28 @@ function redactSiteResult(site, hasAccess) {
 
 function listParam(value) {
   return String(value || '').split(',').map(v => v.trim()).filter(Boolean);
+}
+
+function canonicalProjectType(value) {
+  const raw = String(value || '').trim();
+  const compact = raw.toLowerCase().replace(/\s+/g, ' ').replace(/\s*\/\s*/g, '/');
+  if (!compact) return '';
+  if (compact === 'mixed-use' || compact === 'mixed use') return 'Mixed-Use';
+  if (compact === 'condo/th' || compact.includes('townhouse')) return 'Condo/TH';
+  if (compact === 'new house' || compact === 'single family' || compact === 'sfd') return 'New House';
+  if (compact === 'multifamily' || compact === 'multi-family' || compact === 'multi family') return 'Multifamily';
+  return raw;
+}
+
+function dbProjectTypeVariants(value) {
+  const type = canonicalProjectType(value);
+  const variants = {
+    'Multifamily': ['Multifamily', 'Multi-Family', 'Multi Family'],
+    'Mixed-Use': ['Mixed-Use', 'Mixed-use', 'Mixed Use'],
+    'Condo/TH': ['Condo/TH', 'Condo / TH', 'Condo', 'Townhouse'],
+    'New House': ['New House', 'Single Family', 'SFD'],
+  };
+  return variants[type] || (type ? [type] : []);
 }
 
 function hasModelOverrideParams(query) {
@@ -1300,8 +1322,8 @@ function sitePassesQueryFilters(s, queryParams) {
   if (!sitePassesDataQualityGate(s, queryParams)) return false;
   if (!siteMatchesSearch(s, queryParams.q || queryParams.search)) return false;
 
-  const typeList = listParam(queryParams.types || queryParams.type);
-  if (typeList.length && !typeList.includes(s.type)) return false;
+  const typeList = listParam(queryParams.types || queryParams.type).map(canonicalProjectType).filter(Boolean);
+  if (typeList.length && !typeList.includes(canonicalProjectType(s.type))) return false;
   if (queryParams.hood && s.hood !== queryParams.hood) return false;
   if (queryParams.zone && !zoneMatches(s.zone, queryParams.zone)) return false;
 
@@ -1342,9 +1364,9 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
 
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
   const hasExplicitTypeFilter = Boolean(queryParams.types || queryParams.type);
-  const types = listParam(queryParams.types || queryParams.type);
+  const types = listParam(queryParams.types || queryParams.type).map(canonicalProjectType).filter(Boolean);
   const excludesNewHouseInMixedView = types.includes('New House') && types.length > 1 && !search;
-  const dbTypes = excludesNewHouseInMixedView ? types.filter(type => type !== 'New House') : types;
+  const dbTypes = [...new Set((excludesNewHouseInMixedView ? types.filter(type => type !== 'New House') : types).flatMap(dbProjectTypeVariants))];
   const mayReturnNewHouse = (types.includes('New House') && !excludesNewHouseInMixedView) || (!types.length && search);
   const devStatuses = listParam(queryParams.devStatus);
   const canPushDevStatus = devStatuses.every(status => [
@@ -1553,8 +1575,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       const m = s._m;
       if (!sitePassesDataQualityGate(s, req.query)) return false;
       if (!siteMatchesSearch(s, req.query.q || req.query.search)) return false;
-      const typeList = listParam(req.query.types || type);
-      if (typeList.length && !typeList.includes(s.type)) return false;
+      const typeList = listParam(req.query.types || type).map(canonicalProjectType).filter(Boolean);
+      if (typeList.length && !typeList.includes(canonicalProjectType(s.type))) return false;
       if (hood    && s.hood  !== hood)               return false;
       if (zone    && !zoneMatches(s.zone, zone))     return false;
       const listings = listParam(req.query.listing);
