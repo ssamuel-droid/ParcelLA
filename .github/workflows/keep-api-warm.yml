@@ -14,4 +14,4 @@ jobs:
         run: curl --fail --silent --show-error --max-time 45 https://parcella-api-production.up.railway.app/api/health
 
       - name: Warm first sites page
-        run: curl --fail --silent --show-error --max-time 120 "https://parcella-api-production.up.railway.app/api/sites?sort=profit&limit=50&offset=0" > /dev/null
+        run: curl --fail --silent --show-error --max-time 45 "https://parcella-api-production.up.railway.app/api/sites?sort=profit&limit=20&offset=0&fast=1" > /dev/null

@@ -1250,9 +1250,23 @@ async function permitDetailNoticeForSearch(searchValue) {
 
 function numericFilterPass(value, min, max) {
   const n = Number(value || 0);
-  if (min && n && n < Number(min)) return false;
-  if (max && n && n > Number(max)) return false;
+  const minValue = activeNumericParam(min);
+  const maxValue = activeNumericParam(max);
+  if (minValue !== null && n && n < minValue) return false;
+  if (maxValue !== null && n && n > maxValue) return false;
   return true;
+}
+
+function activeNumericParam(value) {
+  if (Array.isArray(value)) value = value[0];
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function hasActiveNumericParam(value) {
+  return activeNumericParam(value) !== null;
 }
 
 function normalizeZone(value) {
@@ -1336,24 +1350,36 @@ function sitePassesQueryFilters(s, queryParams) {
 
   if (queryParams.rti !== undefined && s.rti !== (queryParams.rti === 'true')) return false;
   if (queryParams.isComp !== undefined && s.isComp !== (queryParams.isComp === 'true')) return false;
-  if (queryParams.minUnits && Number(s.units || 0) < Number(queryParams.minUnits)) return false;
-  if (queryParams.maxUnits && Number(s.units || 0) > Number(queryParams.maxUnits)) return false;
+  const minUnits = activeNumericParam(queryParams.minUnits);
+  const maxUnits = activeNumericParam(queryParams.maxUnits);
+  if (minUnits !== null && Number(s.units || 0) < minUnits) return false;
+  if (maxUnits !== null && Number(s.units || 0) > maxUnits) return false;
   const buildingSf = Number(s.buildingSf ?? s.totalBuildingSf ?? m.buildingSf ?? 0);
-  if (queryParams.minSf && buildingSf < Number(queryParams.minSf)) return false;
-  if (queryParams.maxSf && buildingSf > Number(queryParams.maxSf)) return false;
-  if (queryParams.minLot && Number(s.lot || 0) < Number(queryParams.minLot)) return false;
-  if (queryParams.maxLot && Number(s.lot || 0) > Number(queryParams.maxLot)) return false;
+  const minSf = activeNumericParam(queryParams.minSf);
+  const maxSf = activeNumericParam(queryParams.maxSf);
+  const minLot = activeNumericParam(queryParams.minLot);
+  const maxLot = activeNumericParam(queryParams.maxLot);
+  if (minSf !== null && buildingSf < minSf) return false;
+  if (maxSf !== null && buildingSf > maxSf) return false;
+  if (minLot !== null && Number(s.lot || 0) < minLot) return false;
+  if (maxLot !== null && Number(s.lot || 0) > maxLot) return false;
 
   const landBasis = Number(s.price ?? m.landCost ?? 0);
   if (!numericFilterPass(landBasis, queryParams.minPrice, queryParams.maxPrice)) return false;
-  if (queryParams.minCost && Number(m.totalCost || 0) < Number(queryParams.minCost)) return false;
-  if (queryParams.maxCost && Number(m.totalCost || Infinity) > Number(queryParams.maxCost)) return false;
-  if (queryParams.minIRR && Number(m.leveragedIRR || 0) < Number(queryParams.minIRR)) return false;
-  if (queryParams.minProfit && Number(m.netProfit || 0) < Number(queryParams.minProfit)) return false;
+  const minCost = activeNumericParam(queryParams.minCost);
+  const maxCost = activeNumericParam(queryParams.maxCost);
+  const minIRR = activeNumericParam(queryParams.minIRR);
+  const minProfit = activeNumericParam(queryParams.minProfit);
+  if (minCost !== null && Number(m.totalCost || 0) < minCost) return false;
+  if (maxCost !== null && Number(m.totalCost || Infinity) > maxCost) return false;
+  if (minIRR !== null && Number(m.leveragedIRR || 0) < minIRR) return false;
+  if (minProfit !== null && Number(m.netProfit || 0) < minProfit) return false;
   const spreadPct = Math.abs(Number(m.devSpreadPct || 0)) <= 1 ? Number(m.devSpreadPct || 0) * 100 : Number(m.devSpreadPct || 0);
   const capOnCostPct = Math.abs(Number(m.capRateOnCost || 0)) <= 1 ? Number(m.capRateOnCost || 0) * 100 : Number(m.capRateOnCost || 0);
-  if (queryParams.minSpread && spreadPct < Number(queryParams.minSpread)) return false;
-  if (queryParams.minCapoc && capOnCostPct < Number(queryParams.minCapoc)) return false;
+  const minSpread = activeNumericParam(queryParams.minSpread);
+  const minCapoc = activeNumericParam(queryParams.minCapoc);
+  if (minSpread !== null && spreadPct < minSpread) return false;
+  if (minCapoc !== null && capOnCostPct < minCapoc) return false;
   return true;
 }
 
@@ -1376,15 +1402,31 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     'permit_issued',
     'possibly_started_unknown',
   ].includes(status));
+  const activeNumericFilters = [
+    queryParams.minUnits,
+    queryParams.maxUnits,
+    queryParams.minLot,
+    queryParams.maxLot,
+    queryParams.minSf,
+    queryParams.maxSf,
+    queryParams.minPrice,
+    queryParams.maxPrice,
+    queryParams.minCost,
+    queryParams.maxCost,
+    queryParams.minProfit,
+    queryParams.minIRR,
+    queryParams.minSpread,
+    queryParams.minCapoc,
+  ].some(hasActiveNumericParam);
   const needsPostFilter = Boolean(
     search ||
     mayReturnNewHouse ||
     queryParams.hood ||
     (queryParams.devStatus && !canPushDevStatus) ||
-    queryParams.minPrice ||
-    queryParams.maxPrice ||
-    queryParams.minSf ||
-    queryParams.maxSf
+    hasActiveNumericParam(queryParams.minPrice) ||
+    hasActiveNumericParam(queryParams.maxPrice) ||
+    hasActiveNumericParam(queryParams.minSf) ||
+    hasActiveNumericParam(queryParams.maxSf)
   );
   const usesSelectiveFilters = !!(
     search ||
@@ -1392,25 +1434,15 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     queryParams.listing ||
     queryParams.devStatus ||
     queryParams.zone ||
-    queryParams.minUnits ||
-    queryParams.maxUnits ||
-    queryParams.minSf ||
-    queryParams.maxSf ||
-    queryParams.minPrice ||
-    queryParams.maxPrice ||
-    queryParams.minCost ||
-    queryParams.maxCost ||
-    queryParams.minProfit ||
-    queryParams.minIRR ||
-    queryParams.minSpread ||
-    queryParams.minCapoc ||
+    activeNumericFilters ||
     hasModelOverrideParams(queryParams)
   );
+  const skipEstimatedCount = String(queryParams.fast || '') === '1';
 
   const selectColumns = search && !queryParams.devStatus ? SITE_SEARCH_SELECT : SITE_LIST_SELECT;
   let query = supabase
     .from('sites')
-    .select(selectColumns, usesSelectiveFilters ? undefined : { count: 'estimated' })
+    .select(selectColumns, usesSelectiveFilters || skipEstimatedCount ? undefined : { count: 'estimated' })
     .in('status', ['active', 'off-market'])
     .not('net_profit', 'is', null);
 
@@ -1423,14 +1455,22 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   }
   if (!hasExplicitTypeFilter && !search) query = query.neq('project_type', 'New House');
   if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
-  if (queryParams.minUnits) query = query.gte('units', Number(queryParams.minUnits));
-  if (queryParams.maxUnits) query = query.lte('units', Number(queryParams.maxUnits));
-  if (queryParams.minCost) query = query.gte('total_cost', Number(queryParams.minCost));
-  if (queryParams.maxCost) query = query.lte('total_cost', Number(queryParams.maxCost));
-  if (queryParams.minProfit) query = query.gte('net_profit', Number(queryParams.minProfit));
-  if (queryParams.minIRR) query = query.gte('irr_v', Number(queryParams.minIRR));
-  if (queryParams.minSpread) query = query.gte('dev_spread_pct', Number(queryParams.minSpread));
-  if (queryParams.minCapoc) query = query.gte('cap_on_cost', Number(queryParams.minCapoc));
+  const minUnits = activeNumericParam(queryParams.minUnits);
+  const maxUnits = activeNumericParam(queryParams.maxUnits);
+  const minCost = activeNumericParam(queryParams.minCost);
+  const maxCost = activeNumericParam(queryParams.maxCost);
+  const minProfit = activeNumericParam(queryParams.minProfit);
+  const minIRR = activeNumericParam(queryParams.minIRR);
+  const minSpread = activeNumericParam(queryParams.minSpread);
+  const minCapoc = activeNumericParam(queryParams.minCapoc);
+  if (minUnits !== null) query = query.gte('units', minUnits);
+  if (maxUnits !== null) query = query.lte('units', maxUnits);
+  if (minCost !== null) query = query.gte('total_cost', minCost);
+  if (maxCost !== null) query = query.lte('total_cost', maxCost);
+  if (minProfit !== null) query = query.gte('net_profit', minProfit);
+  if (minIRR !== null) query = query.gte('irr_v', minIRR);
+  if (minSpread !== null) query = query.gte('dev_spread_pct', minSpread);
+  if (minCapoc !== null) query = query.gte('cap_on_cost', minCapoc);
 
   if (search) {
     const clauses = [];
@@ -1506,7 +1546,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     return { sites: page, total, notice };
   }
   const rollingTotal = requestedOffset + rows.length + (rows.length === requestedLimit ? requestedLimit : 0);
-  return { sites: mapped, total: count ?? rollingTotal };
+  return { sites: mapped, total: skipEstimatedCount ? rollingTotal : (count ?? rollingTotal) };
 }
 router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
   try {
@@ -1569,6 +1609,22 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     // and user hard-cost overrides are consistent with the latest app logic.
     // Cache the result because the frontend loads multiple pages in sequence.
     const modelled = usedFastPage ? sites : getModelledSites(sites, overrides);
+    const fallbackFilters = {
+      minUnits: activeNumericParam(minUnits),
+      maxUnits: activeNumericParam(maxUnits),
+      minLot: activeNumericParam(minLot),
+      maxLot: activeNumericParam(maxLot),
+      minSf: activeNumericParam(minSf),
+      maxSf: activeNumericParam(maxSf),
+      minPrice: activeNumericParam(minPrice),
+      maxPrice: activeNumericParam(maxPrice),
+      minCost: activeNumericParam(minCost),
+      maxCost: activeNumericParam(maxCost),
+      minIRR: activeNumericParam(minIRR),
+      minProfit: activeNumericParam(minProfit),
+      minSpread: activeNumericParam(minSpread),
+      minCapoc: activeNumericParam(minCapoc),
+    };
 
     // Filter
     let filtered = usedFastPage ? modelled : modelled.filter(s => {
@@ -1586,22 +1642,22 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       if (devStatuses.length && !(devStatuses.includes(devKey) || (devStatuses.includes('city_approved_not_started') && s.rti))) return false;
       if (rti     !== undefined && s.rti !== (rti === 'true'))  return false;
       if (isComp  !== undefined && s.isComp !== (isComp === 'true')) return false;
-      if (minUnits && s.units < +minUnits)            return false;
-      if (maxUnits && s.units > +maxUnits)            return false;
+      if (fallbackFilters.minUnits !== null && s.units < fallbackFilters.minUnits) return false;
+      if (fallbackFilters.maxUnits !== null && s.units > fallbackFilters.maxUnits) return false;
       const buildingSf = Number(s.buildingSf ?? s.totalBuildingSf ?? m.buildingSf ?? 0);
-      if (minSf && buildingSf < +minSf)                return false;
-      if (maxSf && buildingSf > +maxSf)                return false;
-      if (minLot  && s.lot   < +minLot)              return false;
-      if (maxLot  && s.lot   > +maxLot)              return false;
+      if (fallbackFilters.minSf !== null && buildingSf < fallbackFilters.minSf) return false;
+      if (fallbackFilters.maxSf !== null && buildingSf > fallbackFilters.maxSf) return false;
+      if (fallbackFilters.minLot !== null && s.lot < fallbackFilters.minLot) return false;
+      if (fallbackFilters.maxLot !== null && s.lot > fallbackFilters.maxLot) return false;
       const landBasis = Number(s.price ?? m.landCost ?? 0);
-      if (minPrice && landBasis && landBasis < +minPrice) return false;
-      if (maxPrice && landBasis && landBasis > +maxPrice) return false;
-      if (minCost && (m.totalCost ?? 0) < +minCost) return false;
-      if (maxCost && (m.totalCost ?? Infinity) > +maxCost) return false;
-      if (minIRR   && m.leveragedIRR    < +minIRR)           return false;
-      if (minProfit && m.netProfit < +minProfit)         return false;
-      if (minSpread && m.devSpreadPct < +minSpread)   return false;
-      if (minCapoc  && m.capRateOnCost < +minCapoc)       return false;
+      if (fallbackFilters.minPrice !== null && landBasis && landBasis < fallbackFilters.minPrice) return false;
+      if (fallbackFilters.maxPrice !== null && landBasis && landBasis > fallbackFilters.maxPrice) return false;
+      if (fallbackFilters.minCost !== null && (m.totalCost ?? 0) < fallbackFilters.minCost) return false;
+      if (fallbackFilters.maxCost !== null && (m.totalCost ?? Infinity) > fallbackFilters.maxCost) return false;
+      if (fallbackFilters.minIRR !== null && m.leveragedIRR < fallbackFilters.minIRR) return false;
+      if (fallbackFilters.minProfit !== null && m.netProfit < fallbackFilters.minProfit) return false;
+      if (fallbackFilters.minSpread !== null && m.devSpreadPct < fallbackFilters.minSpread) return false;
+      if (fallbackFilters.minCapoc !== null && m.capRateOnCost < fallbackFilters.minCapoc) return false;
       return true;
     });
 

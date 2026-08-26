@@ -8,8 +8,9 @@ const GMAPS_KEY = 'AIzaSyAC7R0Wlh41L71vexWCYqdn3WAjx8PJeQ0';
 // LA City Open Data — fetched client-side (browser not blocked like Railway)
 const SOCRATA_TOKEN = 'Mj7n61b8beE9ZbxZPhNMSUrh';
 const SOCRATA_BASE  = 'https://data.lacity.org/resource';
-const SITE_FIRST_PAGE_TIMEOUT_MS = 45000;
-const SITE_RETRY_TIMEOUT_MS = 120000;
+const SITE_PAGE_LIMIT = 20;
+const SITE_FIRST_PAGE_TIMEOUT_MS = 18000;
+const SITE_RETRY_TIMEOUT_MS = 45000;
 
 let authClient = null;
 let authSession = null;
@@ -545,7 +546,7 @@ const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
 let siteLoadRunId = 0;
-let sitePageTotal = 0, sitePageLimit = 50, currentSiteQuery = '';
+let sitePageTotal = 0, sitePageLimit = SITE_PAGE_LIMIT, currentSiteQuery = '';
 let siteNotice = null;
 let authBooted = false, authMessage = '';
 const g = id => document.getElementById(id);
@@ -1667,10 +1668,17 @@ function refreshZoneOptions() {
   el.value = zones.includes(current) ? current : '';
 }
 
+function positiveInputValue(id) {
+  const raw = String(g(id)?.value || '').trim();
+  if (!raw) return '';
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? raw : '';
+}
+
 function buildSiteQueryParams(offset = 0) {
   const search = (g('f-q')?.value || '').trim();
   const pageLimit = sitePageLimit;
-  const qs = new URLSearchParams({ sort: g('srt')?.value || 'profit', limit: String(pageLimit), offset: String(offset) });
+  const qs = new URLSearchParams({ sort: g('srt')?.value || 'profit', limit: String(pageLimit), offset: String(offset), fast: '1' });
   if (search) qs.set('q', search);
   const types = [];
   if (g('f-mf')?.checked) types.push('Multifamily');
@@ -1699,12 +1707,15 @@ function buildSiteQueryParams(offset = 0) {
     ['f-cmin', 'minCost'], ['f-cmax', 'maxCost'],
     ['mf-i', 'minIRR'], ['mf-s', 'minSpread'], ['mf-c', 'minCapoc'],
   ];
-  pairs.forEach(([id, key]) => { const val = g(id)?.value; if (val) qs.set(key, val); });
-  const minPrice = g('f-pmin')?.value;
-  const maxPrice = g('f-pmax')?.value;
+  pairs.forEach(([id, key]) => {
+    const val = id === 'f-hood' ? String(g(id)?.value || '').trim() : positiveInputValue(id);
+    if (val) qs.set(key, val);
+  });
+  const minPrice = positiveInputValue('f-pmin');
+  const maxPrice = positiveInputValue('f-pmax');
   if (minPrice) qs.set('minPrice', minPrice);
   if (maxPrice) qs.set('maxPrice', maxPrice);
-  const minProfit = Number(g('mf-p')?.value || 0);
+  const minProfit = Number(positiveInputValue('mf-p') || 0);
   if (minProfit) qs.set('minProfit', String(minProfit * 1000));
   return qs;
 }
@@ -1732,16 +1743,16 @@ async function fetchSitePage(qs) {
 
 async function loadSites(autoRetry = 0) {
   const runId = ++siteLoadRunId;
-  g('rct').textContent = 'Loading first 50 sites...';
-  g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loading first 50 sites...</div>';
+  g('rct').textContent = 'Loading first ' + sitePageLimit + ' sites...';
+  g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loading first ' + sitePageLimit + ' sites...</div>';
   const startedAt = Date.now();
   const slowTimer = setTimeout(() => {
     if (runId !== siteLoadRunId) return;
     const list = g('list');
-    if (list && list.textContent.includes('Loading first 50')) {
+    if (list && list.textContent.includes('Loading first ' + sitePageLimit)) {
       const qs = currentSiteQuery || buildSiteQueryParams(0).toString();
       const apiUrl = (API || '') + '/api/sites?' + qs;
-      list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...<br><small style="display:block;margin-top:8px;color:#768295">Keeping the request open for up to 2 minutes so the first page can finish.</small><br><button class="gb" style="margin-top:10px" onclick="loadSites()">Retry now</button><br><a style="display:block;margin-top:8px;font-size:11px;color:#667790" href="' + escapeText(apiUrl) + '" target="_blank" rel="noopener">Open API test</a></div>';
+      list.innerHTML = '<div class="sw"><div class="spin"></div>Still loading. The data server may be waking up...<br><small style="display:block;margin-top:8px;color:#768295">Keeping the request open briefly so the first page can finish.</small><br><button class="gb" style="margin-top:10px" onclick="loadSites()">Retry now</button><br><a style="display:block;margin-top:8px;font-size:11px;color:#667790" href="' + escapeText(apiUrl) + '" target="_blank" rel="noopener">Open API test</a></div>';
       g('albl').textContent = 'API waking up';
     }
   }, 7000);
@@ -1927,14 +1938,16 @@ function updateHardCostOverrideUI() {
 
 function loadMoreHTML() {
   return allSites.length < sitePageTotal
-    ? '<div class="loadmore"><button class="gb" id="load-more" onclick="loadMoreSites()">Load 50 more (' + allSites.length.toLocaleString() + ' of ' + sitePageTotal.toLocaleString() + ' loaded)</button></div>'
+    ? '<div class="loadmore"><button class="gb" id="load-more" onclick="loadMoreSites()">Load ' + sitePageLimit + ' more (' + allSites.length.toLocaleString() + ' of ' + sitePageTotal.toLocaleString() + ' loaded)</button></div>'
     : '';
 }
 
 function activeFilterSummaryHTML() {
   const items = [];
+  const numericIds = new Set(['f-umin','f-umax','f-sfmin','f-sfmax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c']);
   const addValue = (id, label) => {
     const val = (g(id)?.value || '').trim();
+    if (numericIds.has(id) && !positiveInputValue(id)) return;
     if (val) items.push(label + ': ' + val);
   };
   addValue('f-q', 'Search');
@@ -1959,8 +1972,12 @@ function emptyResultsHTML() {
   const notice = siteNotice?.message
     ? '<small style="display:block;margin:8px auto 12px;max-width:580px;color:#b98b2f">' + escapeText(siteNotice.message) + '</small>'
     : '';
+  const loadedNotice = allSites.length
+    ? '<small style="display:block;margin:8px auto 12px;max-width:580px;color:#667790">Loaded ' + allSites.length.toLocaleString() + ' rows from the API, then your filters removed them.</small>'
+    : '';
   return '<div class="empty"><b>No sites match your filters</b>' +
     notice +
+    loadedNotice +
     activeFilterSummaryHTML() +
     '<button class="gb" onclick="resetFilters()">Reset filters</button></div>' + loadMoreHTML();
 }

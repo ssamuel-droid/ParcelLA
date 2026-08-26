@@ -139,7 +139,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status:    'ok',
     version:   '3.0.0',
-    release:   '2026-08-26-filter-reset-normalization',
+    release:   '2026-08-26-fast-zero-filter-fix',
     timestamp: new Date().toISOString(),
     env:       process.env.NODE_ENV ?? 'development',
     services: {
