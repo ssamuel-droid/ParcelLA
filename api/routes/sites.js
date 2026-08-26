@@ -90,6 +90,39 @@ const SITE_LIST_SELECT = [
   'regrid_enriched_at',
   'raw_permit_data',
 ].join(',');
+const SITE_PREVIEW_SELECT = [
+  'id',
+  'address',
+  'neighborhood',
+  'project_type',
+  'zoning',
+  'lot_sf',
+  'units',
+  'avg_unit_sf',
+  'rti',
+  'is_comp',
+  'price',
+  'status',
+  'lat',
+  'lng',
+  'permit_source_id',
+  'total_cost',
+  'hard_costs',
+  'soft_costs',
+  'carry_cost',
+  'noi',
+  'exit_value',
+  'net_profit',
+  'irr_v',
+  'cap_on_cost',
+  'dev_spread_pct',
+  'entry_cap_rate',
+  'owner_name',
+  'owner_last_sale_date',
+  'owner_last_sale_amount',
+  'owner_source',
+  'raw_permit_data',
+].join(',');
 const SITE_SEARCH_SELECT = SITE_LIST_SELECT;
 
 const NEIGHBORHOOD_BOXES = [
@@ -1439,7 +1472,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   );
   const skipEstimatedCount = String(queryParams.fast || '') === '1';
 
-  const selectColumns = search && !queryParams.devStatus ? SITE_SEARCH_SELECT : SITE_LIST_SELECT;
+  const selectColumns = skipEstimatedCount ? SITE_PREVIEW_SELECT : (search && !queryParams.devStatus ? SITE_SEARCH_SELECT : SITE_LIST_SELECT);
   let query = supabase
     .from('sites')
     .select(selectColumns, usesSelectiveFilters || skipEstimatedCount ? undefined : { count: 'estimated' })
