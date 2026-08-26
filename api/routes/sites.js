@@ -196,13 +196,36 @@ function perDoorLandBasis(type, units) {
   };
 }
 
+function hasPermitValuationDerivedHouseSize(site = {}, rawPermit = site.raw_permit_data || {}, model = {}) {
+  const type = String(site.project_type ?? site.type ?? '').trim().toLowerCase();
+  if (type !== 'new house') return false;
+  const valuation = numberFromValue(rawPermit.permit_valuation ?? site.permitValuation ?? site.valuation) || 0;
+  const buildingSf = numberFromValue(
+    rawPermit.building_sf ??
+    site.buildingSf ??
+    site.building_sf ??
+    model.buildingSf
+  ) || 0;
+  const buildingSfSource = String(
+    rawPermit.building_sf_source ||
+    site.buildingSfSource ||
+    model.buildingSfSource ||
+    ''
+  ).toLowerCase();
+  return valuation > 0
+    && buildingSf >= 900
+    && buildingSf <= 25000
+    && buildingSfSource.includes('permit valuation-derived');
+}
+
 function isNewHousePermitPlaceholder(site = {}, rawPermit = {}) {
   const type = String(site.project_type ?? site.type ?? '').trim().toLowerCase();
   if (type !== 'new house') return false;
   const source = String(rawPermit.land_value_source || site.landValueSource || '').toLowerCase();
   const price = numberFromValue(site.price ?? site.askPrice ?? site.landCost) || 0;
+  const hasValuationEstimate = hasPermitValuationDerivedHouseSize(site, rawPermit);
   return (
-    source.includes('permit_valuation_fallback') ||
+    (source.includes('permit_valuation_fallback') && !hasValuationEstimate) ||
     source.includes('land_comp_needed') ||
     source.includes('hard cost percentage fallback') ||
     source.includes('asking_price') ||
@@ -215,6 +238,7 @@ function needsLandCompForHouse(site = {}, rawPermit = {}, compLand = null, doorL
   if (type !== 'new house') return false;
   if (doorLand?.value || compLand?.value) return false;
   const price = numberFromValue(site.price ?? site.askPrice ?? site.landCost) || 0;
+  if (hasPermitValuationDerivedHouseSize(site, rawPermit) && price > 150000) return false;
   return isNewHousePermitPlaceholder(site, rawPermit) || (isOffMarketSiteRow(site) && price <= 150000);
 }
 
@@ -238,12 +262,14 @@ function hasUsableNewHousePlanData(site = {}, model = site._m || {}) {
     ''
   ).toLowerCase();
   const buildingSfParsed = rawPermit.building_sf_parsed ?? site.buildingSfParsed ?? model.buildingSfParsed;
+  const hasValuationEstimate = hasPermitValuationDerivedHouseSize(site, rawPermit, model);
   const hasRealBuildingSize = buildingSf > 0
     && buildingSf !== 800
     && (
       buildingSfParsed === true ||
       buildingSfSource.includes('permit work description') ||
-      buildingSfSource.includes('permit source field')
+      buildingSfSource.includes('permit source field') ||
+      hasValuationEstimate
     );
 
   const landSource = String(
@@ -260,7 +286,7 @@ function hasUsableNewHousePlanData(site = {}, model = site._m || {}) {
     site.landCost
   ) || 0;
   const landIsPlaceholder = landSource.includes('land_comp_needed')
-    || landSource.includes('permit_valuation_fallback')
+    || (landSource.includes('permit_valuation_fallback') && !hasValuationEstimate)
     || landSource.includes('hard cost percentage fallback')
     || (landCost > 0 && landCost <= 150000);
 
@@ -539,6 +565,12 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const units = Number(s.units || 0);
   const avgUnitSf = Number(s.avg_unit_sf || s.usf || 800);
   const buildingSf = Number(rawPermit.building_sf || 0) || (units * avgUnitSf);
+  const permitValuation = numberFromValue(rawPermit.permit_valuation ?? s.valuation) || null;
+  const hasPermitValuationEstimate = hasPermitValuationDerivedHouseSize(s, rawPermit, {
+    buildingSf,
+    buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source,
+    buildingSfParsed: rawPermit.building_sf_parsed,
+  });
   const neighborhood = normalizedNeighborhood(s) || 'Koreatown';
   const unitMix = unitMixForSite(rawPermit, s, type);
   const rents = RENTS[neighborhood] || RENTS.Koreatown;
@@ -593,6 +625,10 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const recastIrr = needsLandComp ? null : (type === 'New House' && equity > 500 && exitValue
     ? Math.min(Math.max(irr([-equity, -loanAmount * 0.065, -loanAmount * 0.065, -loanAmount * 0.065, -loanAmount * 0.065, exitValue - loanAmount]), -50), 100)
     : storedIrr);
+  const rawLandValueSource = landMeta.source || rawPermit.land_value_source || (offMarket ? 'permit_valuation_fallback' : 'asking_price');
+  const landValueSource = rawLandValueSource === 'permit_valuation_fallback' && hasPermitValuationEstimate
+    ? 'permit_valuation_estimate'
+    : rawLandValueSource;
 
   return {
     needsLandComp,
@@ -600,7 +636,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     noi,
     totalCost: recastTotalCost,
     landCost,
-    landValueSource: needsLandComp ? 'land_comp_needed' : (landMeta.source || rawPermit.land_value_source || (offMarket ? 'permit_valuation_fallback' : 'asking_price')),
+    landValueSource: needsLandComp ? 'land_comp_needed' : landValueSource,
     landValueMetric: landMeta.metricLabel || rawPermit.land_value_metric || null,
     landValueMetricValue: landMeta.metricValue || rawPermit.land_value_metric_value || null,
     landValueBasisQuantity: landMeta.basisQuantity || rawPermit.land_value_basis_quantity || null,
@@ -630,6 +666,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     buildingSf,
     buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source || null,
     buildingSfParsed: rawPermit.building_sf_parsed ?? null,
+    permitValuation,
     lotSfSource: rawPermit.lot_sf_source || null,
   };
 }
@@ -657,6 +694,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     buildingSf:   rawPermit.building_sf || model.buildingSf || null,
     buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source || null,
     buildingSfParsed: rawPermit.building_sf_parsed ?? null,
+    permitValuation: rawPermit.permit_valuation || model.permitValuation || null,
     lotSfSource:  rawPermit.lot_sf_source || null,
     exitValueSource: rawPermit.exit_value_source || model.exitValueSource || null,
     exitValueMetric: rawPermit.exit_value_metric || model.exitValueMetric || null,
@@ -1280,6 +1318,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         buildingSf:   s.buildingSf ?? s._m.buildingSf,
         buildingSfSource: s.buildingSfSource ?? s._m.buildingSfSource,
         buildingSfParsed: s.buildingSfParsed ?? s._m.buildingSfParsed,
+        permitValuation: s.permitValuation ?? s._m.permitValuation ?? null,
         lotSfSource:  s.lotSfSource ?? s._m.lotSfSource,
         exitValueSource: s.exitValueSource ?? s._m.exitValueSource,
         exitValueMetric: s.exitValueMetric ?? s._m.exitValueMetric,

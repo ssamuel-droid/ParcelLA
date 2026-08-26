@@ -622,7 +622,13 @@ function uw(p, inspectionCheck = null) {
   const doorLand = ['Multifamily','Mixed-Use'].includes(t)
     ? u * DEFAULT_MARKET_LAND_PER_DOOR
     : 0;
-  if (t === 'New House' && (!buildingSize.parsed || !compLand?.value)) {
+  const hasPermitValuationEstimate = t === 'New House'
+    && buildingSize.source === 'Permit valuation-derived estimate'
+    && Number(p.valuation || 0) > 0;
+  if (t === 'New House' && buildingSize.source === 'Model assumption') {
+    return null;
+  }
+  if (t === 'New House' && !compLand?.value && !hasPermitValuationEstimate) {
     return null;
   }
   const land = doorLand || compLand?.value || fallbackLand;
@@ -671,12 +677,12 @@ function uw(p, inspectionCheck = null) {
         source: 'LADBS Building and Safety Inspections',
         dataset: INSPECTIONS_DATASET,
       },
-      land_value_source:doorLand ? 'default_market_per_door' : (compLand?.source || 'permit_valuation_fallback'),
-      land_value_metric:doorLand ? 'price per door' : (compLand?.metricLabel || (p.valuation>hard ? 'permit valuation' : 'hard cost percentage fallback')),
-      land_value_metric_value:doorLand ? DEFAULT_MARKET_LAND_PER_DOOR : (compLand?.metricValue ? Math.round(compLand.metricValue) : null),
-      land_value_basis_quantity:doorLand ? u : (compLand?.basisQuantity ? Math.round(compLand.basisQuantity) : null),
+      land_value_source:doorLand ? 'default_market_per_door' : (compLand?.source || (hasPermitValuationEstimate ? 'permit_valuation_estimate' : 'permit_valuation_fallback')),
+      land_value_metric:doorLand ? 'price per door' : (compLand?.metricLabel || (hasPermitValuationEstimate ? '45% of permit valuation' : 'hard cost percentage fallback')),
+      land_value_metric_value:doorLand ? DEFAULT_MARKET_LAND_PER_DOOR : (compLand?.metricValue ? Math.round(compLand.metricValue) : (hasPermitValuationEstimate ? Math.round(land) : null)),
+      land_value_basis_quantity:doorLand ? u : (compLand?.basisQuantity ? Math.round(compLand.basisQuantity) : (hasPermitValuationEstimate ? Math.round(p.valuation || 0) : null)),
       land_value_comp_count:doorLand ? 0 : (compLand?.compCount || 0),
-      land_value_match:doorLand ? 'market-rate default' : (compLand?.matchLabel || null),
+      land_value_match:doorLand ? 'market-rate default' : (compLand?.matchLabel || (hasPermitValuationEstimate ? 'permit valuation estimate' : null)),
       land_value_recency_days:doorLand ? LAND_COMP_RECENCY_DAYS : (compLand?.recencyDays || LAND_COMP_RECENCY_DAYS),
       land_value_comps:doorLand ? [] : (compLand?.comps || []),
     },

@@ -198,6 +198,7 @@ function landPricePerSfText(s, land) {
 function siteAvgUnitSfText(s) {
   const avg = Number(s?.usf || s?.avgUnitSf || 0);
   const source = String(s?.buildingSfSource || s?.avgUnitSfSource || '');
+  if (/permit valuation-derived/i.test(source) && avg > 0) return `${Math.round(avg).toLocaleString()} SF avg est.`;
   const assumed = !avg || /model assumption/i.test(source) || (avg === 800 && (s?.permitNumber || s?.permitSourceId || /default/i.test(String(s?.unitMixSource || ''))));
   return assumed ? '800 SF avg (assumed)' : `${Math.round(avg).toLocaleString()} SF avg`;
 }
@@ -208,7 +209,9 @@ function siteUnitSourceNote(s) {
   const source = String(s?.buildingSfSource || s?.avgUnitSfSource || '');
   const avgAssumed = !avg || /model assumption/i.test(source) || (avg === 800 && (s?.permitNumber || s?.permitSourceId || /default/i.test(String(s?.unitMixSource || ''))));
   const unitSource = units > 0 ? 'Unit count from permit/source data.' : 'Unit count was not provided.';
-  const avgSource = avgAssumed ? 'Avg SF is a model assumption.' : `Avg SF from ${source || 'source data'}.`;
+  const avgSource = /permit valuation-derived/i.test(source)
+    ? 'Avg SF estimated from permit valuation; confirm against plans.'
+    : (avgAssumed ? 'Avg SF is a model assumption.' : `Avg SF from ${source || 'source data'}.`);
   return `${unitSource} ${avgSource}`;
 }
 
@@ -1227,6 +1230,10 @@ function imputedLandFromDoorSetting(s) {
   return Math.round(landPerDoorForSite(s) * Number(s.units || 0));
 }
 
+function hasPermitValuationEstimate(s) {
+  return s?.landValueSource === 'permit_valuation_estimate' && Number(s?.permitValuation || 0) > 0;
+}
+
 function landValueSourceNote(s) {
   if (!isOffMarketSite(s)) return 'Listing ask price used as land basis.';
   if (canUseDoorLandBasis(s)) {
@@ -1241,6 +1248,9 @@ function landValueSourceNote(s) {
     const metricText = metricValue ? fmtD(metricValue) + suffix : metric;
     return `Recent land sales comp estimate: ${metricText}, ${count || 'saved'} comp${count===1?'':'s'}, ${match}.`;
   }
+  if (hasPermitValuationEstimate(s)) {
+    return `Permit valuation estimate: LADBS valuation ${fmtD(s.permitValuation)} used to estimate project size and land basis. Confirm before making an offer.`;
+  }
   if (s?.landValueSource === 'permit_valuation_fallback') {
     return 'Model placeholder only. No active asking price or recent matching land comps were available.';
   }
@@ -1251,6 +1261,7 @@ function landBasisLabel(s) {
   if (!isOffMarketSite(s)) return 'Asking price';
   if (canUseDoorLandBasis(s)) return 'User land basis';
   if (s?.landValueSource === 'recent_sales_comps') return 'Comp land basis';
+  if (hasPermitValuationEstimate(s)) return 'Permit valuation estimate';
   if (s?.landValueSource === 'permit_valuation_fallback') return 'Land basis';
   return 'Land basis';
 }
@@ -1258,7 +1269,7 @@ function landBasisLabel(s) {
 function hasReliableLandBasis(s) {
   if (s?.needsLandComp || s?.landBasisReliable === false) return false;
   if (!isOffMarketSite(s)) return siteAskPrice(s) > 0;
-  return canUseDoorLandBasis(s) || s?.landValueSource === 'recent_sales_comps';
+  return canUseDoorLandBasis(s) || s?.landValueSource === 'recent_sales_comps' || hasPermitValuationEstimate(s);
 }
 
 function sortableMetric(s, key) {
@@ -2415,6 +2426,7 @@ function renderDetail(s) {
     <table class="ct">
       <tr><td>Construction plan</td><td>${costs.planLabel}</td></tr>
       <tr><td>Total building SF</td><td>${totalSF.toLocaleString()} SF</td></tr>
+      <tr><td>Permit valuation</td><td>${s.permitValuation ? fmtD(s.permitValuation) : 'Not provided'}</td></tr>
       <tr><td>Hard construction</td><td>${fmtD(hardCosts)}</td></tr>
       <tr><td>Hard cost / SF</td><td>${fmtD(hardPerSf)}/SF${hardCostOverride?' <span style="color:#b98b2f;font-size:9px">custom input</span>':''}</td></tr>
       <tr><td>Hard cost / unit</td><td>${fmtD(hardPerUnit)}/unit</td></tr>
@@ -3437,6 +3449,8 @@ function constructionCostRows(s, tc, land) {
     xlsRow(['Units', cellNumber(units)]),
     xlsRow(['Avg Unit SF', cellNumber(avgUnitSf)]),
     xlsRow(['Total Net Rentable SF', cellNumber(totalSF)]),
+    xlsRow(['Permit Valuation', s.permitValuation ? cellMoney(s.permitValuation) : '', '', '', '', s.permitValuation ? 'Used as a rough sizing signal when permit plans/SF are not available.' : 'Not provided by source record']),
+    xlsRow(['Building SF Source', s.buildingSfSource || '', '', '', '', siteUnitSourceNote(s)]),
     xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current plan budget, not a contractor bid. Replace with GC pricing when available.' + (currentHardCostOverride() ? ' User hard-cost override applied across all deals: $' + currentHardCostOverride().toLocaleString() + '/SF.' : ''), 'String', 'note']]),
     xlsRow(['']),
     xlsHeaderRow(['Budget Category', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
@@ -3807,6 +3821,7 @@ async function exportPDF(id) {
       <tr><td>Proposed Units</td><td>${escapeText(siteUnitsText(s))}</td></tr>
       <tr><td>Avg Unit Size</td><td>${siteAvgUnitSfText(s)}</td></tr>
       <tr><td>Total Building SF</td><td>${(siteBuildingSf(s) || ((s.units||12)*(s.usf||800))).toLocaleString()} SF</td></tr>
+      <tr><td>Building SF Source</td><td>${escapeText(s.buildingSfSource || 'Not provided')}</td></tr>
     </table>
     <h3>Owner / Contact</h3>
     <table>
@@ -3818,6 +3833,7 @@ async function exportPDF(id) {
     <table>
       <tr><td>Development Status</td><td class="${developmentStatusKey(s) === 'city_approved_not_started' ? 'green' : 'amber'}">${developmentStatusLabel(s)}</td></tr>
       <tr><td>Raw Permit Status</td><td>${s.permitStatus || ''}</td></tr>
+      <tr><td>Permit Valuation</td><td>${s.permitValuation ? fmtD(s.permitValuation) : 'Not provided'}</td></tr>
       <tr><td>Listing Status</td><td>${siteListingStatus(s)}</td></tr>
       <tr><td>Demo Required</td><td>${s.demo ? 'Yes' : 'No'}</td></tr>
       <tr><td>Asking Price</td><td>${isForSaleSite(s) ? fmtD(siteAskPrice(s)) : 'Not for sale (imputed)'}</td></tr>
