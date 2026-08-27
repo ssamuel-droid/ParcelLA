@@ -15,6 +15,7 @@ const STALE_DAYS = intEnv('PROPERTY_ENRICH_STALE_DAYS', 30);
 const SALE_RECENCY_DAYS = intEnv('PROPERTY_ENRICH_SALE_RECENCY_DAYS', 1095);
 const REQUEST_DELAY_MS = intEnv('PROPERTY_ENRICH_DELAY_MS', 250);
 const INCLUDE_SITE_AVM = /^(1|true|yes)$/i.test(process.env.PROPERTY_ENRICH_AVM || '');
+const RENTCAST_SALE_SOURCE = 'RentCast monthly property records';
 
 const HOOD_ZIPS = {
   'Silver Lake': '90026',
@@ -211,7 +212,6 @@ async function upsertRecentSaleComps(hood, rows) {
     const units = projectType === 'New House' ? 1 : asNumber(record.units);
     const buildingSf = asNumber(record.squareFootage);
     const avgUnitSf = buildingSf && units ? Math.round(buildingSf / units) : null;
-    const stableId = clean(record.id) || normalizeAddress(address);
     return {
       address,
       neighborhood: hood,
@@ -221,27 +221,30 @@ async function upsertRecentSaleComps(hood, rows) {
       project_type: projectType,
       units,
       avg_unit_sf: avgUnitSf,
-      year_built: asNumber(record.yearBuilt),
       sale_price: salePrice,
       sale_date: saleDate,
       price_per_unit: units ? Math.round(salePrice / units) : null,
       price_per_sf: buildingSf ? Math.round(salePrice / buildingSf) : null,
-      buyer: clean(record.ownerName) || null,
-      source: 'RentCast monthly property records',
-      recorder_document_number: `rentcast:${stableId}:${saleDate}`,
-      sale_price_confidence: 'reported',
-      sale_price_method: 'monthly cache',
+      source: RENTCAST_SALE_SOURCE,
       notes: 'Cached monthly property sale used as an acquisition-basis comp.',
-      raw_record: record,
     };
   }).filter(Boolean);
+
+  // Replace this provider's prior neighborhood snapshot. This stays compatible
+  // with early ParcelLA databases that do not have the optional recorder fields.
+  await sbRequest(
+    'DELETE',
+    `/rest/v1/sold_comps?source=eq.${encodeURIComponent(RENTCAST_SALE_SOURCE)}&neighborhood=eq.${encodeURIComponent(hood)}`,
+    null,
+    'return=minimal'
+  );
 
   for (let offset = 0; offset < comps.length; offset += 200) {
     await sbRequest(
       'POST',
-      '/rest/v1/sold_comps?on_conflict=recorder_document_number',
+      '/rest/v1/sold_comps',
       comps.slice(offset, offset + 200),
-      'resolution=merge-duplicates,return=minimal'
+      'return=minimal'
     );
   }
   return comps.length;
