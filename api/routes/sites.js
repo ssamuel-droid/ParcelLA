@@ -309,9 +309,11 @@ function isNewHousePermitPlaceholder(site = {}, rawPermit = {}) {
   const type = String(site.project_type ?? site.type ?? '').trim().toLowerCase();
   if (type !== 'new house') return false;
   const source = String(rawPermit.land_value_source || site.landValueSource || '').toLowerCase();
+  const metric = String(rawPermit.land_value_metric || site.landValueMetric || '').toLowerCase();
   const price = numberFromValue(site.price ?? site.askPrice ?? site.landCost) || 0;
   const hasValuationEstimate = hasPermitValuationDerivedHouseSize(site, rawPermit);
   return (
+    (source.includes('recent_sales_comps') && !metric.includes('lot')) ||
     source.includes('permit_valuation_fallback') ||
     (source.includes('permit_valuation_estimate') && hasValuationEstimate) ||
     source.includes('land_comp_needed') ||
@@ -753,9 +755,9 @@ async function getLandCompBenchmarks(neighborhoods = []) {
   const cutoff = new Date(Date.now() - LAND_COMP_RECENCY_DAYS * 86400000).toISOString().slice(0, 10);
   let query = supabase
     .from('sold_comps')
-    .select('address,neighborhood,project_type,units,avg_unit_sf,sale_price,sale_date,price_per_unit,price_per_sf,source')
+    .select('address,neighborhood,project_type,units,avg_unit_sf,sale_price,sale_date,price_per_unit,price_per_sf,source,raw_record')
     .gte('sale_date', cutoff)
-    .eq('project_type', 'New House')
+    .eq('project_type', 'Land')
     .order('sale_date', { ascending: false })
     .limit(hoodList.length === 1 ? 750 : 2500);
 

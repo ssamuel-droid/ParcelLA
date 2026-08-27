@@ -178,7 +178,7 @@ async function loadRecentSoldComps(recencyDays = LAND_COMP_RECENCY_DAYS) {
   const select = [
     'address','neighborhood','project_type','units','avg_unit_sf',
     'sale_price','sale_date','price_per_unit','price_per_sf',
-    'source','recorder_document_number'
+    'source','recorder_document_number','raw_record'
   ].join(',');
   const rows = [];
   let off = 0;
@@ -895,6 +895,7 @@ function uw(p, inspectionCheck = null) {
   const houseLotLand = t === 'New House' && lotSize.lotSf
     ? lotSize.lotSf * DEFAULT_HOUSE_LAND_PER_LOT_SF
     : 0;
+  const needsHouseLandComp = t === 'New House' && !houseLotLand && !compLand?.value;
   const hasPermitValuationEstimate = t === 'New House'
     && buildingSize.source !== 'Permit valuation-derived estimate'
     && Number(p.valuation || 0) > 0;
@@ -962,10 +963,10 @@ function uw(p, inspectionCheck = null) {
         source: 'LADBS Building and Safety Inspections',
         dataset: INSPECTIONS_DATASET,
       },
-      land_value_source:doorLand ? 'default_market_per_door' : (houseLotLand ? 'default_house_land_per_lot_sf' : (compLand?.source || (hasPermitValuationEstimate ? 'permit_valuation_estimate' : 'permit_valuation_fallback'))),
-      land_value_metric:doorLand ? 'price per door' : (houseLotLand ? 'price per lot SF' : (compLand?.metricLabel || (hasPermitValuationEstimate ? '45% of permit valuation' : 'hard cost percentage fallback'))),
-      land_value_metric_value:doorLand ? DEFAULT_MARKET_LAND_PER_DOOR : (houseLotLand ? DEFAULT_HOUSE_LAND_PER_LOT_SF : (compLand?.metricValue ? Math.round(compLand.metricValue) : (hasPermitValuationEstimate ? Math.round(land) : null))),
-      land_value_basis_quantity:doorLand ? u : (houseLotLand ? lotSize.lotSf : (compLand?.basisQuantity ? Math.round(compLand.basisQuantity) : (hasPermitValuationEstimate ? Math.round(p.valuation || 0) : null))),
+      land_value_source:needsHouseLandComp ? 'land_comp_needed' : (doorLand ? 'default_market_per_door' : (houseLotLand ? 'default_house_land_per_lot_sf' : (compLand?.source || (hasPermitValuationEstimate ? 'permit_valuation_estimate' : 'permit_valuation_fallback')))),
+      land_value_metric:needsHouseLandComp ? null : (doorLand ? 'price per door' : (houseLotLand ? 'price per lot SF' : (compLand?.metricLabel || (hasPermitValuationEstimate ? '45% of permit valuation' : 'hard cost percentage fallback')))),
+      land_value_metric_value:needsHouseLandComp ? null : (doorLand ? DEFAULT_MARKET_LAND_PER_DOOR : (houseLotLand ? DEFAULT_HOUSE_LAND_PER_LOT_SF : (compLand?.metricValue ? Math.round(compLand.metricValue) : (hasPermitValuationEstimate ? Math.round(land) : null)))),
+      land_value_basis_quantity:needsHouseLandComp ? null : (doorLand ? u : (houseLotLand ? lotSize.lotSf : (compLand?.basisQuantity ? Math.round(compLand.basisQuantity) : (hasPermitValuationEstimate ? Math.round(p.valuation || 0) : null)))),
       land_value_comp_count:(doorLand || houseLotLand) ? 0 : (compLand?.compCount || 0),
       land_value_match:doorLand ? 'market-rate default' : (houseLotLand ? 'user-adjustable house default' : (compLand?.matchLabel || (hasPermitValuationEstimate ? 'permit valuation estimate' : null))),
       land_value_recency_days:(doorLand || houseLotLand) ? 0 : (compLand?.recencyDays || LAND_COMP_RECENCY_DAYS),

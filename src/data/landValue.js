@@ -20,7 +20,7 @@ function projectType(value) {
 }
 
 function metricForProjectType(type) {
-  return APARTMENT_LAND_TYPES.has(projectType(type)) ? 'ppu' : 'psf';
+  return APARTMENT_LAND_TYPES.has(projectType(type)) ? 'ppu' : 'lotpsf';
 }
 
 function groupKey(hood, type, metric) {
@@ -62,6 +62,16 @@ function compSfMetric(row) {
   const buildingSf = asNumber(row.building_sf ?? row.buildingSf);
   const sf = buildingSf || (units && avgUnitSf ? units * avgUnitSf : null);
   return salePrice && sf ? salePrice / sf : null;
+}
+
+function compLotSfMetric(row) {
+  const salePrice = asNumber(row.sale_price ?? row.salePrice);
+  const raw = row.raw_record ?? row.rawRecord ?? {};
+  const lotSf = asNumber(
+    row.lot_sf ?? row.lotSf ??
+    raw.lotSize ?? raw.lot_size ?? raw.lot_sf ?? raw.lotArea ?? raw.lot_area
+  );
+  return salePrice && lotSf && lotSf >= 1000 ? salePrice / lotSf : null;
 }
 
 function compWeight(ageDays) {
@@ -113,6 +123,15 @@ export function buildLandCompBenchmarks(rows = [], options = {}) {
       addEntry(groups, groupKey(hood, '*', 'psf'), entry);
       addEntry(groups, groupKey('*', type, 'psf'), entry);
       addEntry(groups, groupKey('*', '*', 'psf'), entry);
+    }
+
+    const lotPsf = compLotSfMetric(row);
+    if (type === 'Land' && lotPsf && lotPsf > 5 && lotPsf < 2500) {
+      const entry = { ...base, metric: 'lotpsf', value: lotPsf };
+      addEntry(groups, groupKey(hood, type, 'lotpsf'), entry);
+      addEntry(groups, groupKey(hood, '*', 'lotpsf'), entry);
+      addEntry(groups, groupKey('*', type, 'lotpsf'), entry);
+      addEntry(groups, groupKey('*', '*', 'lotpsf'), entry);
     }
   }
 
@@ -183,6 +202,10 @@ function subjectSf(site) {
   return asNumber(site.lot_sf ?? site.lotSf ?? site.lot) || null;
 }
 
+function subjectLotSf(site) {
+  return asNumber(site.lot_sf ?? site.lotSf ?? site.lot) || null;
+}
+
 export function estimateLandBasisFromComps(site, benchmarks, options = {}) {
   const type = projectType(site?.project_type || site?.projectType || site?.type);
   const hood = cleanText(site?.neighborhood || site?.hood);
@@ -191,7 +214,7 @@ export function estimateLandBasisFromComps(site, benchmarks, options = {}) {
   if (!benchmark?.value) return null;
 
   const units = asNumber(site?.units);
-  const sf = subjectSf(site);
+  const sf = metric === 'lotpsf' ? subjectLotSf(site) : subjectSf(site);
   const unitBased = metric === 'ppu';
   const basisQuantity = unitBased ? units : sf;
   if (!basisQuantity) return null;
@@ -199,7 +222,7 @@ export function estimateLandBasisFromComps(site, benchmarks, options = {}) {
   return {
     value: Math.round(benchmark.value * basisQuantity),
     metric,
-    metricLabel: unitBased ? 'price per unit' : 'price per SF',
+    metricLabel: unitBased ? 'price per unit' : (metric === 'lotpsf' ? 'price per lot SF' : 'price per building SF'),
     metricValue: benchmark.value,
     basisQuantity,
     compCount: benchmark.count,

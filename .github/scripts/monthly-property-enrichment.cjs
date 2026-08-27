@@ -195,6 +195,7 @@ function compactPropertyRecord(r) {
 
 function compProjectType(value) {
   const type = clean(value).toLowerCase();
+  if (/land|vacant|residential lot|lot\/land/.test(type)) return 'Land';
   if (type === 'single family') return 'New House';
   if (type === 'condo' || type === 'townhouse') return 'Condo/TH';
   if (type === 'multi-family' || type === 'apartment') return 'Multifamily';
@@ -227,6 +228,7 @@ async function upsertRecentSaleComps(hood, rows) {
       price_per_sf: buildingSf ? Math.round(salePrice / buildingSf) : null,
       source: RENTCAST_SALE_SOURCE,
       notes: 'Cached monthly property sale used as an acquisition-basis comp.',
+      raw_record: record,
     };
   }).filter(Boolean);
 
