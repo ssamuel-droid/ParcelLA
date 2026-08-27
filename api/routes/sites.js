@@ -1354,9 +1354,11 @@ function sortPermitHouseSites(sites, sort = 'profit') {
 
 async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOffset) {
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
+  const hoodName = String(queryParams.hood || '').trim();
+  const hoodBox = NEIGHBORHOOD_BOXES.find(box => box.h === hoodName);
   const target = requestedOffset + requestedLimit;
-  const pageSize = search ? Math.min(100, Math.max(25, target * 5)) : Math.min(60, Math.max(25, target * 6));
-  const maxRawRows = search ? Math.min(400, Math.max(target * 20, 100)) : Math.min(600, Math.max(target * 30, 120));
+  const pageSize = search || hoodBox ? Math.min(120, Math.max(40, target * 6)) : Math.min(60, Math.max(25, target * 6));
+  const maxRawRows = search || hoodBox ? Math.min(1800, Math.max(target * 45, 360)) : Math.min(600, Math.max(target * 30, 120));
   const matches = [];
   let rawOffset = 0;
   let reachedEnd = false;
@@ -1369,6 +1371,14 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
       .not('address', 'is', null)
       .order('id', { ascending: false })
       .range(rawOffset, rawOffset + pageSize - 1);
+
+    if (hoodBox) {
+      query = query
+        .gte('lat', hoodBox.lat0)
+        .lte('lat', hoodBox.lat1)
+        .gte('lng', hoodBox.lng0)
+        .lte('lng', hoodBox.lng1);
+    }
 
     if (search) {
       const clauses = [];
