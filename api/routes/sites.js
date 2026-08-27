@@ -64,16 +64,12 @@ const SITE_LIST_SELECT = [
   'lng',
   'permit_source_id',
   'total_cost',
-  'hard_costs',
-  'soft_costs',
-  'carry_cost',
   'noi',
   'exit_value',
   'net_profit',
   'irr_v',
   'cap_on_cost',
   'dev_spread_pct',
-  'entry_cap_rate',
   'owner_name',
   'owner_last_sale_date',
   'owner_last_sale_amount',
@@ -109,21 +105,12 @@ const SITE_PREVIEW_SELECT = [
   'lng',
   'permit_source_id',
   'total_cost',
-  'hard_costs',
-  'soft_costs',
-  'carry_cost',
   'noi',
   'exit_value',
   'net_profit',
   'irr_v',
   'cap_on_cost',
   'dev_spread_pct',
-  'entry_cap_rate',
-  'owner_name',
-  'owner_last_sale_date',
-  'owner_last_sale_amount',
-  'owner_source',
-  'raw_permit_data',
 ].join(',');
 const SITE_SEARCH_SELECT = SITE_LIST_SELECT;
 const PERMIT_HOUSE_SELECT = [
@@ -1733,6 +1720,71 @@ function sitePassesQueryFilters(s, queryParams) {
   return true;
 }
 
+async function runTimedSitePageQuery(query) {
+  const controller = new AbortController();
+  const queryTimer = setTimeout(() => controller.abort(), SITE_PAGE_QUERY_TIMEOUT_MS);
+  try {
+    return await query.abortSignal(controller.signal);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Dashboard site query exceeded ${SITE_PAGE_QUERY_TIMEOUT_MS / 1000} seconds`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(queryTimer);
+  }
+}
+
+async function fetchMergedDashboardTypePage(projectTypes, queryParams, requestedLimit, requestedOffset) {
+  const sort = queryParams.sort || 'profit';
+  const sortColumns = {
+    profit: 'net_profit',
+    irr: 'irr_v',
+    spread: 'dev_spread_pct',
+    capoc: 'cap_on_cost',
+    'price-a': 'price',
+    'price-d': 'price',
+    units: 'units',
+  };
+  const sortColumn = sortColumns[sort] || 'net_profit';
+  const ascending = sort === 'price-a';
+  const rowsPerType = requestedOffset + requestedLimit;
+  const results = await Promise.all(projectTypes.map(async projectType => {
+    const result = await runTimedSitePageQuery(
+      supabase
+        .from('sites')
+        .select(SITE_PREVIEW_SELECT)
+        .eq('project_type', projectType)
+        .in('status', ['active', 'off-market'])
+        .not('net_profit', 'is', null)
+        .order(sortColumn, { ascending, nullsFirst: false })
+        .range(0, rowsPerType - 1)
+    );
+    if (result.error) throw result.error;
+    return result.data || [];
+  }));
+
+  const rows = results.flat();
+  rows.sort((a, b) => {
+    const av = Number(a?.[sortColumn]);
+    const bv = Number(b?.[sortColumn]);
+    const aValid = Number.isFinite(av);
+    const bValid = Number.isFinite(bv);
+    if (!aValid && !bValid) return 0;
+    if (!aValid) return 1;
+    if (!bValid) return -1;
+    return ascending ? av - bv : bv - av;
+  });
+
+  const pageRows = rows.slice(requestedOffset, requestedOffset + requestedLimit);
+  const hasMore = results.some(result => result.length === rowsPerType);
+  const rollingTotal = requestedOffset + pageRows.length + (hasMore ? requestedLimit : 0);
+  return {
+    sites: pageRows.map((row, index) => mapSupabaseSite(row, index + requestedOffset, null)),
+    total: hasMore ? rollingTotal : rows.length,
+  };
+}
+
 async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset) {
   if (
     !process.env.SUPABASE_URL
@@ -1793,7 +1845,26 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   );
   const skipEstimatedCount = String(queryParams.fast || '') === '1';
 
-  const selectColumns = skipEstimatedCount ? SITE_PREVIEW_SELECT : (search && !queryParams.devStatus ? SITE_SEARCH_SELECT : SITE_LIST_SELECT);
+  // PostgreSQL can use the dashboard index efficiently for one project type,
+  // but a global ORDER BY across multiple IN values can select a slow plan on
+  // the small Supabase instance. Fetch each canonical type concurrently and
+  // merge the already-sorted candidates; this keeps global paging exact.
+  const dashboardTypes = (excludesNewHouseInMixedView
+    ? types.filter(typeName => typeName !== 'New House')
+    : (!types.length && !search ? ['Multifamily', 'Mixed-Use', 'Condo/TH'] : types)
+  ).filter(typeName => typeName !== 'New House');
+  if (skipEstimatedCount && !needsPostFilter && dashboardTypes.length > 1) {
+    return fetchMergedDashboardTypePage(
+      [...new Set(dashboardTypes)],
+      queryParams,
+      requestedLimit,
+      requestedOffset
+    );
+  }
+
+  const selectColumns = skipEstimatedCount && !needsPostFilter
+    ? SITE_PREVIEW_SELECT
+    : (search && !queryParams.devStatus ? SITE_SEARCH_SELECT : SITE_LIST_SELECT);
   let query = supabase
     .from('sites')
     .select(selectColumns, usesSelectiveFilters || skipEstimatedCount ? undefined : { count: 'estimated' })
@@ -1871,19 +1942,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     : requestedLimit;
   query = query.range(dbOffset, dbOffset + dbLimit - 1);
 
-  const controller = new AbortController();
-  const queryTimer = setTimeout(() => controller.abort(), SITE_PAGE_QUERY_TIMEOUT_MS);
-  let queryResult;
-  try {
-    queryResult = await query.abortSignal(controller.signal);
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(`Dashboard site query exceeded ${SITE_PAGE_QUERY_TIMEOUT_MS / 1000} seconds`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(queryTimer);
-  }
+  const queryResult = await runTimedSitePageQuery(query);
   const { data, error, count } = queryResult;
   if (error) throw error;
   const rows = data || [];
