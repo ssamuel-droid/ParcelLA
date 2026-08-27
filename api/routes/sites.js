@@ -1510,6 +1510,64 @@ function indexedPermitFieldsUnavailable(error) {
   return /building_sf|lot_sf|lot_sf_source|project_detail_complete|stories|schema cache|PGRST204|42703/i.test(text);
 }
 
+async function fetchCombinedNewHouseSearchRows(queryParams, hoodBox, requestedLimit, requestedOffset) {
+  const parts = searchParts(queryParams.q || queryParams.search);
+  if (parts.length <= 1) return null;
+
+  const target = requestedOffset + requestedLimit;
+  const pageSize = Math.min(100, Math.max(40, target * 2));
+  const minSf = activeNumericParam(queryParams.minSf);
+  const maxSf = activeNumericParam(queryParams.maxSf);
+  const lookups = parts.map(async part => {
+    let query = supabase
+      .from('permits')
+      .select(PERMIT_HOUSE_INDEXED_SELECT)
+      .eq('permit_type', 'Bldg-New')
+      .eq('project_detail_complete', true)
+      .not('address', 'is', null)
+      .or('units.lte.1,units.is.null')
+      .order('id', { ascending: false })
+      .range(0, pageSize - 1);
+
+    if (minSf !== null) query = query.gte('building_sf', minSf);
+    if (maxSf !== null) query = query.lte('building_sf', maxSf);
+    if (hoodBox) {
+      query = query
+        .gte('lat', hoodBox.lat0)
+        .lte('lat', hoodBox.lat1)
+        .gte('lng', hoodBox.lng0)
+        .lte('lng', hoodBox.lng1);
+    }
+
+    const clauses = permitSearchDbClauses(part);
+    if (clauses.length) query = query.or(clauses.join(','));
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  });
+
+  const settled = await Promise.allSettled(lookups);
+  const successful = settled.filter(result => result.status === 'fulfilled');
+  if (!successful.length) throw settled.find(result => result.status === 'rejected')?.reason || new Error('Permit search failed');
+
+  const failedCount = settled.length - successful.length;
+  if (failedCount) console.warn(`[sites:new-house] ${failedCount}/${settled.length} combined search lookups failed; returning successful matches`);
+  const rows = [];
+  const seen = new Set();
+  for (const result of successful) {
+    for (const row of result.value) {
+      const key = String(row.id || row.permit_number || `${row.address}|${row.issued_date || ''}`);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(row);
+    }
+  }
+  return {
+    rows,
+    hasMore: successful.some(result => result.value.length === pageSize),
+  };
+}
+
 async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOffset) {
   const cacheKey = permitHousePageCacheKey(queryParams, requestedLimit, requestedOffset);
   const cached = cachedPermitHousePage(cacheKey);
@@ -1520,6 +1578,33 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
   const hoodName = String(queryParams.hood || '').trim();
   const hoodBox = NEIGHBORHOOD_BOXES.find(box => box.h === hoodName);
   const target = requestedOffset + requestedLimit;
+
+  try {
+    const combined = await fetchCombinedNewHouseSearchRows(queryParams, hoodBox, requestedLimit, requestedOffset);
+    if (combined) {
+      const permitSites = combined.rows.map(permitRowAsHouseSite);
+      const compHoods = [...new Set([
+        hoodName,
+        ...permitSites.map(site => normalizedNeighborhood(site)),
+      ].map(value => String(value || '').trim()).filter(Boolean))];
+      const landCompBenchmarks = await getLandCompBenchmarks(compHoods);
+      const matches = permitSites
+        .map((site, index) => mapSupabaseSite(site, index, landCompBenchmarks))
+        .filter(site => isNewHouseSite(site))
+        .filter(site => isPrimaryNewHouseWorkDescription(site.workDescription))
+        .filter(site => sitePassesQueryFilters(site, queryParams));
+      const sorted = sortPermitHouseSites(matches, queryParams.sort || 'profit');
+      const page = sorted.slice(requestedOffset, requestedOffset + requestedLimit);
+      const total = combined.hasMore
+        ? Math.max(sorted.length, requestedOffset + page.length + requestedLimit)
+        : sorted.length;
+      return cachePermitHousePage(cacheKey, { sites: page, total });
+    }
+  } catch (error) {
+    if (!indexedPermitFieldsUnavailable(error)) throw error;
+    console.warn('[sites:new-house] Combined indexed search unavailable; using standard permit query:', error.message);
+  }
+
   const matches = [];
   let rawOffset = 0;
   let reachedEnd = false;
