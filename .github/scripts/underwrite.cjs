@@ -5,10 +5,11 @@ const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const SOCRATA_APP_TOKEN = process.env.SOCRATA_APP_TOKEN;
 const INSPECTIONS_DATASET = '9w5z-rg2h';
-const COUNTY_PARCEL_QUERY_URL = 'https://services3.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/LA_County_Parcels/FeatureServer/0/query';
+const COUNTY_PARCEL_QUERY_URL = 'https://cache.gis.lacounty.gov/cache/rest/services/LACounty_Cache/LACounty_Parcel/FeatureServer/0/query';
 const COUNTY_PARCEL_BATCH_SIZE = 200;
 const COUNTY_PARCEL_CONCURRENCY = 4;
-const SQ_METERS_TO_SQ_FEET = 10.7639104167;
+const COUNTY_PARCEL_POINT_LIMIT = Number(process.env.COUNTY_PARCEL_POINT_LIMIT || 500);
+const COUNTY_PARCEL_POINT_CONCURRENCY = 10;
 
 if (require.main === module && (!SB_URL || !SB_KEY)) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY are required');
@@ -105,6 +106,39 @@ function jsonGet(url, label = 'HTTP') {
     });
     request.on('timeout', () => { request.destroy(); reject(new Error(label + ' request timeout')); });
     request.on('error', reject);
+  });
+}
+
+function jsonPostForm(url, params, label = 'HTTP') {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const data = new URLSearchParams(params).toString();
+    const request = https.request({
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      method: 'POST',
+      timeout: 45000,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(data),
+      },
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        if (res.statusCode >= 300) {
+          reject(new Error(label + ' HTTP ' + res.statusCode + ': ' + d.slice(0, 240)));
+          return;
+        }
+        try { resolve(JSON.parse(d)); }
+        catch (e) { reject(new Error('Invalid ' + label + ' JSON: ' + d.slice(0, 240))); }
+      });
+    });
+    request.on('timeout', () => { request.destroy(); reject(new Error(label + ' request timeout')); });
+    request.on('error', reject);
+    request.write(data);
+    request.end();
   });
 }
 
@@ -393,9 +427,60 @@ function isNewHousePermitCandidate(p = {}) {
 }
 
 function countyParcelLotSf(attributes = {}) {
-  const squareMeters = numberFromValue(attributes.Shape__Area ?? attributes.SHAPE__AREA ?? attributes.shape__area);
-  const squareFeet = Math.round(squareMeters * SQ_METERS_TO_SQ_FEET);
+  // Shape__Area is stored in the layer's source CRS (EPSG:2229), whose linear unit is feet.
+  const squareFeet = Math.round(numberFromValue(attributes.Shape__Area ?? attributes.SHAPE__AREA ?? attributes.shape__area));
   return squareFeet >= 1000 && squareFeet <= 2000000 ? squareFeet : null;
+}
+
+function normalizedStreetName(value) {
+  const suffixes = {
+    AVENUE: 'AVE', BOULEVARD: 'BLVD', CIRCLE: 'CIR', COURT: 'CT', DRIVE: 'DR',
+    HIGHWAY: 'HWY', LANE: 'LN', PARKWAY: 'PKWY', PLACE: 'PL', ROAD: 'RD',
+    STREET: 'ST', TERRACE: 'TER', TRAIL: 'TRL',
+  };
+  const words = String(value || '')
+    .toUpperCase()
+    .replace(/[.,#]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  if (words.length && suffixes[words[words.length - 1]]) {
+    words[words.length - 1] = suffixes[words[words.length - 1]];
+  }
+  return words.join(' ');
+}
+
+function permitAddressParts(value) {
+  let address = String(value || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  address = address.split(',')[0].trim();
+  address = address.replace(/\s+(?:LOS ANGELES|PACIFIC PALISADES|CALIFORNIA|CA)(?:\s+\d{5}(?:-\d{4})?)?$/i, '').trim();
+  address = address.replace(/\s+(?:APT|UNIT|STE|SUITE)\s+\S+.*$/i, '').trim();
+  const match = address.match(/^(\d+[A-Z]?)(?:-\d+[A-Z]?)?\s+(?:(N|S|E|W|NE|NW|SE|SW)\s+)?(.+)$/i);
+  if (!match) return null;
+  const houseNo = match[1];
+  const street = normalizedStreetName(match[3]);
+  if (!houseNo || !street) return null;
+  return { houseNo, street, key: houseNo + '|' + street };
+}
+
+function countyAddressParts(attributes = {}) {
+  const houseNo = String(attributes.SitusHouseNo || '').trim().toUpperCase();
+  const street = normalizedStreetName(attributes.SitusStreet);
+  if (!houseNo || !street) return null;
+  return { houseNo, street, key: houseNo + '|' + street };
+}
+
+function parcelRecord(attributes = {}) {
+  const ain = digitsOnly(attributes.AIN);
+  const lotSf = countyParcelLotSf(attributes);
+  if (!lotSf) return null;
+  return {
+    lotSf,
+    ain: ain.length === 10 ? ain : null,
+    apn: firstText(attributes.APN, formattedApn(ain)),
+    source: 'LA County Assessor parcel polygon',
+  };
 }
 
 async function fetchCountyParcelBatch(ains) {
@@ -410,22 +495,57 @@ async function fetchCountyParcelBatch(ains) {
   return (payload?.features || []).map(feature => feature?.attributes || {});
 }
 
+async function fetchCountyParcelAddressBatch(addresses) {
+  const where = addresses.map(({ houseNo, street }) =>
+    `(SitusHouseNo=${soqlString(houseNo)} AND SitusStreet=${soqlString(street)})`
+  ).join(' OR ');
+  const payload = await jsonPostForm(COUNTY_PARCEL_QUERY_URL, {
+    f: 'json',
+    where,
+    outFields: 'AIN,APN,SitusHouseNo,SitusStreet,SitusFullAddress,Shape__Area',
+    returnGeometry: 'false',
+  }, 'LA County parcel address lookup');
+  if (payload?.error) throw new Error('LA County parcel address lookup: ' + JSON.stringify(payload.error).slice(0, 300));
+  return (payload?.features || []).map(feature => feature?.attributes || {});
+}
+
+async function fetchCountyParcelAtPoint(permit) {
+  const lat = Number(permit?.lat);
+  const lng = Number(permit?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < 32 || lat > 36 || lng < -121 || lng > -116) return null;
+  const payload = await jsonPostForm(COUNTY_PARCEL_QUERY_URL, {
+    f: 'json',
+    where: '1=1',
+    geometry: `${lng},${lat}`,
+    geometryType: 'esriGeometryPoint',
+    inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    outFields: 'AIN,APN,SitusHouseNo,SitusStreet,SitusFullAddress,Shape__Area',
+    returnGeometry: 'false',
+  }, 'LA County parcel point lookup');
+  if (payload?.error) throw new Error('LA County parcel point lookup: ' + JSON.stringify(payload.error).slice(0, 300));
+  const records = (payload?.features || [])
+    .map(feature => parcelRecord(feature?.attributes || {}))
+    .filter(Boolean)
+    .sort((a, b) => a.lotSf - b.lotSf);
+  return records[0] || null;
+}
+
 async function loadCountyParcelLots(permits) {
-  const candidateAins = [...new Set((permits || [])
-    .filter(p => !lotSizeFromPermit(p).lotSf && isNewHousePermitCandidate(p))
+  const candidates = (permits || [])
+    .filter(p => !lotSizeFromPermit(p).lotSf && isNewHousePermitCandidate(p));
+  const candidateAins = [...new Set(candidates
     .map(permitAin)
     .filter(Boolean))];
   const lots = new Map();
-  if (!candidateAins.length) return lots;
-
-  console.log('Resolving lot sizes for', candidateAins.length, 'New House parcel(s)...');
-  const batches = [];
+  console.log('Resolving lot sizes for', candidates.length, 'New House permit(s)...');
+  const ainBatches = [];
   for (let i = 0; i < candidateAins.length; i += COUNTY_PARCEL_BATCH_SIZE) {
-    batches.push(candidateAins.slice(i, i + COUNTY_PARCEL_BATCH_SIZE));
+    ainBatches.push(candidateAins.slice(i, i + COUNTY_PARCEL_BATCH_SIZE));
   }
 
-  for (let i = 0; i < batches.length; i += COUNTY_PARCEL_CONCURRENCY) {
-    const group = batches.slice(i, i + COUNTY_PARCEL_CONCURRENCY);
+  for (let i = 0; i < ainBatches.length; i += COUNTY_PARCEL_CONCURRENCY) {
+    const group = ainBatches.slice(i, i + COUNTY_PARCEL_CONCURRENCY);
     const results = await Promise.all(group.map(async batch => {
       try { return await fetchCountyParcelBatch(batch); }
       catch (e) {
@@ -435,20 +555,80 @@ async function loadCountyParcelLots(permits) {
     }));
     for (const attributes of results.flat()) {
       const ain = digitsOnly(attributes.AIN);
-      const lotSf = countyParcelLotSf(attributes);
-      if (ain.length !== 10 || !lotSf) continue;
-      lots.set(ain, {
-        lotSf,
-        apn: firstText(attributes.APN, formattedApn(ain)),
-        source: 'LA County parcel polygon',
-      });
+      const parcel = parcelRecord(attributes);
+      if (ain.length !== 10 || !parcel) continue;
+      lots.set('ain:' + ain, parcel);
     }
-    if (i % (COUNTY_PARCEL_CONCURRENCY * 5) === 0 || i + COUNTY_PARCEL_CONCURRENCY >= batches.length) {
-      console.log('Resolved', lots.size, 'county parcel lot size(s) from', Math.min(i + COUNTY_PARCEL_CONCURRENCY, batches.length), '/', batches.length, 'batch(es).');
+    if (i % (COUNTY_PARCEL_CONCURRENCY * 5) === 0 || i + COUNTY_PARCEL_CONCURRENCY >= ainBatches.length) {
+      console.log('Resolved', lots.size, 'lot size(s) from AIN batches.');
     }
     await sleep(75);
   }
+
+  const addressMap = new Map();
+  for (const permit of candidates) {
+    const ain = permitAin(permit);
+    if (ain && lots.has('ain:' + ain)) continue;
+    const address = permitAddressParts(permit.address);
+    if (address && !addressMap.has(address.key)) addressMap.set(address.key, address);
+  }
+  const addresses = [...addressMap.values()];
+  const addressBatches = [];
+  for (let i = 0; i < addresses.length; i += COUNTY_PARCEL_BATCH_SIZE) {
+    addressBatches.push(addresses.slice(i, i + COUNTY_PARCEL_BATCH_SIZE));
+  }
+  for (let i = 0; i < addressBatches.length; i += COUNTY_PARCEL_CONCURRENCY) {
+    const group = addressBatches.slice(i, i + COUNTY_PARCEL_CONCURRENCY);
+    const results = await Promise.all(group.map(async batch => {
+      try { return await fetchCountyParcelAddressBatch(batch); }
+      catch (e) {
+        console.warn('County parcel address batch failed:', e.message);
+        return [];
+      }
+    }));
+    for (const attributes of results.flat()) {
+      const address = countyAddressParts(attributes);
+      const parcel = parcelRecord(attributes);
+      if (!address || !parcel) continue;
+      const key = 'address:' + address.key;
+      const existing = lots.get(key);
+      if (!existing || parcel.lotSf > existing.lotSf) lots.set(key, parcel);
+    }
+    if (i % (COUNTY_PARCEL_CONCURRENCY * 5) === 0 || i + COUNTY_PARCEL_CONCURRENCY >= addressBatches.length) {
+      console.log('Resolved', lots.size, 'lot size(s) after', Math.min(i + COUNTY_PARCEL_CONCURRENCY, addressBatches.length), '/', addressBatches.length, 'address batch(es).');
+    }
+    await sleep(75);
+  }
+
+  const unresolved = candidates.filter(permit => !countyParcelForPermit(permit, lots))
+    .filter(permit => Number.isFinite(Number(permit.lat)) && Number.isFinite(Number(permit.lng)))
+    .slice(0, COUNTY_PARCEL_POINT_LIMIT);
+  for (let i = 0; i < unresolved.length; i += COUNTY_PARCEL_POINT_CONCURRENCY) {
+    const group = unresolved.slice(i, i + COUNTY_PARCEL_POINT_CONCURRENCY);
+    const results = await Promise.all(group.map(async permit => {
+      try { return [permit, await fetchCountyParcelAtPoint(permit)]; }
+      catch (e) {
+        console.warn('County parcel point lookup failed for permit', permit.id, e.message);
+        return [permit, null];
+      }
+    }));
+    for (const [permit, parcel] of results) {
+      if (parcel) lots.set('id:' + permit.id, parcel);
+    }
+    if (i % (COUNTY_PARCEL_POINT_CONCURRENCY * 10) === 0 || i + COUNTY_PARCEL_POINT_CONCURRENCY >= unresolved.length) {
+      console.log('Resolved', lots.size, 'lot size(s) after', Math.min(i + COUNTY_PARCEL_POINT_CONCURRENCY, unresolved.length), '/', unresolved.length, 'point lookup(s).');
+    }
+    await sleep(50);
+  }
   return lots;
+}
+
+function countyParcelForPermit(permit, lots) {
+  const ain = permitAin(permit);
+  if (ain && lots.has('ain:' + ain)) return lots.get('ain:' + ain);
+  const address = permitAddressParts(permit?.address);
+  if (address && lots.has('address:' + address.key)) return lots.get('address:' + address.key);
+  return lots.get('id:' + permit?.id) || null;
 }
 
 async function cacheCountyParcelLots(permits) {
@@ -1007,11 +1187,11 @@ async function main() {
   console.log('Total to underwrite:',all.length);
   const countyLots = await loadCountyParcelLots(all);
   for (const permit of all) {
-    const parcel = countyLots.get(permitAin(permit));
+    const parcel = countyParcelForPermit(permit, countyLots);
     if (!parcel) continue;
     permit.county_lot_sf = parcel.lotSf;
     permit.county_lot_sf_source = parcel.source;
-    permit.county_ain = permitAin(permit);
+    permit.county_ain = parcel.ain || permitAin(permit);
     permit.county_apn = parcel.apn;
   }
   await cacheCountyParcelLots(all);
@@ -1051,9 +1231,14 @@ async function main() {
 }
 
 module.exports = {
+  countyAddressParts,
+  countyParcelForPermit,
   countyParcelLotSf,
+  fetchCountyParcelAddressBatch,
+  fetchCountyParcelAtPoint,
   fetchCountyParcelBatch,
   formattedApn,
+  permitAddressParts,
   permitAin,
 };
 
