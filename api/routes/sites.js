@@ -29,8 +29,7 @@ const router = Router();
 let _siteCache = null;
 let _cacheTime = 0;
 const _modelCache = new Map();
-let _landCompCache = null;
-let _landCompCacheTime = 0;
+const _landCompCache = new Map();
 const _housePageCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const HOUSE_PAGE_CACHE_TTL = 5 * 60 * 1000;
@@ -722,27 +721,38 @@ function buildOverrides(query) {
   return ov;
 }
 
-async function getLandCompBenchmarks() {
+async function getLandCompBenchmarks(neighborhoods = []) {
   const now = Date.now();
-  if (_landCompCache && now - _landCompCacheTime < CACHE_TTL) return _landCompCache;
+  const hoodList = [...new Set((Array.isArray(neighborhoods) ? neighborhoods : [neighborhoods])
+    .map(value => String(value || '').trim())
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  const cacheKey = hoodList.length ? hoodList.join('|') : '*';
+  const cached = _landCompCache.get(cacheKey);
+  if (cached && now - cached.createdAt < CACHE_TTL) return cached.value;
   if (!process.env.SUPABASE_URL) return null;
 
   const cutoff = new Date(Date.now() - LAND_COMP_RECENCY_DAYS * 86400000).toISOString().slice(0, 10);
-  const { data, error } = await supabase
+  let query = supabase
     .from('sold_comps')
-    .select('address,neighborhood,project_type,units,avg_unit_sf,sale_price,sale_date,price_per_unit,price_per_sf,source,recorder_document_number')
+    .select('address,neighborhood,project_type,units,avg_unit_sf,sale_price,sale_date,price_per_unit,price_per_sf,source')
     .gte('sale_date', cutoff)
+    .eq('project_type', 'New House')
     .order('sale_date', { ascending: false })
-    .limit(5000);
+    .limit(hoodList.length === 1 ? 750 : 2500);
+
+  if (hoodList.length) query = query.in('neighborhood', hoodList);
+  const { data, error } = await query;
 
   if (error) {
     console.warn('[sites] Land comp benchmarks unavailable:', error.message);
     return null;
   }
 
-  _landCompCache = buildLandCompBenchmarks(data || [], { recencyDays: LAND_COMP_RECENCY_DAYS });
-  _landCompCacheTime = now;
-  return _landCompCache;
+  const benchmarks = buildLandCompBenchmarks(data || [], { recencyDays: LAND_COMP_RECENCY_DAYS });
+  _landCompCache.set(cacheKey, { createdAt: now, value: benchmarks });
+  while (_landCompCache.size > 50) _landCompCache.delete(_landCompCache.keys().next().value);
+  return benchmarks;
 }
 
 function modelFromSupabaseSite(s, landCompBenchmarks = null) {
@@ -1492,8 +1502,14 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
       break;
     }
 
-    const mapped = rows
-      .map((row, i) => mapSupabaseSite(permitRowAsHouseSite(row), rawOffset + i, null))
+    const permitSites = rows.map(permitRowAsHouseSite);
+    const compHoods = [...new Set([
+      hoodName,
+      ...permitSites.map(site => normalizedNeighborhood(site)),
+    ].map(value => String(value || '').trim()).filter(Boolean))];
+    const landCompBenchmarks = await getLandCompBenchmarks(compHoods);
+    const mapped = permitSites
+      .map((site, i) => mapSupabaseSite(site, rawOffset + i, landCompBenchmarks))
       .filter(site => isNewHouseSite(site))
       .filter(site => sitePassesQueryFilters(site, queryParams));
     matches.push(...mapped);
