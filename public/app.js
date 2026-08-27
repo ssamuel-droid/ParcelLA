@@ -182,6 +182,14 @@ function siteUnitsText(s) {
   return units > 0 ? `${units.toLocaleString()} units` : 'Units TBD';
 }
 
+function siteProjectSfText(s) {
+  const direct = Number(s?.buildingSf || s?.totalBuildingSf || 0);
+  if (Number.isFinite(direct) && direct > 0) return `${Math.round(direct).toLocaleString()} project SF`;
+  if (s?.type === 'New House') return '';
+  const derived = Number(s?.units || 0) * Number(s?.usf || s?.avgUnitSf || 0);
+  return Number.isFinite(derived) && derived > 0 ? `${Math.round(derived).toLocaleString()} est. project SF` : '';
+}
+
 function canonicalProjectType(value) {
   const raw = String(value || '').trim();
   const compact = raw.toLowerCase().replace(/\s+/g, ' ').replace(/\s*\/\s*/g, '/');
@@ -202,8 +210,9 @@ function siteMetaLine(s) {
   return [
     siteNeighborhood(s),
     siteLotText(s),
+    siteProjectSfText(s),
     siteUnitsText(s),
-  ].map(escapeText).join(' &middot; ');
+  ].filter(Boolean).map(escapeText).join(' &middot; ');
 }
 
 function landPricePerSfText(s, land) {

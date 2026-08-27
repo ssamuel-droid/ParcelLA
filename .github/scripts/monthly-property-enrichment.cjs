@@ -192,6 +192,61 @@ function compactPropertyRecord(r) {
   };
 }
 
+function compProjectType(value) {
+  const type = clean(value).toLowerCase();
+  if (type === 'single family') return 'New House';
+  if (type === 'condo' || type === 'townhouse') return 'Condo/TH';
+  if (type === 'multi-family' || type === 'apartment') return 'Multifamily';
+  return clean(value) || 'New House';
+}
+
+async function upsertRecentSaleComps(hood, rows) {
+  const comps = (rows || []).map(record => {
+    const salePrice = money(record.lastSalePrice);
+    const saleDate = cleanDate(record.lastSaleDate);
+    const address = clean(record.formattedAddress);
+    if (!salePrice || !saleDate || !address) return null;
+
+    const projectType = compProjectType(record.propertyType);
+    const units = projectType === 'New House' ? 1 : asNumber(record.units);
+    const buildingSf = asNumber(record.squareFootage);
+    const avgUnitSf = buildingSf && units ? Math.round(buildingSf / units) : null;
+    const stableId = clean(record.id) || normalizeAddress(address);
+    return {
+      address,
+      neighborhood: hood,
+      zip: clean(record.zipCode) || null,
+      lat: asNumber(record.latitude),
+      lng: asNumber(record.longitude),
+      project_type: projectType,
+      units,
+      avg_unit_sf: avgUnitSf,
+      year_built: asNumber(record.yearBuilt),
+      sale_price: salePrice,
+      sale_date: saleDate,
+      price_per_unit: units ? Math.round(salePrice / units) : null,
+      price_per_sf: buildingSf ? Math.round(salePrice / buildingSf) : null,
+      buyer: clean(record.ownerName) || null,
+      source: 'RentCast monthly property records',
+      recorder_document_number: `rentcast:${stableId}:${saleDate}`,
+      sale_price_confidence: 'reported',
+      sale_price_method: 'monthly cache',
+      notes: 'Cached monthly property sale used as an acquisition-basis comp.',
+      raw_record: record,
+    };
+  }).filter(Boolean);
+
+  for (let offset = 0; offset < comps.length; offset += 200) {
+    await sbRequest(
+      'POST',
+      '/rest/v1/sold_comps?on_conflict=recorder_document_number',
+      comps.slice(offset, offset + 200),
+      'resolution=merge-duplicates,return=minimal'
+    );
+  }
+  return comps.length;
+}
+
 function compactAvm(payload) {
   if (!payload || typeof payload !== 'object') return null;
   return {
@@ -334,7 +389,7 @@ async function pullRentcastRentalListings(hood, zip) {
 async function pullRentcastRecentSales(hood, zip) {
   const params = new URLSearchParams({
     zipCode: zip,
-    propertyType: 'Apartment,Multi-Family',
+    propertyType: 'Single Family|Condo|Townhouse|Multi-Family|Apartment',
     saleDateRange: String(SALE_RECENCY_DAYS),
     limit: String(Math.min(MARKET_LIMIT, 500)),
   });
@@ -343,6 +398,7 @@ async function pullRentcastRecentSales(hood, zip) {
     { 'X-Api-Key': RENTCAST_KEY }
   );
   const rows = arrayFromPayload(json).map(compactPropertyRecord).filter(r => r.formattedAddress && r.lastSalePrice && r.lastSaleDate);
+  const storedCompCount = await upsertRecentSaleComps(hood, rows);
   await upsertCache({
     provider: 'rentcast',
     purpose: 'recent_sales',
@@ -352,10 +408,10 @@ async function pullRentcastRecentSales(hood, zip) {
     fetched_at: new Date().toISOString(),
     expires_at: cacheExpiry(),
     request_meta: { hood, zip, endpoint: '/properties', saleDateRange: SALE_RECENCY_DAYS, totalCount: headers.get('x-total-count') || null },
-    payload: { sampleCount: rows.length },
+    payload: { sampleCount: rows.length, storedCompCount },
     normalized: { hood, zip, rows },
   });
-  return rows.length;
+  return storedCompCount;
 }
 
 async function pullRentcastPropertyRecord(site) {
