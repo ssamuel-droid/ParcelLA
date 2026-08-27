@@ -195,6 +195,11 @@ function siteProjectSfText(s) {
   return Number.isFinite(derived) && derived > 0 ? `Project ${Math.round(derived).toLocaleString()} SF est.` : '';
 }
 
+function sitePermitValuationText(s) {
+  const value = Number(s?.permitValuation || s?.valuation || 0);
+  return Number.isFinite(value) && value > 0 ? `Permit value ${fmtM(value)}` : '';
+}
+
 function canonicalProjectType(value) {
   const raw = String(value || '').trim();
   const compact = raw.toLowerCase().replace(/\s+/g, ' ').replace(/\s*\/\s*/g, '/');
@@ -690,7 +695,13 @@ function gatedDisplayAddress(s) {
 
 function gatedMetaLine(s) {
   if (hasFullAccess()) return siteMetaLine(s);
-  const parts = [s?.type || 'Development site', siteUnitsText(s)].filter(Boolean);
+  const parts = [
+    s?.type || 'Development site',
+    siteProjectSfText(s),
+    siteLotText(s),
+    sitePermitValuationText(s),
+    siteUnitsText(s),
+  ].filter(Boolean);
   return parts.map(escapeText).join(' &middot; ');
 }
 
