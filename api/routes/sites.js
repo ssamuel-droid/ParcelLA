@@ -1355,13 +1355,13 @@ function sortPermitHouseSites(sites, sort = 'profit') {
 async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOffset) {
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
   const target = requestedOffset + requestedLimit;
-  const pageSize = search ? 250 : 300;
-  const maxRawRows = search ? 1000 : Math.min(2500, Math.max(target * 80, 1200));
+  const pageSize = search ? Math.min(100, Math.max(25, target * 5)) : Math.min(60, Math.max(25, target * 6));
+  const maxRawRows = search ? Math.min(400, Math.max(target * 20, 100)) : Math.min(600, Math.max(target * 30, 120));
   const matches = [];
   let rawOffset = 0;
   let reachedEnd = false;
 
-  while (rawOffset < maxRawRows && matches.length < target + requestedLimit) {
+  while (rawOffset < maxRawRows && matches.length < target) {
     let query = supabase
       .from('permits')
       .select(PERMIT_HOUSE_SELECT)
