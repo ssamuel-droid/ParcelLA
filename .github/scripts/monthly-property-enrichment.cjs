@@ -356,10 +356,18 @@ async function fetchSitesForPropertyRecords() {
     'owner_name',
     'owner_enriched_at',
   ].join(',');
-  return await sbRequest(
+  const candidateLimit = Math.min(Math.max(SITE_LIMIT * 10, 100), 1000);
+  const rows = await sbRequest(
     'GET',
-    `/rest/v1/sites?select=${columns}&address=not.is.null&order=owner_enriched_at.asc.nullsfirst&limit=${SITE_LIMIT}`
+    `/rest/v1/sites?select=${columns}&address=not.is.null&order=id.desc&limit=${candidateLimit}`
   );
+  return (rows || [])
+    .sort((a, b) => {
+      const aTime = a.owner_enriched_at ? new Date(a.owner_enriched_at).getTime() : 0;
+      const bTime = b.owner_enriched_at ? new Date(b.owner_enriched_at).getTime() : 0;
+      return aTime - bTime;
+    })
+    .slice(0, SITE_LIMIT);
 }
 
 async function pullRentcastRentalListings(hood, zip) {
@@ -564,7 +572,10 @@ async function main() {
   let siteUpdated = 0;
   let siteMiss = 0;
   let schemaWarningShown = false;
-  const sites = await fetchSitesForPropertyRecords();
+  const sites = await fetchSitesForPropertyRecords().catch(err => {
+    console.warn(`[monthly-enrich] Optional individual-site enrichment skipped: ${err.message}`);
+    return [];
+  });
   for (const site of sites || []) {
     try {
       const status = await enrichSite(site);
