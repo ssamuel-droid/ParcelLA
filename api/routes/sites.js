@@ -316,6 +316,15 @@ function isNewHouseSite(site = {}) {
   return String(site.project_type ?? site.type ?? '').trim().toLowerCase() === 'new house';
 }
 
+function isPrimaryNewHouseWorkDescription(value = '') {
+  const text = String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!text) return false;
+  if (/\b(?:adu|accessory dwelling|second dwelling|second unit|addition|alteration|remodel|greenhouse|swimming pool|detached garage|garage only)\b/i.test(text)) {
+    return false;
+  }
+  return /\b(?:single[- ]family(?: dwelling)?|sfd|one[- ]family(?: dwelling)?|dwelling)\b/i.test(text);
+}
+
 function realPermitWorkDescription(site = {}, rawPermit = {}) {
   const text = firstText(
     rawPermit.work_description,
@@ -1458,6 +1467,12 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
   const hoodName = String(queryParams.hood || '').trim();
   const hoodBox = NEIGHBORHOOD_BOXES.find(box => box.h === hoodName);
+  const hasIndexedNarrowing = Boolean(
+    search ||
+    hoodBox ||
+    activeNumericParam(queryParams.minSf) !== null ||
+    activeNumericParam(queryParams.maxSf) !== null
+  );
   const target = requestedOffset + requestedLimit;
   const matches = [];
   let rawOffset = 0;
@@ -1476,9 +1491,13 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
 
     let query = supabase
       .from('permits')
-      .select(indexedMode ? PERMIT_HOUSE_INDEXED_SELECT : PERMIT_HOUSE_SELECT, indexedMode ? { count: 'exact' } : undefined)
+      .select(
+        indexedMode ? PERMIT_HOUSE_INDEXED_SELECT : PERMIT_HOUSE_SELECT,
+        indexedMode ? { count: hasIndexedNarrowing ? 'exact' : 'planned' } : undefined
+      )
       .eq('permit_type', 'Bldg-New')
       .not('address', 'is', null)
+      .or('units.lte.1,units.is.null')
       .order('id', { ascending: false })
       .range(rawOffset, rawOffset + pageSize - 1);
 
@@ -1533,6 +1552,7 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
     const mapped = permitSites
       .map((site, i) => mapSupabaseSite(site, rawOffset + i, landCompBenchmarks))
       .filter(site => isNewHouseSite(site))
+      .filter(site => isPrimaryNewHouseWorkDescription(site.workDescription))
       .filter(site => sitePassesQueryFilters(site, queryParams));
     matches.push(...mapped);
 
