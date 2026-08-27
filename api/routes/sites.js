@@ -1997,7 +1997,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   const hasExplicitTypeFilter = Boolean(queryParams.types || queryParams.type);
   const types = listParam(queryParams.types || queryParams.type).map(canonicalProjectType).filter(Boolean);
   const newHouseOnly = types.length === 1 && types[0] === 'New House';
-  if (newHouseOnly) return fetchNewHousePermitPage(queryParams, requestedLimit, requestedOffset);
+  if (newHouseOnly && !search) return fetchNewHousePermitPage(queryParams, requestedLimit, requestedOffset);
   const excludesNewHouseInMixedView = types.includes('New House') && types.length > 1 && !search;
   const dbTypes = [...new Set((excludesNewHouseInMixedView ? types.filter(type => type !== 'New House') : types).flatMap(dbProjectTypeVariants))];
   const mayReturnNewHouse = (types.includes('New House') && !excludesNewHouseInMixedView) || (!types.length && search);
