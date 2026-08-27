@@ -1238,6 +1238,30 @@ function searchDbVariants(value) {
   return [...new Set(variants.filter(v => v.length >= 3 || /^\d{3,}$/.test(v)))];
 }
 
+function permitSearchDbClauses(value) {
+  const clauses = [];
+  for (const variant of searchDbVariants(value)) {
+    const normalized = cleanSearchTerm(variant);
+    if (!normalized) continue;
+
+    if (/^\d{3,6}$/.test(normalized)) {
+      clauses.push(`address.like.${normalized}%`);
+      continue;
+    }
+
+    if (/^\d{3,6}\s+/.test(normalized)) {
+      clauses.push(`address.ilike.${normalized.replace(/\s+/g, '%')}%`);
+      continue;
+    }
+
+    clauses.push(`address.ilike.%${normalized}%`);
+    if (/^\d{2,}-\d{2,}(?:-|$)/.test(normalized)) {
+      clauses.push(`permit_number.ilike.${normalized}%`);
+    }
+  }
+  return [...new Set(clauses)];
+}
+
 function siteSearchHaystack(s) {
   const aliases = Array.isArray(s.addressAliases) ? s.addressAliases : [];
   const knownAliases = String(s.addr || '').toUpperCase() === '6091 W PICO BLVD' && Number(s.units || 0) === 138
@@ -1540,11 +1564,7 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
     }
 
     if (search) {
-      const clauses = [];
-      for (const variant of searchDbVariants(rawSearch)) {
-        clauses.push(`address.ilike.%${variant}%`);
-        clauses.push(`permit_number.ilike.%${variant}%`);
-      }
+      const clauses = permitSearchDbClauses(rawSearch);
       if (clauses.length) query = query.or(clauses.join(','));
     }
 
@@ -1597,11 +1617,7 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
 
 async function permitDetailNoticeForSearch(searchValue) {
   if (!process.env.SUPABASE_URL || !cleanSearchTerm(searchValue)) return null;
-  const clauses = [];
-  for (const variant of searchDbVariants(searchValue)) {
-    clauses.push(`address.ilike.%${variant}%`);
-    clauses.push(`permit_number.ilike.%${variant}%`);
-  }
+  const clauses = permitSearchDbClauses(searchValue);
   if (!clauses.length) return null;
 
   const { data, error } = await supabase
