@@ -1215,6 +1215,12 @@ function permitMatchesSearch(p = {}, value = '') {
     searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
 }
 
+function statusIsRti(value) {
+  const status = String(value || '');
+  if (/not ready/i.test(status)) return false;
+  return /ready to issue|pc approved|approved/i.test(status);
+}
+
 function permitRowAsHouseSite(p = {}) {
   const raw = p.raw_data || {};
   const address = firstText(
