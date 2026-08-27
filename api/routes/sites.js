@@ -1511,8 +1511,14 @@ function indexedPermitFieldsUnavailable(error) {
 }
 
 async function fetchCombinedNewHouseSearchRows(queryParams, hoodBox, requestedLimit, requestedOffset) {
-  const parts = searchParts(queryParams.q || queryParams.search);
-  if (parts.length <= 1) return null;
+  const requestedParts = searchParts(queryParams.q || queryParams.search);
+  if (requestedParts.length <= 1) return null;
+
+  // A pasted list such as "5903, 6095, Pico, Riverside" identifies the
+  // properties by street number. Avoid broad citywide scans for the trailing
+  // street/city words once one or more address numbers are available.
+  const numberedParts = requestedParts.filter(part => /^\d{3,6}\b/.test(part));
+  const parts = numberedParts.length ? numberedParts : requestedParts;
 
   const target = requestedOffset + requestedLimit;
   const pageSize = Math.min(100, Math.max(40, target * 2));
