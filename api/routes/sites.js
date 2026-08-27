@@ -1170,6 +1170,14 @@ function searchTokens(value) {
     .filter(token => token.length >= 2);
 }
 
+function searchParts(value) {
+  const parts = String(value || '')
+    .split(/[,\n;]+/)
+    .map(cleanSearchTerm)
+    .filter(Boolean);
+  return parts.length ? parts : [cleanSearchTerm(value)].filter(Boolean);
+}
+
 function orderedTokenMatch(haystack, value) {
   const tokens = searchTokens(value);
   if (tokens.length < 2) return false;
@@ -1252,13 +1260,18 @@ function siteSearchHaystack(s) {
   ].map(v => String(v || '').toUpperCase()).join(' ');
 }
 
+function searchHaystackMatches(haystack, value) {
+  return searchParts(value).some(part => {
+    const term = cleanSearchTerm(part).toUpperCase();
+    return haystack.includes(term) ||
+      orderedTokenMatch(haystack, part) ||
+      searchVariants(part).some(variant => haystack.includes(variant.toUpperCase()));
+  });
+}
+
 function siteMatchesSearch(s, value) {
-  const term = cleanSearchTerm(value).toUpperCase();
-  if (!term) return true;
-  const haystack = siteSearchHaystack(s);
-  return haystack.includes(term) ||
-    orderedTokenMatch(haystack, value) ||
-    searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
+  if (!cleanSearchTerm(value)) return true;
+  return searchHaystackMatches(siteSearchHaystack(s), value);
 }
 
 function permitSearchHaystack(p = {}) {
@@ -1286,12 +1299,8 @@ function permitSearchHaystack(p = {}) {
 }
 
 function permitMatchesSearch(p = {}, value = '') {
-  const term = cleanSearchTerm(value).toUpperCase();
-  if (!term) return false;
-  const haystack = permitSearchHaystack(p);
-  return haystack.includes(term) ||
-    orderedTokenMatch(haystack, value) ||
-    searchVariants(value).some(v => haystack.includes(v.toUpperCase()));
+  if (!cleanSearchTerm(value)) return false;
+  return searchHaystackMatches(permitSearchHaystack(p), value);
 }
 
 function statusIsRti(value) {
@@ -1482,15 +1491,10 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
   const cached = cachedPermitHousePage(cacheKey);
   if (cached) return cached;
 
-  const search = cleanSearchTerm(queryParams.q || queryParams.search);
+  const rawSearch = queryParams.q || queryParams.search || '';
+  const search = cleanSearchTerm(rawSearch);
   const hoodName = String(queryParams.hood || '').trim();
   const hoodBox = NEIGHBORHOOD_BOXES.find(box => box.h === hoodName);
-  const hasIndexedNarrowing = Boolean(
-    search ||
-    hoodBox ||
-    activeNumericParam(queryParams.minSf) !== null ||
-    activeNumericParam(queryParams.maxSf) !== null
-  );
   const target = requestedOffset + requestedLimit;
   const matches = [];
   let rawOffset = 0;
@@ -1511,7 +1515,7 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
       .from('permits')
       .select(
         indexedMode ? PERMIT_HOUSE_INDEXED_SELECT : PERMIT_HOUSE_SELECT,
-        indexedMode ? { count: hasIndexedNarrowing ? 'exact' : 'planned' } : undefined
+        indexedMode ? { count: 'planned' } : undefined
       )
       .eq('permit_type', 'Bldg-New')
       .not('address', 'is', null)
@@ -1537,7 +1541,7 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
 
     if (search) {
       const clauses = [];
-      for (const variant of searchDbVariants(search)) {
+      for (const variant of searchDbVariants(rawSearch)) {
         clauses.push(`address.ilike.%${variant}%`);
         clauses.push(`permit_number.ilike.%${variant}%`);
       }
