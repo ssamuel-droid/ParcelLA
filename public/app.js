@@ -167,13 +167,15 @@ function siteNeighborhood(s) {
 function knownLotSf(s) {
   const lot = Number(s?.lot || s?.lotSf || 0);
   if (!Number.isFinite(lot) || lot <= 0) return 0;
-  const likelyDefault = lot === 5000 && (isOffMarketSite(s) || s?.permitNumber || s?.permitSourceId);
+  const source = String(s?.lotSfSource || '').trim();
+  const hasRealSource = source && !/default|model|assum/i.test(source);
+  const likelyDefault = lot === 5000 && !hasRealSource && (isOffMarketSite(s) || s?.permitNumber || s?.permitSourceId);
   return likelyDefault ? 0 : lot;
 }
 
 function siteLotText(s) {
   const lot = knownLotSf(s);
-  return lot > 0 ? `${lot.toLocaleString()} SF` : 'Lot TBD';
+  return lot > 0 ? `Lot ${Math.round(lot).toLocaleString()} SF` : 'Lot TBD';
 }
 
 function siteUnitsText(s) {
@@ -184,10 +186,13 @@ function siteUnitsText(s) {
 
 function siteProjectSfText(s) {
   const direct = Number(s?.buildingSf || s?.totalBuildingSf || 0);
-  if (Number.isFinite(direct) && direct > 0) return `${Math.round(direct).toLocaleString()} project SF`;
-  if (s?.type === 'New House') return '';
+  if (Number.isFinite(direct) && direct > 0) {
+    const label = s?.type === 'New House' ? 'Home' : 'Project';
+    return `${label} ${Math.round(direct).toLocaleString()} SF`;
+  }
+  if (s?.type === 'New House') return 'Home SF TBD';
   const derived = Number(s?.units || 0) * Number(s?.usf || s?.avgUnitSf || 0);
-  return Number.isFinite(derived) && derived > 0 ? `${Math.round(derived).toLocaleString()} est. project SF` : '';
+  return Number.isFinite(derived) && derived > 0 ? `Project ${Math.round(derived).toLocaleString()} SF est.` : '';
 }
 
 function canonicalProjectType(value) {
@@ -204,6 +209,12 @@ function canonicalProjectType(value) {
 function typeMatchesSelected(s, selectedTypes) {
   if (!selectedTypes.length) return true;
   return selectedTypes.map(canonicalProjectType).includes(canonicalProjectType(s?.type));
+}
+
+function isEd1Site(s) {
+  if (s?.isEd1 === true) return true;
+  const text = [s?.workDescription, s?.program, s?.permitProgram].filter(Boolean).join(' ');
+  return /(^|[^a-z0-9])ed[- ]?1([^a-z0-9]|$)|executive directive\s*1/i.test(text);
 }
 
 function siteMetaLine(s) {
@@ -636,6 +647,7 @@ const DEFAULT_USER_METRICS = {
   rentGrowthPct:3,
   exitCapSpreadBps:25,
   imputedLandPerDoorMarket:100000,
+  imputedHouseLandPerLotSf:100,
 };
 const CONSTRUCTION_PLANS = {
   auto:     { label:'Auto by type', hardCost:null, softPct:0.18, months:18, rentPremium:0,    note:'Uses the project-type base cost.' },
@@ -955,6 +967,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-mx" checked> Mixed-use</label>
       <label class="cb"><input type="checkbox" id="f-cn" checked> Condo / TH</label>
       <label class="cb"><input type="checkbox" id="f-nh"> New house / permit feed</label>
+      <h4>Program</h4>
+      <label class="cb"><input type="checkbox" id="f-ed1"> ED1 apartments only</label>
       <h4>Neighborhood</h4>
       <select id="f-hood" class="sbs">
         ${neighborhoodOptionsHTML()}
@@ -1030,9 +1044,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <div class="setfield"><label>Operating expenses / EGI</label><div class="mfr"><input type="number" id="set-expense" step="0.5"><span>%</span></div></div>
         <div class="setfield"><label>Annual rent growth</label><div class="mfr"><input type="number" id="set-growth" step="0.25"><span>%</span></div></div>
         <div class="setfield"><label>Exit cap spread</label><div class="mfr"><input type="number" id="set-exit-spread" step="5"><span>bps</span></div></div>
-        <div class="setfield"><label>Market land / door</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-market" step="5000"></div></div>
+        <div class="setfield"><label>Apartment land / unit</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-market" step="5000"></div></div>
+        <div class="setfield"><label>New house land / lot SF</label><div class="mfr"><span>$</span><input type="number" id="set-land-house-psf" step="5"><span>/SF</span></div></div>
       </div>
-      <div class="setnote">Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. The top-row hard-cost override still works as a quick one-off stress test.</div>
+      <div class="setnote">Apartment land is calculated per unit. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. The top-row hard-cost override still works as a quick one-off stress test.</div>
     </div>
     <div class="setactions">
       <button class="warn" onclick="resetSettings()">Reset defaults</button>
@@ -1153,6 +1168,7 @@ function populateSettingsForm() {
   setSettingsField('set-growth', m.rentGrowthPct);
   setSettingsField('set-exit-spread', m.exitCapSpreadBps);
   setSettingsField('set-land-door-market', m.imputedLandPerDoorMarket);
+  setSettingsField('set-land-house-psf', m.imputedHouseLandPerLotSf);
 }
 
 function openSettings() {
@@ -1188,6 +1204,7 @@ function saveSettings() {
     rentGrowthPct: metricNumber(g('set-growth')?.value, current.rentGrowthPct, -10, 12),
     exitCapSpreadBps: metricNumber(g('set-exit-spread')?.value, current.exitCapSpreadBps, -100, 200),
     imputedLandPerDoorMarket: metricNumber(g('set-land-door-market')?.value, current.imputedLandPerDoorMarket, 0, 2000000),
+    imputedHouseLandPerLotSf: metricNumber(g('set-land-house-psf')?.value, current.imputedHouseLandPerLotSf, 0, 2000),
   };
   saveUserMetrics();
   closeSettings();
@@ -1256,6 +1273,10 @@ function landPerDoorForSite() {
   return Number(currentUserMetrics().imputedLandPerDoorMarket || DEFAULT_USER_METRICS.imputedLandPerDoorMarket);
 }
 
+function houseLandPerLotSf() {
+  return Number(currentUserMetrics().imputedHouseLandPerLotSf || DEFAULT_USER_METRICS.imputedHouseLandPerLotSf);
+}
+
 function canUseDoorLandBasis(s) {
   return isOffMarketSite(s) && ['Multifamily','Mixed-Use'].includes(s?.type) && Number(s?.units || 0) > 0;
 }
@@ -1265,14 +1286,30 @@ function imputedLandFromDoorSetting(s) {
   return Math.round(landPerDoorForSite(s) * Number(s.units || 0));
 }
 
+function canUseHouseLotLandBasis(s) {
+  return s?.type === 'New House' && knownLotSf(s) > 0 && houseLandPerLotSf() > 0;
+}
+
+function imputedHouseLandFromLotSetting(s) {
+  if (!canUseHouseLotLandBasis(s)) return 0;
+  return Math.round(houseLandPerLotSf() * knownLotSf(s));
+}
+
+function imputedLandFromUserSetting(s) {
+  return imputedHouseLandFromLotSetting(s) || imputedLandFromDoorSetting(s);
+}
+
 function hasPermitValuationEstimate(s) {
   return s?.landValueSource === 'permit_valuation_estimate' && Number(s?.permitValuation || 0) > 0;
 }
 
 function landValueSourceNote(s) {
+  if (canUseHouseLotLandBasis(s)) {
+    return `User house land setting: ${fmtD(houseLandPerLotSf())}/lot SF x ${Math.round(knownLotSf(s)).toLocaleString()} lot SF.`;
+  }
   if (!isOffMarketSite(s)) return 'Listing ask price used as land basis.';
   if (canUseDoorLandBasis(s)) {
-    return `User land setting, not a sale comp: ${fmtD(landPerDoorForSite(s))}/door x ${(s.units || 0).toLocaleString()} doors.`;
+    return `User apartment land setting: ${fmtD(landPerDoorForSite(s))}/unit x ${(s.units || 0).toLocaleString()} units.`;
   }
   if (s?.landValueSource === 'recent_sales_comps') {
     const metric = s.landValueMetric || 'sales comp metric';
@@ -1293,8 +1330,9 @@ function landValueSourceNote(s) {
 }
 
 function landBasisLabel(s) {
+  if (canUseHouseLotLandBasis(s)) return 'User house land basis';
   if (!isOffMarketSite(s)) return 'Asking price';
-  if (canUseDoorLandBasis(s)) return 'User land basis';
+  if (canUseDoorLandBasis(s)) return 'User apartment land basis';
   if (s?.landValueSource === 'recent_sales_comps') return 'Comp land basis';
   if (hasPermitValuationEstimate(s)) return 'Permit valuation estimate';
   if (s?.landValueSource === 'permit_valuation_fallback') return 'Land basis';
@@ -1302,6 +1340,7 @@ function landBasisLabel(s) {
 }
 
 function hasReliableLandBasis(s) {
+  if (imputedLandFromUserSetting(s) > 0) return true;
   if (s?.needsLandComp || s?.landBasisReliable === false) return false;
   if (!isOffMarketSite(s)) return siteAskPrice(s) > 0;
   return canUseDoorLandBasis(s) || s?.landValueSource === 'recent_sales_comps' || hasPermitValuationEstimate(s);
@@ -1695,6 +1734,7 @@ function buildSiteQueryParams(offset = 0) {
   if (g('f-cn')?.checked) types.push('Condo/TH');
   if (g('f-nh')?.checked) types.push('New House');
   if (types.length) qs.set('types', types.join(','));
+  if (g('f-ed1')?.checked) qs.set('ed1', 'true');
 
   const listings = [];
   if (g('f-fs')?.checked) listings.push('for_sale');
@@ -1843,6 +1883,7 @@ function applyFilters() {
   if (g('f-cn')?.checked) types.push('Condo/TH');
   if (g('f-nh')?.checked) types.push('New House');
   const typeFiltersActive = types.length > 0;
+  const ed1Only = g('f-ed1')?.checked === true;
 
   filtered = allSites.filter(s => {
     const costs = costModelForSite(s);
@@ -1856,6 +1897,7 @@ function applyFilters() {
     if (devStatusFiltersActive && !devMatch) return false;
     if (watchOnly && !isWatched(s.id)) return false;
     if (typeFiltersActive && !typeMatchesSelected(s, types)) return false;
+    if (ed1Only && !isEd1Site(s)) return false;
     if (hood && siteNeighborhood(s) !== hood) return false;
     if (s.units < umin || s.units > umax) return false;
     const buildingSf = siteBuildingSf(s);
@@ -1974,6 +2016,7 @@ function activeFilterSummaryHTML() {
   addValue('mf-s', 'Min dev spread');
   addValue('mf-c', 'Min cap on cost');
   if (g('f-watch')?.checked) items.push('Watchlist only');
+  if (g('f-ed1')?.checked) items.push('ED1 apartments only');
   return items.length ? '<small style="display:block;margin:8px auto 12px;max-width:520px;color:#667790">Active filters: ' + escapeText(items.join(' | ')) + '</small>' : '';
 }
 
@@ -2014,7 +2057,9 @@ function renderCards() {
     const needsLand = valuation.needsLandComp || !reliableLand;
     const barColor = needsLand ? '#b98b2f' : pc;
     const priceSub = offMarket
-      ? (reliableLand ? 'land basis ' + fmtM(landBasis) : 'land basis unavailable')
+      ? (reliableLand
+        ? (canUseHouseLotLandBasis(s) ? fmtD(houseLandPerLotSf()) + '/lot SF basis' : 'land basis ' + fmtM(landBasis))
+        : 'land basis unavailable')
       : (ask ? 'asking price / land basis' : 'asking price missing');
     const watched = isWatched(s.id);
     const displayAddr = gatedDisplayAddress(s);
@@ -2026,7 +2071,7 @@ function renderCards() {
       </div>
       <div class="bdgs">
         ${offMarket?'<span class="bdg b4">Off-market</span>':s.rti?'<span class="bdg b1">RTI</span>':'<span class="bdg b2">For sale</span>'}
-        <span class="bdg b3">${s.type}</span><span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${!reliableLand?'<span class="bdg b4">Land comp needed</span>':''}${inspectionStatusBadgeHTML(s)}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
+        <span class="bdg b3">${s.type}</span>${isEd1Site(s)?'<span class="bdg b1">ED1</span>':''}<span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${!reliableLand?'<span class="bdg b4">Land comp needed</span>':''}${inspectionStatusBadgeHTML(s)}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${barColor}">${needsLand?'Needs land':fmtM(prof)}</div></div>
@@ -2338,9 +2383,9 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
   const metrics = currentUserMetrics();
   const units = s.units || 0;
   const avgUnitSf = s.usf || 800;
-  const totalSF = units * avgUnitSf;
-  const doorLand = imputedLandFromDoorSetting(s);
-  const land = doorLand || s.landCost || siteAskPrice(s) || 0;
+  const totalSF = siteBuildingSf(s) || (units * avgUnitSf);
+  const userLand = imputedLandFromUserSetting(s);
+  const land = userLand || s.landCost || siteAskPrice(s) || 0;
   const override = currentHardCostOverride();
   const typeBase = baseHardCostPerSf(s.type);
   const defaultTypeBase = FRONTEND_HARD_COST_PSF[s.type] || FRONTEND_HARD_COST_PSF.Multifamily;
@@ -2354,7 +2399,7 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
   const storedHard = Math.round(s.hardCosts || 0);
   const storedHardPsf = totalSF ? Math.round(storedHard / totalSF) : 0;
   const modeledHardPsf = totalSF ? Math.round(modeledHard / totalSF) : 0;
-  const shouldRecastCosts = !!doorLand || override || plan.key !== 'auto' || savedMetricsCustomized() || !storedHard || storedHardPsf > modeledHardPsf * 1.2;
+  const shouldRecastCosts = !!userLand || override || plan.key !== 'auto' || savedMetricsCustomized() || !storedHard || storedHardPsf > modeledHardPsf * 1.2;
   const shouldRecastCarry = shouldRecastCosts || !!currentInterestRateOverride();
 
   const hardCosts = shouldRecastCosts ? modeledHard : storedHard;
@@ -2504,7 +2549,8 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${siteNeighborhood(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${siteLocationSourceNote(s)}</span></div></div>
       <div class="ic"><div class="icl">Listing status</div><div class="icv">${listingStatus}</div></div>
       <div class="ic"><div class="icl">Development status</div><div class="icv">${devStatus}</div></div>
-      <div class="ic"><div class="icl">Units / Avg SF</div><div class="icv">${escapeText(siteUnitsText(s))} / ${siteAvgUnitSfText(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${siteUnitSourceNote(s)}</span></div></div>
+      <div class="ic"><div class="icl">${s.type === 'New House' ? 'Lot / Home size' : 'Units / Avg SF'}</div><div class="icv">${s.type === 'New House' ? escapeText(siteLotText(s) + ' / ' + siteProjectSfText(s)) : escapeText(siteUnitsText(s)) + ' / ' + siteAvgUnitSfText(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${s.type === 'New House' ? 'Permit/source measurements; TBD means the city did not publish that field.' : siteUnitSourceNote(s)}</span></div></div>
+      ${isEd1Site(s)?'<div class="ic"><div class="icl">Program</div><div class="icv">ED1 <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">Detected from permit/project language.</span></div></div>':''}
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${landDisplay} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
@@ -3544,6 +3590,9 @@ function constructionCostRows(s, tc, land) {
   const rows = [
     xlsTitleRow('Construction Cost Validation', s.addr),
     xlsRow(['Project Type', s.type || '']),
+    xlsRow(['Program', isEd1Site(s) ? 'ED1' : 'Not identified as ED1']),
+    xlsRow(['Lot SF', knownLotSf(s) ? cellNumber(Math.round(knownLotSf(s))) : '', '', '', '', s.lotSfSource || 'Not provided by source record']),
+    xlsRow([s.type === 'New House' ? 'Home SF' : 'Project SF', totalSF ? cellNumber(Math.round(totalSF)) : '', '', '', '', s.buildingSfSource || 'Source/model data']),
     xlsRow(['Construction Plan', costs.planLabel]),
     xlsRow(['Plan Notes', [costs.planNote || '', 'String', 'note']]),
     xlsRow(['Hard Cost Basis', cellMoney(costs.hardPerSf), '$ / SF', '', '', costs.source || 'current assumption']),
@@ -3900,7 +3949,7 @@ async function exportPDF(id) {
 
 <div class="note">
   <strong>Investment Summary:</strong> This analysis presents a ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'multifamily')} development opportunity located at ${displayAddr} in ${siteNeighborhood(s)}, CA.
-  Lot size is ${escapeText(siteLotText(s))}. 
+  ${escapeText(siteLotText(s))}.
   ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'submitted' ? 'The project has been submitted to the city and is awaiting plan check or approval.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
   Based on RSMeans 2024 construction cost data and CoStar Q3 2024 market cap rates, the projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF), 
   with a stabilized exit value of <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding a net development profit of <strong>${fmtD(prof)}</strong>.
@@ -3934,6 +3983,7 @@ async function exportPDF(id) {
       <tr><td>City / County</td><td>Los Angeles, CA / LA County</td></tr>
       <tr><td>Lot Size</td><td>${escapeText(siteLotText(s))}</td></tr>
       <tr><td>Project Type</td><td>${s.type || 'Multifamily'}</td></tr>
+      <tr><td>Program</td><td>${isEd1Site(s) ? 'ED1' : 'Not identified as ED1'}</td></tr>
       <tr><td>Proposed Units</td><td>${escapeText(siteUnitsText(s))}</td></tr>
       <tr><td>Avg Unit Size</td><td>${siteAvgUnitSfText(s)}</td></tr>
       <tr><td>Total Building SF</td><td>${(siteBuildingSf(s) || ((s.units||12)*(s.usf||800))).toLocaleString()} SF</td></tr>
@@ -4305,6 +4355,7 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
 function resetFilters() {
   ['f-fs','f-rti','f-comp','f-mf','f-mx','f-cn','f-nh','f-d-submitted','f-d-plan','f-d-approved','f-d-issued','f-d-unknown'].forEach(id=>{const el=g(id);if(el)el.checked=true;});
   const watch=g('f-watch'); if(watch)watch.checked=false;
+  const ed1=g('f-ed1'); if(ed1)ed1.checked=false;
   ['f-hood'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-q','f-umin','f-umax','f-sfmin','f-sfmax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c','mf-hc','mf-rate'].forEach(id=>{const el=g(id);if(el)el.value='';});
   const plan=g('mf-plan'); if(plan)plan.value='auto';

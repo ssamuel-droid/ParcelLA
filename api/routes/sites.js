@@ -163,6 +163,8 @@ const PERMIT_HOUSE_INDEXED_SELECT = [
   'building_sf',
   'building_sf_source',
   'building_sf_parsed',
+  'lot_sf',
+  'lot_sf_source',
   'stories',
   'contractor_name',
   'contractor_address',
@@ -217,7 +219,9 @@ function normalizedNeighborhood(s = {}) {
 function normalizedLotSf(s = {}) {
   const lot = Number(s.lot_sf ?? s.lot ?? 0);
   if (!Number.isFinite(lot) || lot <= 0) return null;
-  const likelyDefault = lot === 5000 && (
+  const source = String(s.lot_sf_source || s.raw_permit_data?.lot_sf_source || '').trim();
+  const hasRealSource = source && !/default|model|assum/i.test(source);
+  const likelyDefault = lot === 5000 && !hasRealSource && (
     String(s.status || '').toLowerCase().includes('off') ||
     s.permit_source_id ||
     s.raw_permit_data?.permit_number
@@ -918,6 +922,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     buildingSfParsed: rawPermit.building_sf_parsed ?? null,
     permitValuation: rawPermit.permit_valuation || model.permitValuation || null,
     lotSfSource:  rawPermit.lot_sf_source || null,
+    isEd1:        isEd1Project(s, rawPermit),
     stories:      rawPermit.stories || rawPermit.of_stories || rawPermit.number_of_stories || permitDetail.stories || null,
     exitValueSource: rawPermit.exit_value_source || model.exitValueSource || null,
     exitValueMetric: rawPermit.exit_value_metric || model.exitValueMetric || null,
@@ -1097,6 +1102,24 @@ function canonicalProjectType(value) {
   if (compact === 'new house' || compact === 'single family' || compact === 'sfd') return 'New House';
   if (compact === 'multifamily' || compact === 'multi-family' || compact === 'multi family') return 'Multifamily';
   return raw;
+}
+
+function isEd1Project(site = {}, raw = site.raw_permit_data || {}) {
+  if (site.isEd1 === true || site.is_ed1 === true || raw.is_ed1 === true) return true;
+  const text = [
+    site.workDescription,
+    site.work_description,
+    site.program,
+    raw.work_description,
+    raw.project_description,
+    raw.description,
+    raw.program,
+    raw.case_number,
+    raw.case_no,
+    raw.planning_case,
+    raw.entitlement_case,
+  ].filter(Boolean).join(' ');
+  return /(^|[^a-z0-9])ed[- ]?1([^a-z0-9]|$)|executive directive\s*(?:no\.?\s*)?1/i.test(text);
 }
 
 function dbProjectTypeVariants(value) {
@@ -1327,7 +1350,16 @@ function permitRowAsHouseSite(p = {}) {
     neighborhood: hoodFromCoords(lat, lng) || guessHood(address, p.zone || raw.zone || raw.zoning),
     project_type: type,
     zoning: p.zone || raw.zone || raw.zoning || null,
-    lot_sf: numberFromValue(raw.lot_area || raw.lot_sf || raw.site_area || raw.parcel_area),
+    lot_sf: numberFromValue(
+      p.lot_sf ??
+      raw.lot_area ??
+      raw.lot_sf ??
+      raw.lot_size ??
+      raw.lot_square_footage ??
+      raw.lot_sqft ??
+      raw.site_area ??
+      raw.parcel_area
+    ),
     units: displayUnits,
     avg_unit_sf: avgUnitSf,
     rti: Boolean(p.is_rti || statusIsRti(status)),
@@ -1364,6 +1396,8 @@ function permitRowAsHouseSite(p = {}) {
       building_sf: buildingSf,
       building_sf_source: buildingSfSource,
       building_sf_parsed: p.building_sf_parsed ?? !!buildingSfSource,
+      lot_sf: numberFromValue(p.lot_sf ?? raw.lot_area ?? raw.lot_sf ?? raw.lot_size ?? raw.site_area ?? raw.parcel_area) || null,
+      lot_sf_source: p.lot_sf_source || raw.lot_sf_source || null,
       stories: p.stories || raw.of_stories || raw.stories || raw.number_of_stories || raw.story_count || null,
       contractor_name: p.contractor_name || raw.contractor_name || raw.contractors_business_name || raw.contractor_business_name || null,
       contractor_address: p.contractor_address || raw.contractor_address || null,
@@ -1425,7 +1459,7 @@ function cachePermitHousePage(key, value) {
 
 function indexedPermitFieldsUnavailable(error) {
   const text = [error?.message, error?.details, error?.hint, error?.code].filter(Boolean).join(' ');
-  return /building_sf|project_detail_complete|stories|schema cache|PGRST204|42703/i.test(text);
+  return /building_sf|lot_sf|lot_sf_source|project_detail_complete|stories|schema cache|PGRST204|42703/i.test(text);
 }
 
 async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOffset) {
@@ -1664,6 +1698,7 @@ function sitePassesQueryFilters(s, queryParams) {
 
   if (queryParams.rti !== undefined && s.rti !== (queryParams.rti === 'true')) return false;
   if (queryParams.isComp !== undefined && s.isComp !== (queryParams.isComp === 'true')) return false;
+  if (String(queryParams.ed1 || '').toLowerCase() === 'true' && !isEd1Project(s)) return false;
   const minUnits = activeNumericParam(queryParams.minUnits);
   const maxUnits = activeNumericParam(queryParams.maxUnits);
   if (minUnits !== null && Number(s.units || 0) < minUnits) return false;
@@ -1737,6 +1772,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   const needsPostFilter = Boolean(
     search ||
     mayReturnNewHouse ||
+    String(queryParams.ed1 || '').toLowerCase() === 'true' ||
     queryParams.hood ||
     (queryParams.devStatus && !canPushDevStatus) ||
     hasActiveNumericParam(queryParams.minPrice) ||
@@ -1749,6 +1785,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     queryParams.hood ||
     queryParams.listing ||
     queryParams.devStatus ||
+    queryParams.ed1 ||
     queryParams.zone ||
     activeNumericFilters ||
     hasModelOverrideParams(queryParams)
@@ -1827,7 +1864,9 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   }
   const dbOffset = needsPostFilter ? 0 : requestedOffset;
   const dbLimit = needsPostFilter
-    ? Math.min(newHouseOnly ? 1000 : 5000, Math.max(requestedOffset + requestedLimit * (newHouseOnly ? 50 : 20), requestedLimit))
+    ? (String(queryParams.ed1 || '').toLowerCase() === 'true'
+      ? 5000
+      : Math.min(newHouseOnly ? 1000 : 5000, Math.max(requestedOffset + requestedLimit * (newHouseOnly ? 50 : 20), requestedLimit)))
     : requestedLimit;
   query = query.range(dbOffset, dbOffset + dbLimit - 1);
 
@@ -1956,6 +1995,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       if (devStatuses.length && !(devStatuses.includes(devKey) || (devStatuses.includes('city_approved_not_started') && s.rti))) return false;
       if (rti     !== undefined && s.rti !== (rti === 'true'))  return false;
       if (isComp  !== undefined && s.isComp !== (isComp === 'true')) return false;
+      if (String(req.query.ed1 || '').toLowerCase() === 'true' && !isEd1Project(s)) return false;
       if (fallbackFilters.minUnits !== null && s.units < fallbackFilters.minUnits) return false;
       if (fallbackFilters.maxUnits !== null && s.units > fallbackFilters.maxUnits) return false;
       const buildingSf = Number(s.buildingSf ?? s.totalBuildingSf ?? m.buildingSf ?? 0);

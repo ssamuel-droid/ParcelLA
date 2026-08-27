@@ -169,10 +169,31 @@ function permitTextAreaMatches(values) {
     const start = Math.max(0, match.index - 55);
     const end = Math.min(text.length, match.index + match[0].length + 75);
     const context = text.slice(start, end).toLowerCase();
+    const prefix = text.slice(start, match.index).toLowerCase();
+    const suffix = text.slice(match.index + match[0].length, end).toLowerCase();
+    const explicitLotArea = /(?:lot|site area|parcel|land area|property area)[^0-9]{0,60}$/.test(prefix) ||
+      /^\s*(?:lot|site|parcel|land|property)\b/.test(suffix);
     const lotContext = /\b(lot|site area|parcel|land area|property area)\b/.test(context);
     const buildingContext = /\b(building|floor|dwelling|residential|apartment|house|sfd|habitable|living)\b/.test(context);
+    if (explicitLotArea) continue;
     if (lotContext && !buildingContext) continue;
     matches.push(value);
+  }
+  return matches;
+}
+
+function permitLotAreaMatches(values) {
+  const text = values.map(value => String(value || '')).filter(Boolean).join(' ');
+  const matches = [];
+  const patterns = [
+    /(?:lot|site area|parcel|land area|property area)[^0-9]{0,60}(\d[\d,]{2,})\s*(?:sq\.?\s*ft|square\s*feet|s\.?f\.?|sf)\b/gi,
+    /(\d[\d,]{2,})\s*(?:sq\.?\s*ft|square\s*feet|s\.?f\.?|sf)\s*(?:lot|site|parcel|land|property)\b/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const value = positiveNumber(match[1]);
+      if (value >= 1000 && value <= 2000000) matches.push(value);
+    }
   }
   return matches;
 }
@@ -224,6 +245,21 @@ function addPermitSearchFields(row) {
     ? 'Permit work description'
     : (directSf ? 'Permit source field' : null);
   const stories = storyCount(work, raw);
+  const directLotSf = positiveNumber(first(
+    raw.lot_area,
+    raw.lot_sf,
+    raw.lot_size,
+    raw.lot_square_footage,
+    raw.lot_sqft,
+    raw.site_area,
+    raw.parcel_area
+  ));
+  const textLotAreas = permitLotAreaMatches([work, raw.project_description, raw.description]);
+  const textLotSf = textLotAreas.length ? Math.max(...textLotAreas) : 0;
+  const lotSf = directLotSf || textLotSf || 0;
+  const lotSfSource = directLotSf
+    ? 'Permit source field'
+    : (textLotSf ? 'Permit work description' : null);
   const rawUnits = positiveNumber(first(
     row.units,
     raw.of_residential_dwelling_units,
@@ -249,6 +285,8 @@ function addPermitSearchFields(row) {
     building_sf: buildingSf ? Math.round(buildingSf) : null,
     building_sf_source: buildingSfSource,
     building_sf_parsed: Boolean(buildingSfSource),
+    lot_sf: lotSf >= 1000 && lotSf <= 2000000 ? Math.round(lotSf) : null,
+    lot_sf_source: lotSf >= 1000 && lotSf <= 2000000 ? lotSfSource : null,
     stories: stories || null,
     contractor_name: firstText(raw.contractor_name, raw.contractors_business_name, raw.contractor_business_name, raw.contractor),
     contractor_address: firstText(raw.contractor_address),

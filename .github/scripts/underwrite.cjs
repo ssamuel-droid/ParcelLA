@@ -334,6 +334,19 @@ function textAreaMatches(values, { lotOnly = false } = {}) {
   const text = values.map(value => String(value || '')).filter(Boolean).join(' ');
   if (!text.trim()) return [];
   const matches = [];
+  if (lotOnly) {
+    const lotPatterns = [
+      /(?:lot|site area|parcel|land area|property area)[^0-9]{0,60}(\d[\d,]{2,})\s*(?:sq\.?\s*ft|square\s*feet|s\.?f\.?|sf)\b/gi,
+      /(\d[\d,]{2,})\s*(?:sq\.?\s*ft|square\s*feet|s\.?f\.?|sf)\s*(?:lot|site|parcel|land|property)\b/gi,
+    ];
+    for (const pattern of lotPatterns) {
+      for (const match of text.matchAll(pattern)) {
+        const value = numberFromValue(match[1]);
+        if (value >= 1000 && value <= 2000000) matches.push({ value, context: match[0].toLowerCase() });
+      }
+    }
+    return matches;
+  }
   const areaPattern = /(\d[\d,]{2,})\s*(?:sq\.?\s*ft|square\s*feet|s\.?f\.?|sf)\b/gi;
   for (const match of text.matchAll(areaPattern)) {
     const value = numberFromValue(match[1]);
@@ -341,10 +354,14 @@ function textAreaMatches(values, { lotOnly = false } = {}) {
     const start = Math.max(0, match.index - 55);
     const end = Math.min(text.length, match.index + match[0].length + 75);
     const context = text.slice(start, end).toLowerCase();
+    const prefix = text.slice(start, match.index).toLowerCase();
+    const suffix = text.slice(match.index + match[0].length, end).toLowerCase();
+    const explicitLotArea = /(?:lot|site area|parcel|land area|property area)[^0-9]{0,60}$/.test(prefix) ||
+      /^\s*(?:lot|site|parcel|land|property)\b/.test(suffix);
     const lotContext = /\b(lot|site area|parcel|land area|property area)\b/.test(context);
     const buildingContext = /\b(building|floor|dwelling|residential|apartment|house|sfd|mixed[- ]use|habitable|living)\b/.test(context);
-    if (lotOnly && !lotContext) continue;
-    if (!lotOnly && lotContext && !buildingContext) continue;
+    if (explicitLotArea) continue;
+    if (lotContext && !buildingContext) continue;
     matches.push({ value, context });
   }
   return matches;
@@ -495,7 +512,15 @@ function hasRealNewHousePermitDetail(p = {}, units = 0, buildingSize = {}) {
 }
 
 function lotSizeFromPermit(p) {
-  const rawLot = firstPositiveNumber(p.lot_size, p.lot_area, p.lot_sf, p.parcel_area, p.site_area);
+  const rawLot = firstPositiveNumber(
+    p.lot_size,
+    p.lot_area,
+    p.lot_sf,
+    p.lot_square_footage,
+    p.lot_sqft,
+    p.parcel_area,
+    p.site_area
+  );
   const textMatches = textAreaMatches([permitWorkDescription(p), p.project_description, p.description], { lotOnly: true });
   const textLot = textMatches.length ? Math.max(...textMatches.map(m => m.value)) : 0;
   const lot = rawLot || textLot;
@@ -664,6 +689,20 @@ function irr(cfs) {
   return Math.round(r*1000)/10;
 }
 
+function isEd1Permit(p = {}, workDescription = '') {
+  const text = [
+    workDescription,
+    p.project_description,
+    p.description,
+    p.use_desc,
+    p.case_number,
+    p.case_no,
+    p.planning_case,
+    p.entitlement_case,
+  ].filter(Boolean).join(' ');
+  return /(^|[^a-z0-9])ed[- ]?1([^a-z0-9]|$)|executive directive\s*(?:no\.?\s*)?1/i.test(text);
+}
+
 function houseResalePsf(hood) {
   return HOUSE_RESALE_PSF[hood] || HOUSE_RESALE_PSF['Koreatown'] || 650;
 }
@@ -760,6 +799,7 @@ function uw(p, inspectionCheck = null) {
       unit_mix_counts:unitMix.counts,
       unit_mix_source:unitMix.source,
       unit_mix_parsed_total:unitMix.parsedTotal,
+      is_ed1:isEd1Permit(p, workDescription),
       building_sf:buildingSize.totalSf,
       building_sf_source:buildingSize.source,
       building_sf_parsed:buildingSize.parsed,
@@ -808,7 +848,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>project_description,raw_data->>description,raw_data->>work_desc,raw_data->>workdescription,raw_data->>floor_area_l_a_building_code_definition,raw_data->>floor_area_l_a_zoning_code_definition,raw_data->>floor_area,raw_data->>floorarea,raw_data->>building_area,raw_data->>building_sf,raw_data->>total_floor_area,raw_data->>new_floor_area,raw_data->>proposed_floor_area,raw_data->>project_floor_area,raw_data->>square_footage,raw_data->>sqft,raw_data->>gross_floor_area,raw_data->>gross_building_area,raw_data->>residential_floor_area,raw_data->>of_stories,raw_data->>stories,raw_data->>number_of_stories,raw_data->>story_count,raw_data->>lot_size,raw_data->>lot_area,raw_data->>lot_sf,raw_data->>parcel_area,raw_data->>site_area,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>applicant_first_name,raw_data->>applicant_last_name,raw_data->>applicant_business_name,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>contractors_business_name,raw_data->>contractor_business_name,raw_data->>contractor_address,raw_data->>contractor_city,raw_data->>contractor_state,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>project_description,raw_data->>description,raw_data->>work_desc,raw_data->>workdescription,raw_data->>case_number,raw_data->>case_no,raw_data->>planning_case,raw_data->>entitlement_case,raw_data->>floor_area_l_a_building_code_definition,raw_data->>floor_area_l_a_zoning_code_definition,raw_data->>floor_area,raw_data->>floorarea,raw_data->>building_area,raw_data->>building_sf,raw_data->>total_floor_area,raw_data->>new_floor_area,raw_data->>proposed_floor_area,raw_data->>project_floor_area,raw_data->>square_footage,raw_data->>sqft,raw_data->>gross_floor_area,raw_data->>gross_building_area,raw_data->>residential_floor_area,raw_data->>of_stories,raw_data->>stories,raw_data->>number_of_stories,raw_data->>story_count,raw_data->>lot_size,raw_data->>lot_area,raw_data->>lot_sf,raw_data->>lot_square_footage,raw_data->>lot_sqft,raw_data->>parcel_area,raw_data->>site_area,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>applicant_first_name,raw_data->>applicant_last_name,raw_data->>applicant_business_name,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>contractors_business_name,raw_data->>contractor_business_name,raw_data->>contractor_address,raw_data->>contractor_city,raw_data->>contractor_state,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;
