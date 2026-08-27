@@ -1923,6 +1923,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     let sites = [];
     let fastTotal = null;
     let fastNotice = null;
+    let fastPageError = null;
     let usedFastPage = false;
 
     if (process.env.SUPABASE_URL) {
@@ -1936,8 +1937,24 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
           console.log(`[sites] Loaded fast page ${sites.length}/${fastTotal} from Supabase`);
         }
       } catch (e) {
+        fastPageError = e;
         console.log('[sites] Fast Supabase page failed - falling back:', e.message);
       }
+    }
+
+    // The browser always requests a small paginated page with fast=1. Loading
+    // every underwritten site after that query fails turns a short database
+    // timeout into a 1-2 minute response. Fail quickly so the client can retry
+    // while preserving the full-table fallback for maintenance/legacy callers.
+    if (!usedFastPage && fastPageError && String(req.query.fast || '') === '1') {
+      console.error('[sites] Fast page unavailable; refusing full-table fallback', {
+        message: fastPageError.message,
+        query: req.query,
+      });
+      return res.status(503).json({
+        error: 'The site index is temporarily unavailable. Please retry.',
+        retryable: true,
+      });
     }
 
     if (!usedFastPage && process.env.SUPABASE_URL) {
