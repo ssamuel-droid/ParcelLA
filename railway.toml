@@ -3,7 +3,6 @@
 
 [build]
 builder = "nixpacks"
-buildCommand = "npm install"
 
 [deploy]
 startCommand = "npm start"
@@ -17,3 +16,5 @@ source = "."
 [services.variables]
 NODE_ENV = "production"
 PORT = "3001"
+PUPPETEER_SKIP_DOWNLOAD = "true"
+PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
