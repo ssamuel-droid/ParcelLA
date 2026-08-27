@@ -13,6 +13,15 @@ ALTER TABLE permits ADD COLUMN IF NOT EXISTS applicant_name TEXT;
 ALTER TABLE permits ADD COLUMN IF NOT EXISTS applicant_business_name TEXT;
 ALTER TABLE permits ADD COLUMN IF NOT EXISTS project_detail_complete BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Earlier partial runs may have created these columns before their defaults and
+-- constraints were finalized. Normalize them so this migration is safe to rerun.
+ALTER TABLE permits ALTER COLUMN building_sf_parsed SET DEFAULT FALSE;
+ALTER TABLE permits ALTER COLUMN project_detail_complete SET DEFAULT FALSE;
+UPDATE permits SET building_sf_parsed = FALSE WHERE building_sf_parsed IS NULL;
+UPDATE permits SET project_detail_complete = FALSE WHERE project_detail_complete IS NULL;
+ALTER TABLE permits ALTER COLUMN building_sf_parsed SET NOT NULL;
+ALTER TABLE permits ALTER COLUMN project_detail_complete SET NOT NULL;
+
 CREATE OR REPLACE FUNCTION public.parcella_first_number(value TEXT)
 RETURNS NUMERIC
 LANGUAGE SQL
@@ -140,7 +149,7 @@ SET
     WHEN d.derived_sf BETWEEN 300 AND 5000000 THEN d.derived_sf_source
     ELSE NULL
   END,
-  building_sf_parsed = d.derived_sf BETWEEN 300 AND 5000000,
+  building_sf_parsed = COALESCE(d.derived_sf BETWEEN 300 AND 5000000, FALSE),
   stories = CASE WHEN d.story_count BETWEEN 1 AND 200 THEN d.story_count ELSE NULL END,
   contractor_name = COALESCE(
     p.raw_data->>'contractor_name',
@@ -163,7 +172,7 @@ WHERE p.id = d.id;
 UPDATE permits
 SET project_detail_complete = (
   building_sf IS NOT NULL
-  AND building_sf_parsed
+  AND COALESCE(building_sf_parsed, FALSE)
   AND LENGTH(TRIM(COALESCE(work_description, ''))) >= 12
   AND COALESCE(valuation, 0) > 0
   AND (
