@@ -31,7 +31,9 @@ let _cacheTime = 0;
 const _modelCache = new Map();
 let _landCompCache = null;
 let _landCompCacheTime = 0;
+const _housePageCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const HOUSE_PAGE_CACHE_TTL = 5 * 60 * 1000;
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
@@ -141,6 +143,35 @@ const PERMIT_HOUSE_SELECT = [
   'lng',
   'issued_date',
   'synced_at',
+].join(',');
+
+const PERMIT_HOUSE_INDEXED_SELECT = [
+  'id',
+  'permit_number',
+  'address',
+  'zone',
+  'units',
+  'valuation',
+  'is_rti',
+  'status',
+  'permit_type',
+  'permit_subtype',
+  'work_description',
+  'lat',
+  'lng',
+  'issued_date',
+  'synced_at',
+  'building_sf',
+  'building_sf_source',
+  'building_sf_parsed',
+  'stories',
+  'contractor_name',
+  'contractor_address',
+  'contractor_city',
+  'contractor_state',
+  'applicant_name',
+  'applicant_business_name',
+  'project_detail_complete',
 ].join(',');
 
 const NEIGHBORHOOD_BOXES = [
@@ -1250,6 +1281,7 @@ function permitRowAsHouseSite(p = {}) {
   const subtype = p.permit_subtype || raw.permit_sub_type || raw.permitsubtype || raw.use_desc || '';
   const type = guessType(p.permit_type || raw.permit_type || raw.permittype, subtype, units);
   const sourceFloorArea = firstText(
+    p.building_sf,
     raw.floor_area_l_a_building_code_definition,
     raw.floor_area_l_a_zoning_code_definition,
     raw.floor_area,
@@ -1269,10 +1301,10 @@ function permitRowAsHouseSite(p = {}) {
   const textFloorAreas = textAreaMatches([work, raw.project_description, raw.description, raw.use_desc]);
   const textFloorArea = textFloorAreas.length ? Math.max(...textFloorAreas.map(match => match.value)) : 0;
   const sourceFloorAreaNumber = sourceFloorArea ? numberFromValue(sourceFloorArea) : 0;
-  const buildingSf = textFloorArea || sourceFloorAreaNumber || null;
-  const buildingSfSource = textFloorArea
+  const buildingSf = numberFromValue(p.building_sf) || textFloorArea || sourceFloorAreaNumber || null;
+  const buildingSfSource = p.building_sf_source || (textFloorArea
     ? 'Permit work description'
-    : (sourceFloorAreaNumber ? 'Permit source field' : null);
+    : (sourceFloorAreaNumber ? 'Permit source field' : null));
   const displayUnits = units || (type === 'New House' ? 1 : null);
   const avgUnitSf = buildingSf && displayUnits ? Math.round(buildingSf / displayUnits) : buildingSf;
   const lat = numberFromValue(p.lat ?? raw.lat ?? raw.latitude);
@@ -1321,14 +1353,15 @@ function permitRowAsHouseSite(p = {}) {
       work_description: work || null,
       building_sf: buildingSf,
       building_sf_source: buildingSfSource,
-      building_sf_parsed: !!buildingSfSource,
-      stories: raw.of_stories || raw.stories || raw.number_of_stories || raw.story_count || null,
-      contractor_name: raw.contractor_name || raw.contractors_business_name || raw.contractor_business_name || null,
-      contractor_address: raw.contractor_address || null,
-      contractor_city: raw.contractor_city || null,
-      contractor_state: raw.contractor_state || null,
-      applicant_name: raw.applicant_name || [raw.applicant_first_name, raw.applicant_last_name].filter(Boolean).join(' ') || null,
-      applicant_business_name: raw.applicant_business_name || null,
+      building_sf_parsed: p.building_sf_parsed ?? !!buildingSfSource,
+      stories: p.stories || raw.of_stories || raw.stories || raw.number_of_stories || raw.story_count || null,
+      contractor_name: p.contractor_name || raw.contractor_name || raw.contractors_business_name || raw.contractor_business_name || null,
+      contractor_address: p.contractor_address || raw.contractor_address || null,
+      contractor_city: p.contractor_city || raw.contractor_city || null,
+      contractor_state: p.contractor_state || raw.contractor_state || null,
+      applicant_name: p.applicant_name || raw.applicant_name || [raw.applicant_first_name, raw.applicant_last_name].filter(Boolean).join(' ') || null,
+      applicant_business_name: p.applicant_business_name || raw.applicant_business_name || null,
+      project_detail_complete: p.project_detail_complete ?? null,
     },
   };
 }
@@ -1352,25 +1385,78 @@ function sortPermitHouseSites(sites, sort = 'profit') {
   return [...sites].sort(sorters[sort] || sorters.profit);
 }
 
+function permitHousePageCacheKey(queryParams, requestedLimit, requestedOffset) {
+  const normalized = Object.keys(queryParams || {})
+    .sort()
+    .reduce((result, key) => {
+      result[key] = queryParams[key];
+      return result;
+    }, {});
+  return JSON.stringify([requestedLimit, requestedOffset, normalized]);
+}
+
+function cachedPermitHousePage(key) {
+  const cached = _housePageCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.createdAt > HOUSE_PAGE_CACHE_TTL) {
+    _housePageCache.delete(key);
+    return null;
+  }
+  return cached.value;
+}
+
+function cachePermitHousePage(key, value) {
+  _housePageCache.set(key, { createdAt: Date.now(), value });
+  while (_housePageCache.size > 100) {
+    _housePageCache.delete(_housePageCache.keys().next().value);
+  }
+  return value;
+}
+
+function indexedPermitFieldsUnavailable(error) {
+  const text = [error?.message, error?.details, error?.hint, error?.code].filter(Boolean).join(' ');
+  return /building_sf|project_detail_complete|stories|schema cache|PGRST204|42703/i.test(text);
+}
+
 async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOffset) {
+  const cacheKey = permitHousePageCacheKey(queryParams, requestedLimit, requestedOffset);
+  const cached = cachedPermitHousePage(cacheKey);
+  if (cached) return cached;
+
   const search = cleanSearchTerm(queryParams.q || queryParams.search);
   const hoodName = String(queryParams.hood || '').trim();
   const hoodBox = NEIGHBORHOOD_BOXES.find(box => box.h === hoodName);
   const target = requestedOffset + requestedLimit;
-  const pageSize = search || hoodBox ? Math.min(120, Math.max(40, target * 6)) : Math.min(60, Math.max(25, target * 6));
-  const maxRawRows = search || hoodBox ? Math.min(1800, Math.max(target * 45, 360)) : Math.min(600, Math.max(target * 30, 120));
   const matches = [];
   let rawOffset = 0;
   let reachedEnd = false;
+  let indexedMode = true;
+  let indexedTotal = null;
 
-  while (rawOffset < maxRawRows && matches.length < target) {
+  while (matches.length < target) {
+    const pageSize = indexedMode
+      ? Math.min(100, Math.max(40, target * 2))
+      : (search || hoodBox ? Math.min(120, Math.max(40, target * 6)) : Math.min(60, Math.max(25, target * 6)));
+    const maxRawRows = indexedMode
+      ? Math.min(500, Math.max(target * 10, 100))
+      : (search || hoodBox ? Math.min(1800, Math.max(target * 45, 360)) : Math.min(600, Math.max(target * 30, 120)));
+    if (rawOffset >= maxRawRows) break;
+
     let query = supabase
       .from('permits')
-      .select(PERMIT_HOUSE_SELECT)
+      .select(indexedMode ? PERMIT_HOUSE_INDEXED_SELECT : PERMIT_HOUSE_SELECT, indexedMode ? { count: 'exact' } : undefined)
       .eq('permit_type', 'Bldg-New')
       .not('address', 'is', null)
       .order('id', { ascending: false })
       .range(rawOffset, rawOffset + pageSize - 1);
+
+    if (indexedMode) {
+      query = query.eq('project_detail_complete', true);
+      const minSf = activeNumericParam(queryParams.minSf);
+      const maxSf = activeNumericParam(queryParams.maxSf);
+      if (minSf !== null) query = query.gte('building_sf', minSf);
+      if (maxSf !== null) query = query.lte('building_sf', maxSf);
+    }
 
     if (hoodBox) {
       query = query
@@ -1389,8 +1475,17 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
       if (clauses.length) query = query.or(clauses.join(','));
     }
 
-    const { data, error } = await query;
+    const { data, error, count } = await query;
+    if (error && indexedMode && indexedPermitFieldsUnavailable(error)) {
+      console.warn('[sites:new-house] Indexed permit fields unavailable; using legacy JSON scan:', error.message);
+      indexedMode = false;
+      indexedTotal = null;
+      rawOffset = 0;
+      matches.length = 0;
+      continue;
+    }
     if (error) throw error;
+    if (indexedMode && Number.isFinite(Number(count))) indexedTotal = Number(count);
     const rows = data || [];
     if (!rows.length) {
       reachedEnd = true;
@@ -1412,10 +1507,12 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
 
   const sorted = sortPermitHouseSites(matches, queryParams.sort || 'profit');
   const page = sorted.slice(requestedOffset, requestedOffset + requestedLimit);
-  const total = reachedEnd
+  const total = indexedMode && indexedTotal !== null
+    ? indexedTotal
+    : reachedEnd
     ? sorted.length
     : Math.max(sorted.length, requestedOffset + page.length + (page.length ? requestedLimit : 0));
-  return { sites: page, total };
+  return cachePermitHousePage(cacheKey, { sites: page, total });
 }
 
 async function permitDetailNoticeForSearch(searchValue) {

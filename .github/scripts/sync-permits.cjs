@@ -6,7 +6,7 @@ const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const SOCRATA_APP_TOKEN = process.env.SOCRATA_APP_TOKEN;
 
-if (!SB_URL || !SB_KEY) {
+if (require.main === module && (!SB_URL || !SB_KEY)) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY are required');
 }
 
@@ -147,6 +147,125 @@ function unitsFromText(value) {
   return match ? integer(match[1].replace(/,/g, '')) : 0;
 }
 
+function positiveNumber(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  const match = String(value).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  const parsed = match ? Number(match[0]) : 0;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function firstText(...values) {
+  const value = first(...values);
+  return value === null ? null : String(value).replace(/\s+/g, ' ').trim();
+}
+
+function permitTextAreaMatches(values) {
+  const text = values.map(value => String(value || '')).filter(Boolean).join(' ');
+  const matches = [];
+  const areaPattern = /(\d[\d,]{2,})\s*(?:sq\.?\s*ft|square\s*feet|s\.?f\.?|sf)\b/gi;
+  for (const match of text.matchAll(areaPattern)) {
+    const value = positiveNumber(match[1]);
+    if (value < 300 || value > 5000000) continue;
+    const start = Math.max(0, match.index - 55);
+    const end = Math.min(text.length, match.index + match[0].length + 75);
+    const context = text.slice(start, end).toLowerCase();
+    const lotContext = /\b(lot|site area|parcel|land area|property area)\b/.test(context);
+    const buildingContext = /\b(building|floor|dwelling|residential|apartment|house|sfd|habitable|living)\b/.test(context);
+    if (lotContext && !buildingContext) continue;
+    matches.push(value);
+  }
+  return matches;
+}
+
+function storyCount(value, raw = {}) {
+  const direct = positiveNumber(first(raw.of_stories, raw.stories, raw.number_of_stories, raw.story_count));
+  if (direct > 0) return direct;
+  const text = String(value || '');
+  const numeric = text.match(/\b(\d+(?:\.\d+)?)\s*[- ]?\s*stor(?:y|ies)\b/i);
+  if (numeric) return positiveNumber(numeric[1]);
+  const words = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+  const word = text.match(/\b(one|two|three|four|five)\s*[- ]?\s*stor(?:y|ies)\b/i);
+  return word ? words[word[1].toLowerCase()] : 0;
+}
+
+function addPermitSearchFields(row) {
+  if (!row) return row;
+  const raw = row.raw_data || {};
+  const work = firstText(
+    row.work_description,
+    raw.work_description,
+    raw.work_desc,
+    raw.workdescription,
+    raw.project_description,
+    raw.description,
+    raw.use_desc
+  );
+  const directSf = positiveNumber(first(
+    raw.floor_area_l_a_building_code_definition,
+    raw.floor_area_l_a_zoning_code_definition,
+    raw.floor_area,
+    raw.floorarea,
+    raw.building_area,
+    raw.building_sf,
+    raw.total_floor_area,
+    raw.new_floor_area,
+    raw.proposed_floor_area,
+    raw.project_floor_area,
+    raw.square_footage,
+    raw.sqft,
+    raw.gross_floor_area,
+    raw.gross_building_area,
+    raw.residential_floor_area
+  ));
+  const textAreas = permitTextAreaMatches([work, raw.project_description, raw.description]);
+  const textSf = textAreas.length ? Math.max(...textAreas) : 0;
+  const buildingSf = textSf || directSf || 0;
+  const buildingSfSource = textSf
+    ? 'Permit work description'
+    : (directSf ? 'Permit source field' : null);
+  const stories = storyCount(work, raw);
+  const rawUnits = positiveNumber(first(
+    row.units,
+    raw.of_residential_dwelling_units,
+    raw.number_of_units,
+    raw.numberofunits,
+    raw.du_changed
+  ));
+  const hasUnitCount = rawUnits > 0 || /\b(?:single[- ]family|sfd|one[- ]family|1\s*(?:dwelling|unit))\b/i.test(work || '');
+  const usefulWork = work && work.length >= 12 && !/^(?:new house|single family|sfd|residential)$/i.test(work);
+  const projectDetailComplete = Boolean(
+    buildingSf >= 300 &&
+    buildingSf <= 5000000 &&
+    buildingSfSource &&
+    usefulWork &&
+    Number(row.valuation || 0) > 0 &&
+    hasUnitCount &&
+    stories > 0
+  );
+
+  return {
+    ...row,
+    work_description: work,
+    building_sf: buildingSf ? Math.round(buildingSf) : null,
+    building_sf_source: buildingSfSource,
+    building_sf_parsed: Boolean(buildingSfSource),
+    stories: stories || null,
+    contractor_name: firstText(raw.contractor_name, raw.contractors_business_name, raw.contractor_business_name, raw.contractor),
+    contractor_address: firstText(raw.contractor_address),
+    contractor_city: firstText(raw.contractor_city),
+    contractor_state: firstText(raw.contractor_state),
+    applicant_name: firstText(
+      raw.applicant_name,
+      raw.applicantName,
+      raw.applicant,
+      raw.contact_name,
+      [raw.applicant_first_name, raw.applicant_last_name].filter(Boolean).join(' ')
+    ),
+    applicant_business_name: firstText(raw.applicant_business_name),
+    project_detail_complete: projectDetailComplete,
+  };
+}
+
 function statusIsRti(value) {
   const status = String(value || '');
   if (/not ready/i.test(status)) return false;
@@ -196,7 +315,7 @@ async function syncDataset(name, records, buildRow) {
   const rows = [];
 
   for (const record of records) {
-    const row = buildRow(record, rows.length);
+    const row = addPermitSearchFields(buildRow(record, rows.length));
     if (!row || !row.permit_number || !row.address) continue;
     if (seen.has(row.permit_number)) continue;
     seen.add(row.permit_number);
@@ -205,13 +324,16 @@ async function syncDataset(name, records, buildRow) {
 
   const statusCounts = {};
   let rtiCount = 0;
+  let completeDetailCount = 0;
   for (const row of rows) {
     const status = row.status || 'Unknown';
     statusCounts[status] = (statusCounts[status] || 0) + 1;
     if (row.is_rti) rtiCount++;
+    if (row.project_detail_complete) completeDetailCount++;
   }
   console.log('Prepared rows by status:', JSON.stringify(statusCounts));
   console.log('Prepared city-approved / RTI rows:', rtiCount);
+  console.log('Prepared rows with complete project details:', completeDetailCount);
 
   let synced = 0;
   for (let i = 0; i < rows.length; i += 25) {
@@ -411,4 +533,8 @@ async function main() {
   console.log('\n=== TOTAL SYNCED: ' + total + ' ===');
 }
 
-main().catch(e => { console.error('FATAL:', e.message); process.exit(1); });
+module.exports = { addPermitSearchFields };
+
+if (require.main === module) {
+  main().catch(e => { console.error('FATAL:', e.message); process.exit(1); });
+}

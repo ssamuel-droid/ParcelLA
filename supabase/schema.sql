@@ -261,11 +261,26 @@ CREATE TABLE permits (
   lng              NUMERIC(10,6),
   is_rti           BOOLEAN DEFAULT FALSE,
   raw_data         JSONB,
+  building_sf      INTEGER,
+  building_sf_source TEXT,
+  building_sf_parsed BOOLEAN NOT NULL DEFAULT FALSE,
+  stories          NUMERIC,
+  contractor_name  TEXT,
+  contractor_address TEXT,
+  contractor_city  TEXT,
+  contractor_state TEXT,
+  applicant_name   TEXT,
+  applicant_business_name TEXT,
+  project_detail_complete BOOLEAN NOT NULL DEFAULT FALSE,
   synced_at        TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX permits_site_idx    ON permits(site_id);
 CREATE INDEX permits_address_idx ON permits(address);
 CREATE INDEX permits_rti_idx     ON permits(is_rti);
+CREATE INDEX permits_house_sf_idx ON permits(building_sf, id DESC)
+  WHERE permit_type = 'Bldg-New' AND project_detail_complete;
+CREATE INDEX permits_house_location_idx ON permits(lat, lng, id DESC)
+  WHERE permit_type = 'Bldg-New' AND project_detail_complete;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SHARE LINKS (new)
