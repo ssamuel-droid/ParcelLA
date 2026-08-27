@@ -33,6 +33,7 @@ const _landCompCache = new Map();
 const _housePageCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const HOUSE_PAGE_CACHE_TTL = 5 * 60 * 1000;
+const SITE_PAGE_QUERY_TIMEOUT_MS = 8 * 1000;
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
@@ -1870,7 +1871,20 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     : requestedLimit;
   query = query.range(dbOffset, dbOffset + dbLimit - 1);
 
-  const { data, error, count } = await query;
+  const controller = new AbortController();
+  const queryTimer = setTimeout(() => controller.abort(), SITE_PAGE_QUERY_TIMEOUT_MS);
+  let queryResult;
+  try {
+    queryResult = await query.abortSignal(controller.signal);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Dashboard site query exceeded ${SITE_PAGE_QUERY_TIMEOUT_MS / 1000} seconds`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(queryTimer);
+  }
+  const { data, error, count } = queryResult;
   if (error) throw error;
   const rows = data || [];
   let mapped = rows.map((row, i) => mapSupabaseSite(row, i + dbOffset, null));
