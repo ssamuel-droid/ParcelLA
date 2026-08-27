@@ -1524,7 +1524,7 @@ async function fetchCombinedNewHouseSearchRows(queryParams, hoodBox, requestedLi
   const pageSize = Math.min(100, Math.max(40, target * 2));
   const minSf = activeNumericParam(queryParams.minSf);
   const maxSf = activeNumericParam(queryParams.maxSf);
-  const lookups = parts.map(async part => {
+  const lookupPart = async part => {
     let query = supabase
       .from('permits')
       .select(PERMIT_HOUSE_INDEXED_SELECT)
@@ -1550,9 +1550,30 @@ async function fetchCombinedNewHouseSearchRows(queryParams, hoodBox, requestedLi
     const { data, error } = await query;
     if (error) throw error;
     return data || [];
-  });
+  };
 
-  const settled = await Promise.allSettled(lookups);
+  // The small Supabase instance can choose a slow plan when two permit
+  // searches start at exactly the same time. Run the short address lookups in
+  // sequence and retry a transient statement timeout once.
+  const settled = [];
+  for (const part of parts) {
+    let result = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        result = { status: 'fulfilled', value: await lookupPart(part) };
+        break;
+      } catch (error) {
+        const retryable = /timeout|canceling statement|aborted/i.test(String(error?.message || error));
+        if (!retryable || attempt === 1) {
+          result = { status: 'rejected', reason: error };
+          break;
+        }
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+    }
+    settled.push(result);
+  }
+
   const successful = settled.filter(result => result.status === 'fulfilled');
   if (!successful.length) throw settled.find(result => result.status === 'rejected')?.reason || new Error('Permit search failed');
 
