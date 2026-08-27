@@ -5,8 +5,12 @@ const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const SOCRATA_APP_TOKEN = process.env.SOCRATA_APP_TOKEN;
 const INSPECTIONS_DATASET = '9w5z-rg2h';
+const COUNTY_PARCEL_QUERY_URL = 'https://services3.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/LA_County_Parcels/FeatureServer/0/query';
+const COUNTY_PARCEL_BATCH_SIZE = 200;
+const COUNTY_PARCEL_CONCURRENCY = 4;
+const SQ_METERS_TO_SQ_FEET = 10.7639104167;
 
-if (!SB_URL || !SB_KEY) {
+if (require.main === module && (!SB_URL || !SB_KEY)) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY are required');
 }
 
@@ -76,6 +80,31 @@ function socrataGet(url) {
     });
     req.on('timeout', () => { req.destroy(); reject(new Error('Socrata request timeout')); });
     req.on('error', reject);
+  });
+}
+
+function jsonGet(url, label = 'HTTP') {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const request = https.get({
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      timeout: 45000,
+      headers: { Accept: 'application/json' },
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        if (res.statusCode >= 300) {
+          reject(new Error(label + ' HTTP ' + res.statusCode + ': ' + d.slice(0, 240)));
+          return;
+        }
+        try { resolve(JSON.parse(d)); }
+        catch (e) { reject(new Error('Invalid ' + label + ' JSON: ' + d.slice(0, 240))); }
+      });
+    });
+    request.on('timeout', () => { request.destroy(); reject(new Error(label + ' request timeout')); });
+    request.on('error', reject);
   });
 }
 
@@ -295,6 +324,7 @@ function hood(lat, lng, addr) {
 const EXCLUDED_PROJECT_TEXT = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
 const RESIDENTIAL_PROJECT_TEXT = /(apartment|dwelling|residential|multifamily|multi-family|mixed[- ]use|\bhousing\b|\bunit\b|\bunits\b|duplex|townhouse|condo|single[- ]family|\bsfd\b)/i;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
+const DEFAULT_HOUSE_LAND_PER_LOT_SF = 100;
 const DEFAULT_UNIT_MIX = { s: 0.25, o: 0.50, t: 0.20, th: 0.05 };
 
 function firstText(...values) {
@@ -328,6 +358,114 @@ function firstPositiveNumber(...values) {
     if (n > 0) return n;
   }
   return 0;
+}
+
+function digitsOnly(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function permitAin(p = {}) {
+  for (const candidate of [p.county_ain, p.ain, p.AIN, p.apn, p.parcel_number]) {
+    const digits = digitsOnly(candidate);
+    if (digits.length === 10) return digits;
+  }
+
+  const book = digitsOnly(p.assessor_book);
+  const page = digitsOnly(p.assessor_page);
+  const parcel = digitsOnly(p.assessor_parcel);
+  if (!book || !page || !parcel) return null;
+  const ain = book.padStart(4, '0') + page.padStart(3, '0') + parcel.padStart(3, '0');
+  return ain.length === 10 ? ain : null;
+}
+
+function formattedApn(ain) {
+  const digits = digitsOnly(ain);
+  return digits.length === 10
+    ? digits.slice(0, 4) + '-' + digits.slice(4, 7) + '-' + digits.slice(7)
+    : null;
+}
+
+function isNewHousePermitCandidate(p = {}) {
+  const work = permitWorkDescription(p);
+  const rawUnits = parseInt(p.of_residential_dwelling_units || p.number_of_units || p.du_changed || '0', 10) || unitsFromText(work);
+  const actualUnits = rawUnits > 0 ? rawUnits : (Number(p.units || 0) > 0 ? Number(p.units) : 0);
+  return ptype(p.permit_type, p.permit_subtype, actualUnits, work) === 'New House';
+}
+
+function countyParcelLotSf(attributes = {}) {
+  const squareMeters = numberFromValue(attributes.Shape__Area ?? attributes.SHAPE__AREA ?? attributes.shape__area);
+  const squareFeet = Math.round(squareMeters * SQ_METERS_TO_SQ_FEET);
+  return squareFeet >= 1000 && squareFeet <= 2000000 ? squareFeet : null;
+}
+
+async function fetchCountyParcelBatch(ains) {
+  const url = new URL(COUNTY_PARCEL_QUERY_URL);
+  url.searchParams.set('f', 'json');
+  url.searchParams.set('where', 'AIN IN (' + ains.map(soqlString).join(',') + ')');
+  url.searchParams.set('outFields', 'AIN,APN,Shape__Area');
+  url.searchParams.set('returnGeometry', 'false');
+
+  const payload = await jsonGet(url.toString(), 'LA County parcels');
+  if (payload?.error) throw new Error('LA County parcels: ' + JSON.stringify(payload.error).slice(0, 300));
+  return (payload?.features || []).map(feature => feature?.attributes || {});
+}
+
+async function loadCountyParcelLots(permits) {
+  const candidateAins = [...new Set((permits || [])
+    .filter(p => !lotSizeFromPermit(p).lotSf && isNewHousePermitCandidate(p))
+    .map(permitAin)
+    .filter(Boolean))];
+  const lots = new Map();
+  if (!candidateAins.length) return lots;
+
+  console.log('Resolving lot sizes for', candidateAins.length, 'New House parcel(s)...');
+  const batches = [];
+  for (let i = 0; i < candidateAins.length; i += COUNTY_PARCEL_BATCH_SIZE) {
+    batches.push(candidateAins.slice(i, i + COUNTY_PARCEL_BATCH_SIZE));
+  }
+
+  for (let i = 0; i < batches.length; i += COUNTY_PARCEL_CONCURRENCY) {
+    const group = batches.slice(i, i + COUNTY_PARCEL_CONCURRENCY);
+    const results = await Promise.all(group.map(async batch => {
+      try { return await fetchCountyParcelBatch(batch); }
+      catch (e) {
+        console.warn('County parcel lot-size batch failed:', e.message);
+        return [];
+      }
+    }));
+    for (const attributes of results.flat()) {
+      const ain = digitsOnly(attributes.AIN);
+      const lotSf = countyParcelLotSf(attributes);
+      if (ain.length !== 10 || !lotSf) continue;
+      lots.set(ain, {
+        lotSf,
+        apn: firstText(attributes.APN, formattedApn(ain)),
+        source: 'LA County parcel polygon',
+      });
+    }
+    if (i % (COUNTY_PARCEL_CONCURRENCY * 5) === 0 || i + COUNTY_PARCEL_CONCURRENCY >= batches.length) {
+      console.log('Resolved', lots.size, 'county parcel lot size(s) from', Math.min(i + COUNTY_PARCEL_CONCURRENCY, batches.length), '/', batches.length, 'batch(es).');
+    }
+    await sleep(75);
+  }
+  return lots;
+}
+
+async function cacheCountyParcelLots(permits) {
+  const rows = (permits || [])
+    .filter(p => p.county_lot_sf && p.id)
+    .map(p => ({ id: p.id, lot_sf: p.county_lot_sf, lot_sf_source: p.county_lot_sf_source }));
+  let cached = 0;
+  for (let i = 0; i < rows.length; i += 200) {
+    const batch = rows.slice(i, i + 200);
+    const response = await req('POST', '/rest/v1/permits?on_conflict=id', batch);
+    if (response.status >= 300) {
+      console.warn('Could not cache county lot sizes in permits:', response.status, JSON.stringify(response.data).slice(0, 300));
+      break;
+    }
+    cached += batch.length;
+  }
+  if (cached) console.log('Cached', cached, 'county parcel lot size(s) on permit records.');
 }
 
 function textAreaMatches(values, { lotOnly = false } = {}) {
@@ -513,6 +651,7 @@ function hasRealNewHousePermitDetail(p = {}, units = 0, buildingSize = {}) {
 
 function lotSizeFromPermit(p) {
   const rawLot = firstPositiveNumber(
+    p.county_lot_sf,
     p.lot_size,
     p.lot_area,
     p.lot_sf,
@@ -525,7 +664,10 @@ function lotSizeFromPermit(p) {
   const textLot = textMatches.length ? Math.max(...textMatches.map(m => m.value)) : 0;
   const lot = rawLot || textLot;
   if (lot < 1000 || lot > 2000000) return { lotSf: null, source: null };
-  return { lotSf: Math.round(lot), source: rawLot ? 'Permit source field' : 'Permit work description' };
+  const source = p.county_lot_sf
+    ? (p.county_lot_sf_source || 'LA County parcel polygon')
+    : (p.lot_sf_source || (rawLot ? 'Permit source field' : 'Permit work description'));
+  return { lotSf: Math.round(lot), source };
 }
 
 function excludedProject(...values) {
@@ -617,7 +759,7 @@ function ownerInfoForPermit(p = {}) {
     p.mail_address,
     p.owner_address
   );
-  const apn = firstText(p.apn, p.ain, p.AIN, p.parcel_number);
+  const apn = firstText(p.county_apn, p.apn, p.ain, p.AIN, p.parcel_number, formattedApn(permitAin(p)));
   if (!ownerName && !applicantName && !mailingAddress && !apn) return null;
   return {
     owner_name: ownerName || applicantName || null,
@@ -750,14 +892,17 @@ function uw(p, inspectionCheck = null) {
   const doorLand = ['Multifamily','Mixed-Use'].includes(t)
     ? u * DEFAULT_MARKET_LAND_PER_DOOR
     : 0;
+  const houseLotLand = t === 'New House' && lotSize.lotSf
+    ? lotSize.lotSf * DEFAULT_HOUSE_LAND_PER_LOT_SF
+    : 0;
   const hasPermitValuationEstimate = t === 'New House'
     && buildingSize.source !== 'Permit valuation-derived estimate'
     && Number(p.valuation || 0) > 0;
   if (t === 'New House' && !housePermitDetail.ok) return null;
-  if (t === 'New House' && !compLand?.value && !hasPermitValuationEstimate) {
+  if (t === 'New House' && !houseLotLand && !compLand?.value && !hasPermitValuationEstimate) {
     return null;
   }
-  const land = doorLand || compLand?.value || fallbackLand;
+  const land = doorLand || houseLotLand || compLand?.value || fallbackLand;
   const pre = land+hard+soft;
   const loan = pre*0.65;
   const carry = loan*0.065*1.5;
@@ -773,7 +918,7 @@ function uw(p, inspectionCheck = null) {
   const irrV = eq>500 ? Math.min(Math.max(irr([-eq,cf,cf,cf,cf,cf+exit-loan]),-50),100) : 0;
   return {
     neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:buildingSize.avgUnitSf, lot_sf:lotSize.lotSf,
-    price:Math.round(land),
+    price:Math.round(land), apn:ownerInfo?.apn || null,
     status:'off-market', data_source:'ladbs_permit', rti:p.is_rti||false,
     lat:p.lat, lng:p.lng,
     raw_permit_data:{
@@ -817,14 +962,14 @@ function uw(p, inspectionCheck = null) {
         source: 'LADBS Building and Safety Inspections',
         dataset: INSPECTIONS_DATASET,
       },
-      land_value_source:doorLand ? 'default_market_per_door' : (compLand?.source || (hasPermitValuationEstimate ? 'permit_valuation_estimate' : 'permit_valuation_fallback')),
-      land_value_metric:doorLand ? 'price per door' : (compLand?.metricLabel || (hasPermitValuationEstimate ? '45% of permit valuation' : 'hard cost percentage fallback')),
-      land_value_metric_value:doorLand ? DEFAULT_MARKET_LAND_PER_DOOR : (compLand?.metricValue ? Math.round(compLand.metricValue) : (hasPermitValuationEstimate ? Math.round(land) : null)),
-      land_value_basis_quantity:doorLand ? u : (compLand?.basisQuantity ? Math.round(compLand.basisQuantity) : (hasPermitValuationEstimate ? Math.round(p.valuation || 0) : null)),
-      land_value_comp_count:doorLand ? 0 : (compLand?.compCount || 0),
-      land_value_match:doorLand ? 'market-rate default' : (compLand?.matchLabel || (hasPermitValuationEstimate ? 'permit valuation estimate' : null)),
-      land_value_recency_days:doorLand ? LAND_COMP_RECENCY_DAYS : (compLand?.recencyDays || LAND_COMP_RECENCY_DAYS),
-      land_value_comps:doorLand ? [] : (compLand?.comps || []),
+      land_value_source:doorLand ? 'default_market_per_door' : (houseLotLand ? 'default_house_land_per_lot_sf' : (compLand?.source || (hasPermitValuationEstimate ? 'permit_valuation_estimate' : 'permit_valuation_fallback'))),
+      land_value_metric:doorLand ? 'price per door' : (houseLotLand ? 'price per lot SF' : (compLand?.metricLabel || (hasPermitValuationEstimate ? '45% of permit valuation' : 'hard cost percentage fallback'))),
+      land_value_metric_value:doorLand ? DEFAULT_MARKET_LAND_PER_DOOR : (houseLotLand ? DEFAULT_HOUSE_LAND_PER_LOT_SF : (compLand?.metricValue ? Math.round(compLand.metricValue) : (hasPermitValuationEstimate ? Math.round(land) : null))),
+      land_value_basis_quantity:doorLand ? u : (houseLotLand ? lotSize.lotSf : (compLand?.basisQuantity ? Math.round(compLand.basisQuantity) : (hasPermitValuationEstimate ? Math.round(p.valuation || 0) : null))),
+      land_value_comp_count:(doorLand || houseLotLand) ? 0 : (compLand?.compCount || 0),
+      land_value_match:doorLand ? 'market-rate default' : (houseLotLand ? 'user-adjustable house default' : (compLand?.matchLabel || (hasPermitValuationEstimate ? 'permit valuation estimate' : null))),
+      land_value_recency_days:(doorLand || houseLotLand) ? 0 : (compLand?.recencyDays || LAND_COMP_RECENCY_DAYS),
+      land_value_comps:(doorLand || houseLotLand) ? [] : (compLand?.comps || []),
     },
     noi:Math.round(noi), total_cost:Math.round(total), exit_value:Math.round(exit),
     net_profit:Math.round(profit), irr_v:irrV,
@@ -848,7 +993,7 @@ async function main() {
   console.log('Loading permits...');
   let all=[], off=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>project_description,raw_data->>description,raw_data->>work_desc,raw_data->>workdescription,raw_data->>case_number,raw_data->>case_no,raw_data->>planning_case,raw_data->>entitlement_case,raw_data->>floor_area_l_a_building_code_definition,raw_data->>floor_area_l_a_zoning_code_definition,raw_data->>floor_area,raw_data->>floorarea,raw_data->>building_area,raw_data->>building_sf,raw_data->>total_floor_area,raw_data->>new_floor_area,raw_data->>proposed_floor_area,raw_data->>project_floor_area,raw_data->>square_footage,raw_data->>sqft,raw_data->>gross_floor_area,raw_data->>gross_building_area,raw_data->>residential_floor_area,raw_data->>of_stories,raw_data->>stories,raw_data->>number_of_stories,raw_data->>story_count,raw_data->>lot_size,raw_data->>lot_area,raw_data->>lot_sf,raw_data->>lot_square_footage,raw_data->>lot_sqft,raw_data->>parcel_area,raw_data->>site_area,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>applicant_first_name,raw_data->>applicant_last_name,raw_data->>applicant_business_name,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>contractors_business_name,raw_data->>contractor_business_name,raw_data->>contractor_address,raw_data->>contractor_city,raw_data->>contractor_state,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number&limit=1000&offset=${off}&order=id.asc`;
+    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,lot_sf,lot_sf_source,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>project_description,raw_data->>description,raw_data->>work_desc,raw_data->>workdescription,raw_data->>case_number,raw_data->>case_no,raw_data->>planning_case,raw_data->>entitlement_case,raw_data->>floor_area_l_a_building_code_definition,raw_data->>floor_area_l_a_zoning_code_definition,raw_data->>floor_area,raw_data->>floorarea,raw_data->>building_area,raw_data->>building_sf,raw_data->>total_floor_area,raw_data->>new_floor_area,raw_data->>proposed_floor_area,raw_data->>project_floor_area,raw_data->>square_footage,raw_data->>sqft,raw_data->>gross_floor_area,raw_data->>gross_building_area,raw_data->>residential_floor_area,raw_data->>of_stories,raw_data->>stories,raw_data->>number_of_stories,raw_data->>story_count,raw_data->>lot_size,raw_data->>lot_area,raw_data->>lot_square_footage,raw_data->>lot_sqft,raw_data->>parcel_area,raw_data->>site_area,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>applicant_first_name,raw_data->>applicant_last_name,raw_data->>applicant_business_name,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>contractors_business_name,raw_data->>contractor_business_name,raw_data->>contractor_address,raw_data->>contractor_city,raw_data->>contractor_state,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number,raw_data->>assessor_book,raw_data->>assessor_page,raw_data->>assessor_parcel&limit=1000&offset=${off}&order=id.asc`;
     const r = await req('GET', path);
     console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
     if(!Array.isArray(r.data)||!r.data.length) break;
@@ -859,6 +1004,16 @@ async function main() {
     await sleep(200);
   }
   console.log('Total to underwrite:',all.length);
+  const countyLots = await loadCountyParcelLots(all);
+  for (const permit of all) {
+    const parcel = countyLots.get(permitAin(permit));
+    if (!parcel) continue;
+    permit.county_lot_sf = parcel.lotSf;
+    permit.county_lot_sf_source = parcel.source;
+    permit.county_ain = permitAin(permit);
+    permit.county_apn = parcel.apn;
+  }
+  await cacheCountyParcelLots(all);
   const inspectionChecks = await loadInspectionChecks(all);
 
   // Underwrite in batches. ADUs/additions are deliberately skipped by uw().
@@ -894,4 +1049,13 @@ async function main() {
   console.log('DONE. Sites stored:',done,'skipped:',skipped);
 }
 
-main().catch(e=>{console.error('FATAL:',e.message);process.exit(1);});
+module.exports = {
+  countyParcelLotSf,
+  fetchCountyParcelBatch,
+  formattedApn,
+  permitAin,
+};
+
+if (require.main === module) {
+  main().catch(e=>{console.error('FATAL:',e.message);process.exit(1);});
+}

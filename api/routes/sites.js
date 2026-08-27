@@ -37,6 +37,7 @@ const SITE_PAGE_QUERY_TIMEOUT_MS = 8 * 1000;
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
+const DEFAULT_HOUSE_LAND_PER_LOT_SF = 100;
 const HOUSE_RESALE_PSF = {
   'Pacific Palisades': 1150, 'Brentwood': 1050, 'Venice': 1000, 'West LA': 900,
   'Culver City': 875, 'Mar Vista': 825, 'Silver Lake': 825, 'Los Feliz': 850,
@@ -262,6 +263,22 @@ function perDoorLandBasis(type, units) {
     compCount: 0,
     matchLabel: 'market-rate default',
     recencyDays: LAND_COMP_RECENCY_DAYS,
+    comps: [],
+  };
+}
+
+function houseLotLandBasis(type, lotSf) {
+  const lot = Number(lotSf || 0);
+  if (type !== 'New House' || !Number.isFinite(lot) || lot < 1000) return null;
+  return {
+    value: Math.round(DEFAULT_HOUSE_LAND_PER_LOT_SF * lot),
+    source: 'default_house_land_per_lot_sf',
+    metricLabel: 'price per lot SF',
+    metricValue: DEFAULT_HOUSE_LAND_PER_LOT_SF,
+    basisQuantity: Math.round(lot),
+    compCount: 0,
+    matchLabel: 'user-adjustable house default',
+    recencyDays: 0,
     comps: [],
   };
 }
@@ -813,6 +830,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const fallbackLandCost = Math.max(0, Math.round(preCarryCost - hardCosts - softCosts));
   const offMarket = /off|not for sale/i.test(String(s.status || '')) || isNewHousePermitPlaceholder(s, rawPermit);
   const doorLand = offMarket ? perDoorLandBasis(type, units) : null;
+  const houseLotLand = offMarket ? houseLotLandBasis(type, normalizedLotSf(s)) : null;
   const compLand = offMarket ? estimateLandBasisFromComps({
     neighborhood,
     project_type: type,
@@ -823,12 +841,12 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     lat: s.lat,
     lng: s.lng,
   }, landCompBenchmarks) : null;
-  const needsLandComp = needsLandCompForHouse(s, rawPermit, compLand, doorLand);
+  const needsLandComp = needsLandCompForHouse(s, rawPermit, houseLotLand || compLand, doorLand);
   const landCost = offMarket
-    ? (needsLandComp ? null : (doorLand?.value || compLand?.value || price || fallbackLandCost))
+    ? (needsLandComp ? null : (doorLand?.value || houseLotLand?.value || compLand?.value || price || fallbackLandCost))
     : (price || fallbackLandCost);
-  const usedDynamicLand = offMarket && !needsLandComp && !!(doorLand?.value || (compLand?.value && !price));
-  const landMeta = doorLand || compLand || {};
+  const usedDynamicLand = offMarket && !needsLandComp && !!(doorLand?.value || houseLotLand?.value || (compLand?.value && !price));
+  const landMeta = doorLand || houseLotLand || compLand || {};
   const recastCarry = usedDynamicLand ? Math.round((landCost + hardCosts + softCosts) * interestCarryPct) : carryCost;
   const recastTotalCost = usedDynamicLand ? landCost + hardCosts + softCosts + recastCarry : totalCost;
   const houseExit = houseExitEstimate(s, rawPermit, neighborhood);
