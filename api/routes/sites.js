@@ -113,7 +113,14 @@ const SITE_PREVIEW_SELECT = [
   'cap_on_cost',
   'dev_spread_pct',
 ].join(',');
-const SITE_SEARCH_SELECT = SITE_LIST_SELECT;
+const SITE_SEARCH_SELECT = [
+  SITE_PREVIEW_SELECT,
+  'owner_name',
+  'owner_last_sale_date',
+  'owner_last_sale_amount',
+  'owner_source',
+  'raw_permit_data',
+].join(',');
 const PERMIT_HOUSE_SELECT = [
   'id',
   'permit_number',
@@ -1264,6 +1271,30 @@ function permitSearchDbClauses(value) {
   return [...new Set(clauses)];
 }
 
+function siteSearchDbClauses(value) {
+  const clauses = [];
+  for (const variant of searchDbVariants(value)) {
+    const normalized = cleanSearchTerm(variant);
+    if (!normalized) continue;
+
+    if (/^\d{3,6}$/.test(normalized)) {
+      clauses.push(`address.like.${normalized}%`);
+      continue;
+    }
+
+    if (/^\d{3,6}\s+/.test(normalized)) {
+      clauses.push(`address.ilike.${normalized.replace(/\s+/g, '%')}%`);
+      continue;
+    }
+
+    clauses.push(`address.ilike.%${normalized}%`);
+    if (/^\d{2,}-\d{2,}(?:-|$)/.test(normalized)) {
+      clauses.push(`permit_source_id.ilike.${normalized}%`);
+    }
+  }
+  return [...new Set(clauses)];
+}
+
 function siteSearchHaystack(s) {
   const aliases = Array.isArray(s.addressAliases) ? s.addressAliases : [];
   const knownAliases = String(s.addr || '').toUpperCase() === '6091 W PICO BLVD' && Number(s.units || 0) === 138
@@ -2064,11 +2095,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   if (minCapoc !== null) query = query.gte('cap_on_cost', minCapoc);
 
   if (search) {
-    const clauses = [];
-    for (const variant of searchDbVariants(queryParams.q || queryParams.search)) {
-      clauses.push(`address.ilike.%${variant}%`);
-      clauses.push(`permit_source_id.ilike.%${variant}%`);
-    }
+    const clauses = siteSearchDbClauses(queryParams.q || queryParams.search);
     if (clauses.length) query = query.or(clauses.join(','));
   }
 

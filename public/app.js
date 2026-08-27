@@ -165,10 +165,14 @@ function siteNeighborhood(s) {
 }
 
 function knownLotSf(s) {
-  const lot = Number(s?.lot || s?.lotSf || 0);
-  if (!Number.isFinite(lot) || lot <= 0) return 0;
   const source = String(s?.lotSfSource || '').trim();
   const hasRealSource = source && !/default|model|assum/i.test(source);
+  const landMetric = String(s?.landValueMetric || '').toLowerCase();
+  const basisLot = hasRealSource && landMetric.includes('lot sf')
+    ? Number(s?.landValueBasisQuantity || 0)
+    : 0;
+  const lot = Number(s?.lot || s?.lotSf || basisLot || 0);
+  if (!Number.isFinite(lot) || lot <= 0) return 0;
   const likelyDefault = lot === 5000 && !hasRealSource && (isOffMarketSite(s) || s?.permitNumber || s?.permitSourceId);
   return likelyDefault ? 0 : lot;
 }
