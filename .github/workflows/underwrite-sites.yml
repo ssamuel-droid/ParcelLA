@@ -1,6 +1,12 @@
 name: Underwrite LA Sites
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/scripts/underwrite.cjs'
+      - 'src/data/landValue.js'
+      - '.github/workflows/underwrite-sites.yml'
   schedule:
     - cron: '30 10 * * *'
   workflow_run:
