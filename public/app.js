@@ -1903,7 +1903,10 @@ function applyFilters() {
   filtered = allSites.filter(s => {
     const costs = costModelForSite(s);
     const valuation = valuationForSite(s, costs);
-    if (search && !siteMatchesSearchText(s, searchValue)) return false;
+    // Search and neighborhood are already applied by the API. Protected rows
+    // intentionally redact those fields, so rechecking them here would remove
+    // valid server-filtered matches for signed-out users.
+    if (search && !s.locked && !siteMatchesSearchText(s, searchValue)) return false;
     const category = listingCategory(s);
     const listingMatch = (ffs && category === 'for_sale') || (frti && category === 'rti') || (fcomp && category === 'off_market');
     if (listingFiltersActive && !listingMatch) return false;
@@ -1913,7 +1916,7 @@ function applyFilters() {
     if (watchOnly && !isWatched(s.id)) return false;
     if (typeFiltersActive && !typeMatchesSelected(s, types)) return false;
     if (ed1Only && !isEd1Site(s)) return false;
-    if (hood && siteNeighborhood(s) !== hood) return false;
+    if (hood && !s.locked && siteNeighborhood(s) !== hood) return false;
     if (s.units < umin || s.units > umax) return false;
     const buildingSf = siteBuildingSf(s);
     if (sfmin && buildingSf < sfmin) return false;
