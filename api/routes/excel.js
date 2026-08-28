@@ -274,16 +274,16 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       return row.number;
     };
 
-    addAssumption('units', 'Units', unitsValue, FMT.whole, 'Editable unit count used throughout the workbook.');
-    addAssumption('avgUnitSf', 'Average unit SF', avgUnitSfValue, FMT.whole, 'Net rentable SF per unit.');
-    const totalSfRow = writeRow(assumptionsWs, ['Total rentable SF', formula(`${A.units}*${A.avgUnitSf}`, totalSfValue, FMT.whole), 'Formula: units x average unit SF.'], 'total');
+    addAssumption('units', isHouse ? 'Homes' : 'Units', unitsValue, FMT.whole, isHouse ? 'Editable home count used throughout the workbook.' : 'Editable unit count used throughout the workbook.');
+    addAssumption('avgUnitSf', isHouse ? 'Completed home SF / home' : 'Average unit SF', avgUnitSfValue, FMT.whole, isHouse ? 'Completed building area per home.' : 'Net rentable SF per unit.');
+    const totalSfRow = writeRow(assumptionsWs, [isHouse ? 'Completed home building SF' : 'Total rentable SF', formula(`${A.units}*${A.avgUnitSf}`, totalSfValue, FMT.whole), isHouse ? 'Formula: homes x completed building SF per home.' : 'Formula: units x average unit SF.'], 'total');
     A.totalSf = ref('Assumptions', totalSfRow.number, 2);
     addAssumption('land', 'Land basis / acquisition price', landValue, FMT.money, text(site.landSource || assumptions.landSource || 'Asking price or imputed off-market land value.'));
     addAssumption('hardPsf', 'Hard cost / SF', hardPsfValue, FMT.money, 'Exact model input; formatted dollars may round on screen.');
     addAssumption('softPct', 'Soft costs / hard costs', softPctValue, FMT.pct, 'A&E, permits, fees, contingency, developer fee.');
     addAssumption('months', 'Construction months', num(assumptions.constructionMonths || costs.months || 18), FMT.whole, 'Used to size financing carry.');
     addAssumption('ltc', 'Loan-to-cost', pct(assumptions.loanToCostPct), FMT.pct, 'Debt sizing assumption.');
-    addAssumption('rate', 'Interest rate', pct(assumptions.interestRatePct), FMT.pct, 'Interest-only debt service and carry.');
+    addAssumption('rate', 'Interest rate', pct(assumptions.interestRatePct), FMT.pct, isHouse ? 'Construction-loan interest and financing carry.' : 'Interest-only debt service and carry.');
     addAssumption('carryPct', 'Financing carry / pre-carry cost', carryPctValue, FMT.pct, 'Derived from current site model so the budget ties to the app; edit to stress-test carry.');
     if (isHouse) {
       addAssumption('resalePsf', 'Completed-home sale price / building SF', money(assumptions.resalePricePerSf || appraisal.weightedPsf || valuation.exitValueMetricValue), FMT.money, text(assumptions.resalePricePerSfSource || appraisal.valuationSource || 'Recent local completed-home sales; neighborhood benchmark only when comps are unavailable.'));
@@ -333,7 +333,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       writeRow(houseInputWs, ['Completed home building SF', formula(`${A.totalSf}`, totalSfValue, FMT.whole), text(site.buildingSfSource || 'Permit/source data')]);
       writeRow(houseInputWs, ['Comp-derived resale value / SF', formula(`${A.resalePsf}`, money(assumptions.resalePricePerSf || appraisal.weightedPsf), FMT.money), text(assumptions.resalePricePerSfSource || appraisal.valuationSource)]);
       writeRow(houseInputWs, ['Estimated completed-home value', formula(`${A.totalSf}*${A.resalePsf}`, money(valuation.exitValue), FMT.money), 'Building SF x comp-derived resale $/SF.'], 'total');
-      writeRow(houseInputWs, ['Method', 'Sales comparison approach', 'NOI and cap rates are not used for SFR valuation.']);
+      writeRow(houseInputWs, ['Method', 'Sales comparison approach', 'Completed building SF x comp-derived resale $/SF.']);
     } else {
       const rentWs = wb.addWorksheet('Rent Roll');
       setupSheet(rentWs, [22, 12, 16, 16, 16, 18]);
@@ -380,7 +380,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     const constructionWs = wb.addWorksheet('Construction Budget');
     setupSheet(constructionWs, [30, 14, 16, 16, 16, 44]);
     writeRow(constructionWs, ['Construction Budget', siteName], 'title');
-    writeRow(constructionWs, ['Budget category', 'Cost', '$ / SF', '$ / Unit', '% of total', 'Notes'], 'header');
+    writeRow(constructionWs, ['Budget category', 'Cost', '$ / SF', isHouse ? '$ / Home' : '$ / Unit', '% of total', 'Notes'], 'header');
     const budgetRefs = {};
     const budgetRow = (key, label, costFormula, result, note, role = 'body') => {
       const r = constructionWs.rowCount + 1;
@@ -423,7 +423,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       writeRow(incomeWs, ['Net profit / gap', formula(`B5-B6`, money(valuation.netProfit), FMT.money), 'Completed-home value less total project cost.'], 'total');
       writeRow(incomeWs, ['Gross margin', formula('IFERROR(B7/B5,0)', pct(valuation.grossMarginPct), FMT.pct), 'Net profit / completed-home value.']);
       writeRow(incomeWs, ['Return on cost', formula('IFERROR(B7/B6,0)', pct(valuation.returnOnCost), FMT.pct), 'Net profit / total project cost.']);
-      writeRow(incomeWs, ['Valuation method', 'Sales comparison - price per building SF', 'NOI and cap rates are not used for this for-sale SFR.']);
+      writeRow(incomeWs, ['Valuation method', 'Sales comparison - price per building SF', 'Completed building SF x comp-derived resale $/SF.']);
     } else {
       incomeWs = wb.addWorksheet('Income Statement');
       setupSheet(incomeWs, [32, 18, 18, 18, 42]);
@@ -663,7 +663,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       writeRow(appraisalWs, ['Weighted completed-home sale $ / SF', 'n/a', formula(`${V.resalePsf}`, money(appraisal.weightedPsf), FMT.money), text(appraisal.valuationSource || assumptions.resalePricePerSfSource)]);
       writeRow(appraisalWs, ['Gross margin', 'n/a', formula(`${V.grossMargin}`, pct(valuation.grossMarginPct), FMT.pct), 'Net profit / completed-home value.']);
       writeRow(appraisalWs, ['Return on cost', 'n/a', formula(`${V.returnOnCost}`, pct(valuation.returnOnCost), FMT.pct), 'Net profit / total project cost.']);
-      writeRow(appraisalWs, ['Method', 'n/a', 'Sales comparison - price per building SF', 'NOI and cap rates are not used for SFR valuation.']);
+      writeRow(appraisalWs, ['Method', 'n/a', 'Sales comparison - price per building SF', 'Completed building SF x comp-derived resale $/SF.']);
     } else {
       writeRow(appraisalWs, ['Comp-driven entry cap', 'n/a', formula(`${V.entryCap}`, pct(appraisal.entryCap || valuation.entryCap), FMT.pct2), text(appraisal.capRateSource)]);
       writeRow(appraisalWs, ['Comp-driven exit cap', 'n/a', formula(`${V.exitCap}`, pct(appraisal.exitCap || valuation.exitCap), FMT.pct2), 'Entry cap plus exit cap spread.']);
@@ -675,7 +675,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     writeRow(summaryWs, ['Address', siteName, text(site.addressNote || '')]);
     writeRow(summaryWs, ['Neighborhood', text(site.hood || site.neighborhood), '']);
     writeRow(summaryWs, ['Project type', text(site.type), '']);
-    writeRow(summaryWs, ['Units', formula(`${A.units}`, num(site.units, 0), FMT.whole), 'Assumptions tab']);
+    writeRow(summaryWs, [isHouse ? 'Homes' : 'Units', formula(`${A.units}`, num(site.units, 0), FMT.whole), 'Assumptions tab']);
     writeRow(summaryWs, ['Owner', owner.ownerName, 'Owner & Sale tab']);
     writeRow(summaryWs, ['Date sold', owner.lastSaleDate, 'Owner & Sale tab']);
     writeRow(summaryWs, ['Sale price', cell(owner.lastSaleAmount, FMT.money), 'Owner & Sale tab']);

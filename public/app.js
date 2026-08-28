@@ -1036,10 +1036,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <label class="cb"><input type="checkbox" id="f-d-issued" checked> Permit issued</label>
       <label class="cb"><input type="checkbox" id="f-d-unknown" checked> Started / unknown</label>
       <h4>Project type</h4>
-      <label class="cb"><input type="checkbox" id="f-mf" checked> Multifamily</label>
-      <label class="cb"><input type="checkbox" id="f-mx" checked> Mixed-use</label>
-      <label class="cb"><input type="checkbox" id="f-cn" checked> Condo / TH</label>
-      <label class="cb"><input type="checkbox" id="f-nh"> New house / permit feed</label>
+      <label class="cb"><input type="checkbox" id="f-mf" checked onchange="syncUnderwritingModeControls()"> Multifamily</label>
+      <label class="cb"><input type="checkbox" id="f-mx" checked onchange="syncUnderwritingModeControls()"> Mixed-use</label>
+      <label class="cb"><input type="checkbox" id="f-cn" checked onchange="syncUnderwritingModeControls()"> Condo / TH</label>
+      <label class="cb"><input type="checkbox" id="f-nh" onchange="syncUnderwritingModeControls()"> New house / permit feed</label>
       <h4>Program</h4>
       <label class="cb"><input type="checkbox" id="f-ed1"> ED1 apartments only</label>
       <h4>Neighborhood</h4>
@@ -1064,8 +1064,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
     <div class="mfb">
       <div class="mf"><div class="mfl">Min net profit</div><div class="mfr"><span>$</span><input type="number" id="mf-p" placeholder="0" step="100000"><span>K</span></div></div>
       <div class="mf"><div class="mfl">Min IRR</div><div class="mfr"><input type="number" id="mf-i" placeholder="0" step="1"><span>%</span></div></div>
-      <div class="mf"><div class="mfl">Min dev spread</div><div class="mfr"><input type="number" id="mf-s" placeholder="0" step="1"><span>%</span></div></div>
-      <div class="mf"><div class="mfl">Min cap on cost</div><div class="mfr"><input type="number" id="mf-c" placeholder="0" step="0.25"><span>%</span></div></div>
+      <div class="mf"><div class="mfl" id="mf-s-label">Min dev spread</div><div class="mfr"><input type="number" id="mf-s" placeholder="0" step="1"><span>%</span></div></div>
+      <div class="mf" id="mf-c-box"><div class="mfl">Min cap on cost</div><div class="mfr"><input type="number" id="mf-c" placeholder="0" step="0.25"><span>%</span></div></div>
       <div class="mf" id="plan-box"><div class="mfl">Construction plan</div><select class="sbs" id="mf-plan" onchange="applyFilters()" style="margin:0;padding:3px 4px;font-size:10px"><option value="auto">Auto by type</option><option value="value">Value engineered</option><option value="typev">Type V wood frame</option><option value="modular">Modular / prefab</option><option value="podium">Type III podium</option><option value="luxury">Luxury finish</option><option value="concrete">Concrete / steel</option></select></div>
       <div class="mf" id="rate-box"><div class="mfl">Interest rate</div><div class="mfr"><input type="number" id="mf-rate" placeholder="6.5" step="0.1"><span>%</span><button class="mfa" onclick="applyInterestOverride()">Run</button></div></div>
       <div class="mf" id="hc-box"><div class="mfl">Your hard cost / SF</div><div class="mfr"><span>$</span><input type="number" id="mf-hc" placeholder="RSMeans" step="5"><button class="mfa" onclick="applyHardCostOverride()">Run</button></div></div>
@@ -1078,7 +1078,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       </div>
       <select class="ss" id="srt" onchange="loadSites()">
         <option value="profit">Net profit ↓</option><option value="irr">IRR ↓</option>
-        <option value="spread">Dev spread ↓</option><option value="capoc">Cap on cost ↓</option>
+        <option value="spread" id="srt-spread">Dev spread ↓</option><option value="capoc" id="srt-capoc">Cap on cost ↓</option>
         <option value="price-a">Price ↑</option><option value="price-d">Price ↓</option>
         <option value="units">Most units</option>
       </select>
@@ -1106,21 +1106,21 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
     </div>
     <div class="settings-body">
       <div class="settings-grid">
-        <div class="setfield"><label>Multifamily hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-mf" step="5"></div></div>
-        <div class="setfield"><label>Mixed-use hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-mx" step="5"></div></div>
-        <div class="setfield"><label>Condo / TH hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-cn" step="5"></div></div>
+        <div class="setfield income-setting"><label>Multifamily hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-mf" step="5"></div></div>
+        <div class="setfield income-setting"><label>Mixed-use hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-mx" step="5"></div></div>
+        <div class="setfield income-setting"><label>Condo / TH hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-cn" step="5"></div></div>
         <div class="setfield"><label>New house hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-nh" step="5"></div></div>
         <div class="setfield"><label>Soft costs / hard costs</label><div class="mfr"><input type="number" id="set-soft" step="0.5"><span>%</span></div></div>
         <div class="setfield"><label>Loan-to-cost</label><div class="mfr"><input type="number" id="set-ltc" step="1"><span>%</span></div></div>
         <div class="setfield"><label>Interest rate</label><div class="mfr"><input type="number" id="set-rate" step="0.1"><span>%</span></div></div>
-        <div class="setfield"><label>Vacancy</label><div class="mfr"><input type="number" id="set-vacancy" step="0.5"><span>%</span></div></div>
-        <div class="setfield"><label>Operating expenses / EGI</label><div class="mfr"><input type="number" id="set-expense" step="0.5"><span>%</span></div></div>
-        <div class="setfield"><label>Annual rent growth</label><div class="mfr"><input type="number" id="set-growth" step="0.25"><span>%</span></div></div>
-        <div class="setfield"><label>Exit cap spread</label><div class="mfr"><input type="number" id="set-exit-spread" step="5"><span>bps</span></div></div>
-        <div class="setfield"><label>Apartment land / unit</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-market" step="5000"></div></div>
+        <div class="setfield income-setting"><label>Vacancy</label><div class="mfr"><input type="number" id="set-vacancy" step="0.5"><span>%</span></div></div>
+        <div class="setfield income-setting"><label>Operating expenses / EGI</label><div class="mfr"><input type="number" id="set-expense" step="0.5"><span>%</span></div></div>
+        <div class="setfield income-setting"><label>Annual rent growth</label><div class="mfr"><input type="number" id="set-growth" step="0.25"><span>%</span></div></div>
+        <div class="setfield income-setting"><label>Exit cap spread</label><div class="mfr"><input type="number" id="set-exit-spread" step="5"><span>bps</span></div></div>
+        <div class="setfield income-setting"><label>Apartment land / unit</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-market" step="5000"></div></div>
         <div class="setfield"><label>New house land / lot SF</label><div class="mfr"><span>$</span><input type="number" id="set-land-house-psf" step="5"><span>/SF</span></div></div>
       </div>
-      <div class="setnote">Apartment land is calculated per unit. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. The top-row hard-cost override still works as a quick one-off stress test.</div>
+      <div class="setnote" id="settings-note">Apartment land is calculated per unit. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. The top-row hard-cost override still works as a quick one-off stress test.</div>
     </div>
     <div class="setactions">
       <button class="warn" onclick="resetSettings()">Reset defaults</button>
@@ -1140,6 +1140,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 </div>`;
 
 async function boot() {
+  syncUnderwritingModeControls();
   initAuth().then(() => {
     if (authSession?.access_token) loadSites();
   });
@@ -1244,8 +1245,39 @@ function populateSettingsForm() {
   setSettingsField('set-land-house-psf', m.imputedHouseLandPerLotSf);
 }
 
+function isHouseOnlyFilterMode() {
+  const houseSelected = g('f-nh')?.checked === true;
+  const otherTypeSelected = ['f-mf', 'f-mx', 'f-cn'].some(id => g(id)?.checked === true);
+  return houseSelected && !otherTypeSelected;
+}
+
+function syncUnderwritingModeControls() {
+  const houseOnly = isHouseOnlyFilterMode();
+  const spreadLabel = g('mf-s-label');
+  const capBox = g('mf-c-box');
+  const spreadOption = g('srt-spread');
+  const capOption = g('srt-capoc');
+  const sort = g('srt');
+
+  if (spreadLabel) spreadLabel.textContent = houseOnly ? 'Min return on cost' : 'Min dev spread';
+  if (spreadOption) spreadOption.textContent = houseOnly ? 'Return on cost ↓' : 'Dev spread ↓';
+  if (capBox) capBox.hidden = houseOnly;
+  if (capOption) capOption.hidden = houseOnly;
+  if (houseOnly) {
+    if (g('mf-c')) g('mf-c').value = '';
+    if (sort?.value === 'capoc') sort.value = 'spread';
+  }
+
+  document.querySelectorAll('.income-setting').forEach(el => { el.hidden = houseOnly; });
+  const settingsNote = g('settings-note');
+  if (settingsNote) settingsNote.textContent = houseOnly
+    ? 'New-house land is calculated from actual permit lot size. These assumptions update the deal list, detail screen, map hover cards, Excel workbook, and PDF memo.'
+    : 'Apartment land is calculated per unit. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. The top-row hard-cost override still works as a quick one-off stress test.';
+}
+
 function openSettings() {
   populateSettingsForm();
+  syncUnderwritingModeControls();
   g('settings')?.classList.add('open');
 }
 
@@ -1855,6 +1887,7 @@ function buildSiteQueryParams(offset = 0) {
     ['mf-i', 'minIRR'], ['mf-s', 'minSpread'], ['mf-c', 'minCapoc'],
   ];
   pairs.forEach(([id, key]) => {
+    if (key === 'minCapoc' && isHouseOnlyFilterMode()) return;
     const val = id === 'f-hood' ? String(g(id)?.value || '').trim() : positiveInputValue(id);
     if (val) qs.set(key, val);
   });
@@ -2653,7 +2686,7 @@ function renderDetail(s) {
     const appraisalEl = g('appraisal-' + s.id);
     const compsEl = g('comps-' + s.id);
     if (!appraisalEl && !compsEl) return;
-    const [comps, rentComps] = await Promise.all([loadComps(s), loadRentComps(s)]);
+    const [comps, rentComps] = await Promise.all([loadComps(s), house ? Promise.resolve(null) : loadRentComps(s)]);
     const appraisal = buildAppraisalEngine(s, comps, rentComps, costs, income, valuation);
     const compValuation = valuationWithAppraisal(valuation, appraisal, costs, income);
     const valuationEl = g('valuation-' + s.id);
@@ -2706,12 +2739,12 @@ function renderDetail(s) {
       ${projectDetailRows}
       <tr><td>Hard construction</td><td>${fmtD(hardCosts)}</td></tr>
       <tr><td>Hard cost / SF</td><td>${fmtD(hardPerSf)}/SF${hardCostOverride?' <span style="color:#b98b2f;font-size:9px">custom input</span>':''}</td></tr>
-      <tr><td>Hard cost / unit</td><td>${fmtD(hardPerUnit)}/unit</td></tr>
+      <tr><td>Hard cost / ${house ? 'home' : 'unit'}</td><td>${fmtD(hardPerUnit)}/${house ? 'home' : 'unit'}</td></tr>
       <tr><td>Soft costs / hard costs</td><td>${softPctHard}%</td></tr>
       <tr><td>Loan / interest assumptions</td><td>${Math.round((costs.loanToCost || 0) * 1000) / 10}% LTC @ ${Math.round((costs.interestRate || 0) * 1000) / 10}%</td></tr>
       <tr><td>Construction period</td><td>${costs.months} months</td></tr>
-      <tr><td>Rent impact</td><td>${signedPlanPct(costs.rentPremium)}</td></tr>
-      <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/unit</td></tr>
+      ${house ? '' : `<tr><td>Rent impact</td><td>${signedPlanPct(costs.rentPremium)}</td></tr>`}
+      <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/${house ? 'home' : 'unit'}</td></tr>
     </table>
     <div style="font-size:9px;color:#6f7b8c;line-height:1.35;margin:5px 0 8px">${costs.planNote} ${hardCostRead}${costs.recast && costs.storedHardPsf ? ' Stored hard cost was about ' + fmtD(costs.storedHardPsf) + '/SF, so this view is recast to ' + fmtD(costs.hardPerSf) + '/SF.' : ''} The Excel Construction Costs tab includes detailed hard and soft cost line items.</div>
     <div class="sh">Plan comparison</div>
@@ -3093,7 +3126,7 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
       exitValueFormula: appraisal.valuationFormula,
       exitValueMetricValue: appraisal.weightedPsf || appraisal.fallbackPsf || null,
       exitValueBasisQuantity: appraisal.subjectBuildingSf || null,
-      capRateSource: 'Not applicable to for-sale house valuation',
+      capRateSource: '',
     };
   }
   const entryCap = appraisal?.entryCap || base.entryCap;
@@ -3189,11 +3222,11 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
       sales,
       rents: [],
       source,
-      rentSource: 'Not applicable to for-sale house valuation',
+      rentSource: '',
       confidence,
       entryCap: null,
       exitCap: null,
-      capRateSource: 'Not applicable to for-sale house valuation',
+      capRateSource: '',
       exitCapSpreadBps: 0,
       weightedPpu: null,
       weightedPsf: appliedPsf,
@@ -3221,7 +3254,7 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
         sales.length
           ? `${sales.length} recent house sale(s) with usable building-area data were weighted by distance, recency, property type, and home-size similarity.`
           : 'No recent usable local house sales with building-area data were returned; the neighborhood $/SF benchmark is shown as a fallback.',
-        `SFR resale value is ${formula}. NOI and cap rates are not used.`,
+        `SFR resale value is ${formula}.`,
       ],
     };
   }
@@ -3516,7 +3549,7 @@ function pdfAppraisalReportHTML(appraisal) {
     <tr><td>Estimated completed-home value</td><td>${appraisalMoney(v.reconciled)}</td></tr>
     <tr><td>Profit / gap vs. cost</td><td class="${(v.appraisedProfit || 0) >= 0 ? 'green' : 'red'}">${v.appraisedProfit === null ? 'Land basis needed' : fmtD(v.appraisedProfit)}</td></tr>
   </table></div>
-  <div><h3>Methodology</h3><div class="note">${escapeText(appraisal.valuationFormula)}. Recent comparable houses are weighted by distance, sale recency, property type, and completed building-size similarity. NOI, rent, and cap rates are excluded.</div></div>
+  <div><h3>Methodology</h3><div class="note">${escapeText(appraisal.valuationFormula)}. Recent comparable houses are weighted by distance, sale recency, property type, and completed building-size similarity.</div></div>
 </div>
 <h3>Scored Completed-Home Sales</h3>
 <table>
@@ -3989,12 +4022,13 @@ async function exportExcel(id) {
   const s = allSites.find(x => x.id === id);
   if (!s) return;
   const displayAddr = siteDisplayAddress(s);
+  const isHouse = isHouseSite(s);
 
   const compQuery = compQueryForSite(s, 12);
   const [submarket, comps, rentComps] = await Promise.all([
     fetchJSON('/api/submarkets/' + encodeURIComponent(siteNeighborhood(s))),
     fetchJSON('/api/comps/submarket/' + encodeURIComponent(siteNeighborhood(s)) + compQuery),
-    fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(siteNeighborhood(s)) + compQuery),
+    isHouse ? Promise.resolve(null) : fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(siteNeighborhood(s)) + compQuery),
   ]);
   const ownerInfo = await fetchOwnerInfo(s).catch(() => null);
 
@@ -4045,31 +4079,34 @@ async function exportExcel(id) {
     },
     assumptions: {
       planLabel: costs.planLabel,
-      unitMixSource: unitMixSourceText(s),
       hardCostPerSf: costs.totalSF ? (costs.hardCosts || 0) / costs.totalSF : costs.hardPerSf,
       hardCostPerSfDisplay: costs.hardPerSf,
       softCostPct: costs.hardCosts ? (costs.softCosts || 0) / costs.hardCosts : (costs.softPct || 0),
       carryPct: preCarryCost ? (costs.carryCost || 0) / preCarryCost : 0,
       constructionMonths: costs.months || 18,
-      rentPremiumPct: costs.rentPremium || 0,
       loanToCostPct: metrics.loanToCostPct,
       interestRatePct: metrics.interestRatePct,
-      vacancyPct: metrics.vacancyPct,
-      expenseRatioPct: metrics.expenseRatioPct,
-      rentGrowthPct: metrics.rentGrowthPct,
-      entryCap: compValuation.entryCap || exportAppraisal.entryCap || valuation.entryCap,
-      exitCapSpreadBps: metrics.exitCapSpreadBps,
-      resalePricePerSf: exportAppraisal.weightedPsf || compValuation.exitValueMetricValue || 0,
-      resalePricePerSfSource: exportAppraisal.valuationSource || compValuation.exitValueSource || '',
-      otherIncomePerUnit: s.units ? Math.round((income.otherIncome || 0) / s.units) : 600,
       landSource: landValueSourceNote(s),
+      ...(isHouse ? {
+        resalePricePerSf: exportAppraisal.weightedPsf || compValuation.exitValueMetricValue || 0,
+        resalePricePerSfSource: exportAppraisal.valuationSource || compValuation.exitValueSource || '',
+      } : {
+        unitMixSource: unitMixSourceText(s),
+        rentPremiumPct: costs.rentPremium || 0,
+        vacancyPct: metrics.vacancyPct,
+        expenseRatioPct: metrics.expenseRatioPct,
+        rentGrowthPct: metrics.rentGrowthPct,
+        entryCap: compValuation.entryCap || exportAppraisal.entryCap || valuation.entryCap,
+        exitCapSpreadBps: metrics.exitCapSpreadBps,
+        otherIncomePerUnit: s.units ? Math.round((income.otherIncome || 0) / s.units) : 600,
+      }),
     },
     costs,
-    income,
+    ...(isHouse ? {} : { income }),
     valuation: {
       ...compValuation,
-      capOnCost: compValuation.capOnCost || valuation.capOnCost || 0,
       devSpreadPct: compValuation.devSpreadPct || valuation.devSpreadPct || 0,
+      ...(isHouse ? {} : { capOnCost: compValuation.capOnCost || valuation.capOnCost || 0 }),
     },
     appraisal: {
       isHouse: !!exportAppraisal.isHouse,
@@ -4081,14 +4118,16 @@ async function exportExcel(id) {
       subjectBuildingSf: exportAppraisal.subjectBuildingSf || siteBuildingSf(s),
       returnOnCost: exportAppraisal.returnOnCost,
       grossMarginPct: exportAppraisal.grossMarginPct,
-      entryCap: exportAppraisal.entryCap,
-      exitCap: exportAppraisal.exitCap,
-      capRateSource: exportAppraisal.capRateSource,
       reconciliation: exportAppraisal.reconciliation || [],
       values: exportAppraisal.values || {},
       reconciled: exportAppraisal.values?.reconciled || 0,
+      ...(isHouse ? {} : {
+        entryCap: exportAppraisal.entryCap,
+        exitCap: exportAppraisal.exitCap,
+        capRateSource: exportAppraisal.capRateSource,
+      }),
     },
-    unitMix: unitMixDisplayRows(s, submarket),
+    unitMix: isHouse ? [] : unitMixDisplayRows(s, submarket),
     schedules: {
       hard: hardCostLineItems(s),
       soft: softCostLineItems(),
@@ -4099,17 +4138,19 @@ async function exportExcel(id) {
       hardPerSf: row.costs.hardPerSf,
       softPct: row.costs.softPct,
       months: row.costs.months || 18,
-      rentPremiumPct: row.costs.rentPremium || 0,
       totalCost: row.costs.totalCost,
-      costPerUnit: row.costs.totalPerUnit,
-      noi: row.income.noi,
       exitValue: row.valuation.exitValue,
       netProfit: row.valuation.netProfit,
-      capOnCost: row.valuation.capOnCost,
       note: row.plan.note || '',
+      ...(isHouse ? {} : {
+        rentPremiumPct: row.costs.rentPremium || 0,
+        costPerUnit: row.costs.totalPerUnit,
+        noi: row.income.noi,
+        capOnCost: row.valuation.capOnCost,
+      }),
     })),
     salesComps: exportAppraisal.sales || comps?.recentComps || [],
-    rentComps: exportAppraisal.rents || rentComps?.recentComps || [],
+    rentComps: isHouse ? [] : (exportAppraisal.rents || rentComps?.recentComps || []),
   };
 
   try {
@@ -4293,9 +4334,9 @@ async function exportPDF(id) {
   <strong>Investment Summary:</strong> This analysis presents a ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'multifamily')} development opportunity located at ${displayAddr} in ${siteNeighborhood(s)}, CA.
   ${escapeText(siteLotText(s))}.
   ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'submitted' ? 'The project has been submitted to the city and is awaiting plan check or approval.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
-  The projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF).
+  The projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/${house ? 'home' : 'unit'}; ${fmtD(pdfTotalPerSf)}/SF).
   ${house
-    ? `The completed-home value is <strong>${fmtD(exitV)}</strong>, based on ${Math.round(pdfCompValuation.exitValueBasisQuantity || pdfTotalSF).toLocaleString()} building SF at <strong>${fmtD(pdfCompValuation.exitValueMetricValue || 0)}/SF</strong> from recent comparable home sales${pdfAppraisal.sales.length ? '' : ' (neighborhood fallback benchmark)'}, yielding net development profit of <strong>${fmtD(prof)}</strong>. NOI and cap rates are not used for this SFR valuation.`
+    ? `The completed-home value is <strong>${fmtD(exitV)}</strong>, based on ${Math.round(pdfCompValuation.exitValueBasisQuantity || pdfTotalSF).toLocaleString()} building SF at <strong>${fmtD(pdfCompValuation.exitValueMetricValue || 0)}/SF</strong> from recent comparable home sales${pdfAppraisal.sales.length ? '' : ' (neighborhood fallback benchmark)'}, yielding net development profit of <strong>${fmtD(prof)}</strong>.`
     : `The stabilized exit value is <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding net development profit of <strong>${fmtD(prof)}</strong>.`}
 </div>
 
@@ -4327,9 +4368,9 @@ async function exportPDF(id) {
       <tr><td>City / County</td><td>Los Angeles, CA / LA County</td></tr>
       <tr><td>Lot Size</td><td>${escapeText(siteLotText(s))}</td></tr>
       <tr><td>Project Type</td><td>${s.type || 'Multifamily'}</td></tr>
-      <tr><td>Program</td><td>${isEd1Site(s) ? 'ED1' : 'Not identified as ED1'}</td></tr>
-      <tr><td>Proposed Units</td><td>${escapeText(siteUnitsText(s))}</td></tr>
-      <tr><td>Avg Unit Size</td><td>${siteAvgUnitSfText(s)}</td></tr>
+      ${house ? '' : `<tr><td>Program</td><td>${isEd1Site(s) ? 'ED1' : 'Not identified as ED1'}</td></tr>`}
+      <tr><td>${house ? 'Homes' : 'Proposed Units'}</td><td>${escapeText(siteUnitsText(s))}</td></tr>
+      <tr><td>${house ? 'Completed Home Size' : 'Avg Unit Size'}</td><td>${house ? escapeText(siteProjectSfText(s)) : siteAvgUnitSfText(s)}</td></tr>
       <tr><td>Total Building SF</td><td>${(siteBuildingSf(s) || ((s.units||12)*(s.usf||800))).toLocaleString()} SF</td></tr>
       <tr><td>Building SF Source</td><td>${escapeText(s.buildingSfSource || 'Not provided')}</td></tr>
       ${s.stories ? `<tr><td>Stories</td><td>${escapeText(String(s.stories))}</td></tr>` : ''}
@@ -4352,7 +4393,7 @@ async function exportPDF(id) {
       <tr><td>Listing Status</td><td>${siteListingStatus(s)}</td></tr>
       <tr><td>Demo Required</td><td>${s.demo ? 'Yes' : 'No'}</td></tr>
       <tr><td>Asking Price</td><td>${isForSaleSite(s) ? fmtD(siteAskPrice(s)) : 'Not for sale (imputed)'}</td></tr>
-      <tr><td>Price per Unit</td><td>${landPricePerUnitText(s, land)}</td></tr>
+      <tr><td>${house ? 'Land Basis per Home' : 'Price per Unit'}</td><td>${landPricePerUnitText(s, land)}</td></tr>
       <tr><td>Price per SF (land)</td><td>${landPricePerSfText(s, land)}</td></tr>
     </table>
 
@@ -4441,9 +4482,9 @@ ${house ? `<div class="two-col">
       <tr><td>Construction Plan</td><td>${costs.planLabel}</td></tr>
       <tr><td>Hard Construction Budget</td><td>${fmtD(pdfHardCosts)}</td></tr>
       <tr><td>Hard Cost / SF</td><td>${fmtD(pdfHardPerSf)}/SF</td></tr>
-      <tr><td>Hard Cost / Unit</td><td>${fmtD(pdfHardPerUnit)}/unit</td></tr>
+      <tr><td>Hard Cost / ${house ? 'Home' : 'Unit'}</td><td>${fmtD(pdfHardPerUnit)}/${house ? 'home' : 'unit'}</td></tr>
       <tr><td>Cost Source</td><td>${costs.source}</td></tr>
-      <tr><td>Budget Read</td><td>Use $/SF first; $/unit rises with larger units</td></tr>
+      <tr><td>Budget Read</td><td>Use $/SF first; $/${house ? 'home' : 'unit'} is a secondary comparison</td></tr>
       <tr class="tot"><td>Hard Cost Subtotal</td><td>${fmtD(pdfHardCosts)}</td></tr>
     </table>
   </div>
@@ -4473,7 +4514,7 @@ ${house ? `<div class="two-col">
   </tr>
   <tr>
     <td style="color:rgba(255,255,255,0.7);font-size:9px;border:none">Total Basis Metrics</td>
-    <td style="color:rgba(255,255,255,0.7);font-size:9px;border:none;text-align:right">${fmtD(pdfTotalPerUnit)}/unit &nbsp;|&nbsp; ${fmtD(pdfTotalPerSf)}/SF &nbsp;|&nbsp; Hard ${fmtD(pdfHardPerSf)}/SF</td>
+    <td style="color:rgba(255,255,255,0.7);font-size:9px;border:none;text-align:right">${fmtD(pdfTotalPerUnit)}/${house ? 'home' : 'unit'} &nbsp;|&nbsp; ${fmtD(pdfTotalPerSf)}/SF &nbsp;|&nbsp; Hard ${fmtD(pdfHardPerSf)}/SF</td>
   </tr>
 </table>
 
@@ -4483,11 +4524,11 @@ ${house ? `<div class="two-col">
   <tr><td>Total Building SF</td><td>${pdfTotalSF.toLocaleString()} SF</td><td>Denominator for cost per foot</td></tr>
   <tr><td>Hard Construction Budget</td><td>${fmtD(pdfHardCosts)}</td><td>Direct construction budget</td></tr>
   <tr><td>Hard Cost / SF</td><td>${fmtD(pdfHardPerSf)}/SF</td><td>Primary construction-cost benchmark</td></tr>
-  <tr><td>Hard Cost / Unit</td><td>${fmtD(pdfHardPerUnit)}/unit</td><td>Comparable unit-count benchmark</td></tr>
+  <tr><td>Hard Cost / ${house ? 'Home' : 'Unit'}</td><td>${fmtD(pdfHardPerUnit)}/${house ? 'home' : 'unit'}</td><td>Comparable ${house ? 'completed-home' : 'unit-count'} benchmark</td></tr>
   <tr><td>Soft Cost / SF</td><td>${fmtD(pdfSoftPerSf)}/SF</td><td>Permits, A&E, legal, contingency, fees</td></tr>
   <tr><td>Carry Cost / SF</td><td>${fmtD(pdfCarryPerSf)}/SF</td><td>Interest, loan fees, taxes during construction</td></tr>
   <tr><td>Total Cost / SF</td><td>${fmtD(pdfTotalPerSf)}/SF</td><td>All-in basis including land, soft costs, carry</td></tr>
-  <tr><td>Total Cost / Unit</td><td>${fmtD(pdfTotalPerUnit)}/unit</td><td>All-in delivered unit basis</td></tr>
+  <tr><td>Total Cost / ${house ? 'Home' : 'Unit'}</td><td>${fmtD(pdfTotalPerUnit)}/${house ? 'home' : 'unit'}</td><td>All-in delivered ${house ? 'home' : 'unit'} basis</td></tr>
   <tr><td>Soft Costs / Hard Costs</td><td>${pdfSoftPctHard}%</td><td>Soft-cost reasonableness check</td></tr>
   <tr><td>Construction Period</td><td>${costs.months || 18} months</td><td>Carry-cost timing assumption</td></tr>
   ${house
@@ -4733,7 +4774,7 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
   a ${irr >= 15 ? 'compelling' : irr >= 10 ? 'moderate' : 'marginal'} development opportunity in the ${siteNeighborhood(s)} submarket.
   
   ${house
-    ? `The project is projected to generate a ${Math.round(irr * 10) / 10}% annualized levered IRR through the ${costs.months || 18}-month construction period, a ${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}% return on cost, a ${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}% gross margin, and net development profit of ${fmtD(prof)}. The completed-home value is driven by recent local sale price per building square foot, not NOI or a cap rate.`
+    ? `The project is projected to generate a ${Math.round(irr * 10) / 10}% annualized levered IRR through the ${costs.months || 18}-month construction period, a ${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}% return on cost, a ${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}% gross margin, and net development profit of ${fmtD(prof)}. The completed-home value is driven by recent local sale price per building square foot.`
     : `The project is projected to generate a ${Math.round(irr*10)/10}% levered IRR on a 5-year hold basis, a ${capoc}% cap rate on cost (vs. ${(entryCap*100).toFixed(2)}% market entry cap), and a net development profit of ${fmtD(prof)}.`}
   
   ${house
@@ -4752,7 +4793,7 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
 <div class="disclaimer">
   <strong>DISCLAIMER:</strong> This appraisal report was prepared by ParceLLA Analytics using automated underwriting models. 
   All cost estimates are based on RSMeans 2024 Building Construction Cost Data (82nd Edition) for the Los Angeles metropolitan area. 
-  Cap rates and rental rate assumptions are derived from CoStar Q3 2024 data, CBRE LA Multifamily Market Report, and local broker surveys. 
+  ${house ? 'Completed-home valuation inputs are derived from recent local sale price per building square foot and permit/source building-area data.' : 'Cap rates and rental rate assumptions are derived from CoStar Q3 2024 data, CBRE LA Multifamily Market Report, and local broker surveys.'}
   This report is for informational purposes only and does not constitute investment advice, a formal appraisal, or a recommendation to buy or sell. 
   All projections are forward-looking and subject to market conditions, construction costs, regulatory changes, and other risks. 
   Recipients should conduct their own due diligence and consult qualified real estate professionals before making investment decisions.
@@ -4772,6 +4813,7 @@ function resetFilters() {
   ['f-hood'].forEach(id=>{const el=g(id);if(el)el.value='';});
   ['f-q','f-umin','f-umax','f-sfmin','f-sfmax','f-pmin','f-pmax','f-cmin','f-cmax','mf-p','mf-i','mf-s','mf-c','mf-hc','mf-rate'].forEach(id=>{const el=g(id);if(el)el.value='';});
   const plan=g('mf-plan'); if(plan)plan.value='auto';
+  syncUnderwritingModeControls();
   loadSites();
 }
 
