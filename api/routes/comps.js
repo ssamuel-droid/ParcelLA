@@ -83,6 +83,13 @@ function extractYearBuilt(notes) {
 }
 
 function mapSoldComp(d, siteLat, siteLng) {
+  const units = asNumber(d.units);
+  const avgUnitSf = asNumber(d.avg_unit_sf);
+  const buildingSf = asNumber(d.building_sf ?? d.square_footage ?? d.living_area)
+    || (units && avgUnitSf ? Math.round(units * avgUnitSf) : null);
+  const salePrice = asNumber(d.sale_price);
+  const pricePerSf = asNumber(d.price_per_sf)
+    || (salePrice && buildingSf ? Math.round(salePrice / buildingSf) : null);
   return {
     id:           d.id,
     address:      d.address,
@@ -94,6 +101,7 @@ function mapSoldComp(d, siteLat, siteLng) {
     projectType:  d.project_type,
     units:        d.units,
     avgUnitSf:    d.avg_unit_sf,
+    buildingSf,
     yearBuilt:    d.year_built ?? extractYearBuilt(d.notes),
     amenities:    summarizeAmenities(d.amenities) || d.notes || '',
     saleDate:     d.sale_date,
@@ -101,7 +109,7 @@ function mapSoldComp(d, siteLat, siteLng) {
     capRate:      d.cap_rate,
     noi:          d.noi,
     pricePerUnit: d.price_per_unit,
-    pricePerSf:   d.price_per_sf,
+    pricePerSf,
     buyer:        d.buyer,
     seller:       d.seller,
     source:       d.source,
@@ -163,9 +171,10 @@ function mapRentcastSaleRecord(r, hood, siteLat, siteLng) {
     lat,
     lng,
     distanceMiles: distanceMiles(siteLat, siteLng, lat, lng),
-    project_type: r.propertyType || 'Apartment',
+    project_type: r.propertyType || (units === 1 ? 'Single Family' : 'Apartment'),
     units,
     avg_unit_sf:  units && sf ? Math.round(sf / units) : null,
+    building_sf:  sf,
     year_built:   r.yearBuilt,
     amenities:    r.amenities || r.features || '',
     sale_date:    saleDate,
@@ -400,10 +409,26 @@ function rankSoldComps(rows, siteLat, siteLng) {
   });
 }
 
+function isHouseSaleRow(row) {
+  const type = String(row?.project_type || row?.propertyType || '').toLowerCase();
+  if (/apartment|multifamily|mixed|condo|townhome|duplex|triplex/.test(type)) return false;
+  const houseType = /single|house|sfr|detached|residential/.test(type);
+  const units = asNumber(row?.units);
+  const sf = asNumber(row?.building_sf ?? row?.square_footage ?? row?.living_area)
+    || ((units || 0) * (asNumber(row?.avg_unit_sf) || 0));
+  const salePrice = asNumber(row?.sale_price);
+  const pricePsf = asNumber(row?.price_per_sf) || (salePrice && sf ? salePrice / sf : null);
+  return (houseType || units === 1) && sf > 0 && pricePsf > 0;
+}
+
 function soldCompStats(rows) {
   const caps  = rows.filter(d => d.cap_rate).map(d => +d.cap_rate);
   const ppus  = rows.filter(d => d.price_per_unit).map(d => +d.price_per_unit);
-  const ppsfs = rows.filter(d => d.price_per_sf).map(d => +d.price_per_sf);
+  const ppsfs = rows.map(d => {
+    const sf = asNumber(d.building_sf ?? d.square_footage ?? d.living_area)
+      || ((asNumber(d.units) || 0) * (asNumber(d.avg_unit_sf) || 0));
+    return asNumber(d.price_per_sf) || (asNumber(d.sale_price) && sf ? asNumber(d.sale_price) / sf : null);
+  }).filter(Boolean);
   const sort  = arr => [...arr].sort((a, b) => a - b);
   const median = arr => {
     const s = sort(arr);
@@ -457,6 +482,7 @@ router.get('/submarket/:hood', async (req, res, next) => {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 25);
     const recencyDays = Math.min(Math.max(parseInt(req.query.recencyDays, 10) || 1095, 365), 1095);
     const recencyMonths = Math.round((recencyDays / 365) * 12);
+    const houseSubject = String(req.query.subjectType || '').toLowerCase() === 'new house';
     const cutoff = new Date(Date.now() - recencyDays * 86400000).toISOString().split('T')[0];
     const client = sb();
 
@@ -471,6 +497,8 @@ router.get('/submarket/:hood', async (req, res, next) => {
 
     if (error) throw error;
 
+    if (houseSubject) data = (data || []).filter(isHouseSaleRow);
+
     if (!data?.length) {
       const fallback = await client
         .from('sold_comps')
@@ -479,7 +507,7 @@ router.get('/submarket/:hood', async (req, res, next) => {
         .order('sale_date', { ascending: false })
         .limit(100);
       if (fallback.error) throw fallback.error;
-      data = fallback.data ?? [];
+      data = houseSubject ? (fallback.data ?? []).filter(isHouseSaleRow) : (fallback.data ?? []);
       matchType = siteLat !== null && siteLng !== null ? 'nearest_available_recent' : 'latest_citywide_recent';
       matchLabel = siteLat !== null && siteLng !== null
         ? `nearest available comps, last ${recencyMonths} months`
@@ -501,6 +529,14 @@ router.get('/submarket/:hood', async (req, res, next) => {
       }
     }
 
+    if (houseSubject) {
+      data = (data || []).filter(isHouseSaleRow);
+      if (data.length) {
+        matchType = matchType === 'exact_neighborhood_recent' ? 'exact_neighborhood_house_sales' : matchType;
+        matchLabel = `${matchLabel}; completed single-family sales with building-area data`;
+      }
+    }
+
     if (!data?.length) {
       return res.json({
         hood,
@@ -509,22 +545,25 @@ router.get('/submarket/:hood', async (req, res, next) => {
         matchLabel: `no sales comps in the last ${recencyMonths} months`,
         fallback: false,
         recencyDays,
-        message: `No stored sold comps are available within the last ${recencyMonths} months. Older sales comps are intentionally excluded.`,
+        message: houseSubject
+          ? `No completed single-family sale with usable building-area data is available within the last ${recencyMonths} months. Older sales and records without building SF are intentionally excluded.`
+          : `No stored sold comps are available within the last ${recencyMonths} months. Older sales comps are intentionally excluded.`,
         recentComps: [],
       });
     }
 
     const ranked = rankSoldComps(data, siteLat, siteLng);
     const stats = soldCompStats(ranked);
+    const exactMatch = matchType === 'exact_neighborhood_recent' || matchType === 'exact_neighborhood_house_sales';
 
     res.json({
       hood,
       comps: ranked.length,
       matchType,
       matchLabel,
-      fallback: matchType !== 'exact_neighborhood_recent',
+      fallback: !exactMatch,
       recencyDays,
-      message: matchType === 'exact_neighborhood_recent'
+      message: exactMatch
         ? `Exact neighborhood comps found within the last ${recencyMonths} months.`
         : 'No exact recent neighborhood comps were stored, so the report is using ' + matchLabel + '.',
       ...stats,

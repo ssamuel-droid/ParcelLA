@@ -269,6 +269,10 @@ function siteBuildingSf(s) {
   return units > 0 && avg > 0 ? units * avg : 0;
 }
 
+function isHouseSite(s) {
+  return String(s?.type || '').toLowerCase() === 'new house';
+}
+
 function houseResalePsfForSite(s) {
   return FRONTEND_HOUSE_RESALE_PSF[siteNeighborhood(s)] || FRONTEND_HOUSE_RESALE_PSF.Koreatown || 650;
 }
@@ -290,7 +294,20 @@ function valueAmount(value) {
 }
 
 function houseExitValueForSite(s) {
-  if (s?.type !== 'New House') return null;
+  if (!isHouseSite(s)) return null;
+  const localBenchmark = houseCompBenchmarks.get(siteNeighborhood(s));
+  if (localBenchmark?.psf > 0) {
+    const sf = siteBuildingSf(s);
+    if (sf > 0) {
+      return {
+        value: Math.round(sf * localBenchmark.psf),
+        source: localBenchmark.source,
+        formula: `${Math.round(sf).toLocaleString()} building SF x ${fmtD(localBenchmark.psf)}/SF`,
+        metricValue: localBenchmark.psf,
+        basisQuantity: Math.round(sf),
+      };
+    }
+  }
   const external = valueAmount(s.externalValueEstimate || s.external_value_estimate);
   if (external > 0) {
     return {
@@ -306,11 +323,50 @@ function houseExitValueForSite(s) {
   const psf = houseResalePsfForSite(s);
   return {
     value: Math.round(sf * psf),
-    source: 'House resale $/SF assumption',
+    source: 'Neighborhood new-home $/SF benchmark (fallback)',
     formula: `${Math.round(sf).toLocaleString()} SF x ${fmtD(psf)}/SF`,
     metricValue: psf,
     basisQuantity: Math.round(sf),
   };
+}
+
+async function warmHouseCompBenchmarks(sites, loadRunId = siteLoadRunId) {
+  const hoods = [...new Set((sites || [])
+    .filter(s => isHouseSite(s) && !s.locked)
+    .map(siteNeighborhood)
+    .filter(hood => hood && hood !== 'Unknown' && hood !== 'Protected area'))]
+    .filter(hood => !houseCompBenchmarks.has(hood) && !houseCompBenchmarkPending.has(hood));
+  if (!hoods.length) return;
+
+  let nextIndex = 0;
+  let changed = false;
+  async function worker() {
+    while (nextIndex < hoods.length) {
+      const hood = hoods[nextIndex++];
+      houseCompBenchmarkPending.add(hood);
+      try {
+        const query = new URLSearchParams({ subjectType: 'New House', recencyDays: '1095', limit: '25' });
+        const data = await fetchJSONWithTimeout(
+          API + '/api/comps/submarket/' + encodeURIComponent(hood) + '?' + query,
+          {},
+          30000,
+        );
+        const psf = numberOrNull(data?.pricePerSf?.median) || numberOrNull(data?.pricePerSf?.avg);
+        houseCompBenchmarks.set(hood, psf > 0 ? {
+          psf: Math.round(psf),
+          source: `${data.matchLabel || 'recent local completed-home sales'} median price per building SF`,
+        } : null);
+        changed = changed || psf > 0;
+      } catch (error) {
+        console.warn('[ParceLLA] House comp benchmark unavailable for', hood, error?.message || error);
+      } finally {
+        houseCompBenchmarkPending.delete(hood);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(3, hoods.length) }, () => worker()));
+  if (changed && loadRunId === siteLoadRunId) applyFilters();
 }
 
 function landPricePerUnitText(s, land) {
@@ -574,6 +630,8 @@ function calcIRR(cashflows, guess = 0.15) {
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
+const houseCompBenchmarks = new Map();
+const houseCompBenchmarkPending = new Set();
 let siteLoadRunId = 0;
 let sitePageTotal = 0, sitePageLimit = SITE_PAGE_LIMIT, currentSiteQuery = '';
 let siteNotice = null;
@@ -1567,13 +1625,13 @@ function selectedScenarioKey() {
 function scenarioComparisonHTML(s) {
   const selected = selectedScenarioKey();
   return `<table class="ct scn">
-    <tr><td>Plan</td><td>Hard/SF</td><td>Total/unit</td><td>Net profit</td></tr>
+    <tr><td>Plan</td><td>Hard/SF</td><td>${isHouseSite(s) ? 'Total/SF' : 'Total/unit'}</td><td>Net profit</td></tr>
     ${scenarioListForSite(s).map(row => {
       const pc = row.valuation.netProfit >= 0 ? '#1d9e75' : '#e24b4a';
       return `<tr class="${row.key===selected?'selrow':''}">
         <td>${row.plan.label}</td>
         <td>${fmtD(row.costs.hardPerSf)}</td>
-        <td>${fmtD(row.costs.totalPerUnit)}</td>
+        <td>${fmtD(isHouseSite(s) ? row.costs.totalPerSf : row.costs.totalPerUnit)}</td>
         <td style="color:${pc}">${fmtM(row.valuation.netProfit)}</td>
       </tr>`;
     }).join('')}
@@ -1582,6 +1640,31 @@ function scenarioComparisonHTML(s) {
 
 function pencilReadItems(s, costs, income, valuation) {
   const items = [];
+  if (isHouseSite(s)) {
+    const returnOnCost = Number(valuation.returnOnCost || 0) * 100;
+    const grossMargin = Number(valuation.grossMarginPct || 0) * 100;
+    items.push({
+      status: valuation.netProfit >= 0 ? 'Pass' : 'Risk',
+      text: valuation.netProfit >= 0
+        ? `Completed-home value creates ${fmtM(valuation.netProfit)} above all-in cost.`
+        : `Completed-home value is ${fmtM(Math.abs(valuation.netProfit || 0))} below all-in cost.`,
+    });
+    items.push({
+      status: returnOnCost >= 20 ? 'Pass' : returnOnCost >= 10 ? 'Watch' : 'Risk',
+      text: `Return on cost is ${returnOnCost.toFixed(1)}%; gross margin is ${grossMargin.toFixed(1)}%.`,
+    });
+    items.push({
+      status: valuation.exitValueMetricValue ? 'Pass' : 'Watch',
+      text: valuation.exitValueMetricValue
+        ? `Completed-home value uses ${fmtD(valuation.exitValueMetricValue)}/building SF across ${Math.round(valuation.exitValueBasisQuantity || 0).toLocaleString()} SF.`
+        : 'A usable completed-home sales $/SF benchmark is still needed.',
+    });
+    items.push({
+      status: costs.hardPerSf <= 325 ? 'Pass' : costs.hardPerSf <= 380 ? 'Watch' : 'Risk',
+      text: `Hard cost is ${fmtD(costs.hardPerSf)}/SF under the ${costs.planLabel} plan.`,
+    });
+    return items;
+  }
   const marketCap = valuation.entryCap * 100;
   const exitCap = valuation.exitCap * 100;
   const spread = Math.round((valuation.devSpreadPct || 0) * 1000) / 10;
@@ -1837,6 +1920,7 @@ async function loadSites(autoRetry = 0) {
     console.log('[ParceLLA] Loaded first page', allSites.length, 'of', sitePageTotal, 'sites in', Date.now() - startedAt, 'ms');
     g('albl').textContent = 'Loaded';
     applyFilters();
+    void warmHouseCompBenchmarks(allSites, runId);
   } catch (e) {
     if (runId !== siteLoadRunId) return;
     g('rct').textContent = 'Could not load sites';
@@ -1867,6 +1951,7 @@ async function loadMoreSites() {
     siteNotice = data.notice || siteNotice;
     refreshZoneOptions();
     applyFilters();
+    void warmHouseCompBenchmarks(allSites, siteLoadRunId);
   } catch (e) {
     alert('Could not load more sites: ' + (e.message || e));
   }
@@ -1927,14 +2012,14 @@ function applyFilters() {
     if (mfp && (valuation.netProfit||0) < mfp) return false;
     if (mfi && (valuation.leveragedIRR||0) < mfi) return false;
     if (mfs && ((valuation.devSpreadPct||0)*100) < mfs) return false;
-    if (mfc && (valuation.capOnCost||0) < mfc) return false;
+    if (mfc && !isHouseSite(s) && (valuation.capOnCost||0) < mfc) return false;
     return true;
   });
 
   filtered.sort((a,b) => {
     if (srt==='irr')     return sortableMetric(b, 'leveragedIRR')-sortableMetric(a, 'leveragedIRR');
     if (srt==='spread')  return sortableMetric(b, 'devSpreadPct')-sortableMetric(a, 'devSpreadPct');
-    if (srt==='capoc')   return sortableMetric(b, 'capOnCost')-sortableMetric(a, 'capOnCost');
+    if (srt==='capoc')   return sortableMetric(b, isHouseSite(b) ? 'returnOnCost' : 'capOnCost')-sortableMetric(a, isHouseSite(a) ? 'returnOnCost' : 'capOnCost');
     if (srt==='price-a') return (siteAskPrice(a)||Infinity)-(siteAskPrice(b)||Infinity);
     if (srt==='price-d') return (siteAskPrice(b)||0)-(siteAskPrice(a)||0);
     if (srt==='units')   return b.units-a.units;
@@ -2080,6 +2165,7 @@ function renderCards() {
         : 'land basis unavailable')
       : (ask ? 'asking price / land basis' : 'asking price missing');
     const watched = isWatched(s.id);
+    const house = isHouseSite(s);
     const displayAddr = gatedDisplayAddress(s);
     const addrNote = siteAddressNote(s);
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
@@ -2094,8 +2180,8 @@ function renderCards() {
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${barColor}">${needsLand?'Needs land':fmtM(prof)}</div></div>
         <div class="kp"><div class="kpl">IRR</div><div class="kpv" style="color:${needsLand?'#b98b2f':irrC(irr)}">${needsLand?'n/a':Math.round(irr*10)/10 + '%'}</div></div>
-        <div class="kp"><div class="kpl">Dev spread</div><div class="kpv">${needsLand?'n/a':spd + '%'}</div></div>
-        <div class="kp"><div class="kpl">Cap on cost</div><div class="kpv">${needsLand?'n/a':(valuation.capOnCost||0) + '%'}</div></div>
+        <div class="kp"><div class="kpl">${house ? 'Return on cost' : 'Dev spread'}</div><div class="kpv">${needsLand?'n/a':(house ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : spd) + '%'}</div></div>
+        <div class="kp"><div class="kpl">${house ? 'Resale $/SF' : 'Cap on cost'}</div><div class="kpv">${needsLand?'n/a':house ? fmtD(valuation.exitValueMetricValue || 0) : (valuation.capOnCost||0) + '%'}</div></div>
       </div>
       <div class="pb">
         <span class="pbl">Exit ${fmtM(valuation.exitValue)}</span>
@@ -2132,7 +2218,7 @@ function renderMapView() {
         <em>${addrNote ? xmlEscape(addrNote) + ' · ' : ''}${xmlEscape(developmentStatusLabel(s))} · ${s.units || 0} units · ${xmlEscape(siteNeighborhood(s))}</em>
         <span><small>Price</small><strong>${price}</strong></span>
         <span><small>Net profit</small><strong style="color:${profitColor}">${fmtM(valuation.netProfit)}</strong></span>
-        <span><small>Cap on cost</small><strong>${valuation.capOnCost || 0}%</strong></span>
+        <span><small>${isHouseSite(s) ? 'Return on cost' : 'Cap on cost'}</small><strong>${isHouseSite(s) ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : (valuation.capOnCost || 0)}%</strong></span>
         <span><small>Hard cost</small><strong>${fmtD(costs.hardPerSf)}/SF</strong></span>
       </span>
     </button>`;
@@ -2144,7 +2230,7 @@ function renderMapView() {
   }).join('') : '';
   const topDeals = visibleSites.map(row => row.s).slice(0, 6).map(s => {
     const valuation = valuationForSite(s, costModelForSite(s));
-    return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${escapeText(siteDisplayAddress(s))}</b><span>${siteNeighborhood(s)} - ${fmtM(valuation.netProfit)} - ${valuation.capOnCost||0}% cap on cost</span></div>`;
+    return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${escapeText(siteDisplayAddress(s))}</b><span>${siteNeighborhood(s)} - ${fmtM(valuation.netProfit)} - ${isHouseSite(s) ? ((valuation.returnOnCost || 0) * 100).toFixed(1) + '% return on cost' : (valuation.capOnCost || 0) + '% cap on cost'}</span></div>`;
   }).join('');
   const baseButtons = [
     ['roadmap','Map'],
@@ -2457,6 +2543,7 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
 }
 
 function valuationForSite(s, costs = costModelForSite(s), income = incomeStatementForSite(s, costs)) {
+  const house = isHouseSite(s);
   const metrics = currentUserMetrics();
   const needsLandComp = isOffMarketSite(s) && !hasReliableLandBasis(s);
   const entryCap = Number(s.entryCap) || FRONTEND_CAP_RATES[siteNeighborhood(s)] || 0.0525;
@@ -2471,13 +2558,26 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
   const equity = Math.max(0, costs.totalCost - loanAmount);
   const debtService = Math.round(income.debtService ?? loanAmount * ((Number(metrics.interestRatePct) || 0) / 100));
   const holdYears = 5;
-  const cashflows = [-equity];
-  for (let year = 1; year < holdYears; year++) {
-    const yearNoi = Math.round(noi * Math.pow(1 + rentGrowth, year - 1));
-    cashflows.push(s.type === 'New House' ? -debtService : yearNoi - debtService);
+  let leveragedIRR = null;
+  if (!needsLandComp && equity > 0) {
+    if (house) {
+      const holdPeriodYears = Math.max(1, (Number(costs.months) || 18) / 12);
+      const netSaleProceeds = Math.max(0, exitValue - loanAmount);
+      leveragedIRR = netSaleProceeds > 0
+        ? (Math.pow(netSaleProceeds / equity, 1 / holdPeriodYears) - 1) * 100
+        : -100;
+    } else {
+      const cashflows = [-equity];
+      for (let year = 1; year < holdYears; year++) {
+        const yearNoi = Math.round(noi * Math.pow(1 + rentGrowth, year - 1));
+        cashflows.push(yearNoi - debtService);
+      }
+      cashflows.push((year5Noi - debtService) + Math.max(0, exitValue - loanAmount));
+      leveragedIRR = calcIRR(cashflows) * 100;
+    }
   }
-  cashflows.push((s.type === 'New House' ? -debtService : year5Noi - debtService) + Math.max(0, exitValue - loanAmount));
-  const leveragedIRR = needsLandComp ? null : (equity > 0 ? calcIRR(cashflows) * 100 : 0);
+  const returnOnCost = costs.totalCost && netProfit !== null ? netProfit / costs.totalCost : null;
+  const grossMarginPct = exitValue && netProfit !== null ? netProfit / exitValue : null;
   return {
     needsLandComp,
     entryCap,
@@ -2492,8 +2592,10 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
     cfbt: Math.round(noi - debtService),
     leveragedIRR,
     equityMultiple: equity > 0 ? Math.max(0, exitValue - loanAmount) / equity : 0,
-    capOnCost: costs.totalCost ? Math.round((noi / costs.totalCost) * 10000) / 100 : 0,
+    capOnCost: house ? null : (costs.totalCost ? Math.round((noi / costs.totalCost) * 10000) / 100 : 0),
     devSpreadPct: costs.totalCost ? (exitValue - costs.totalCost) / costs.totalCost : 0,
+    returnOnCost,
+    grossMarginPct,
     exitValueSource: houseExit?.source || s.exitValueSource || 'Income cap rate',
     exitValueFormula: houseExit?.formula || `${fmtD(year5Noi)} / ${(exitCap * 100).toFixed(2)}%`,
     exitValueMetricValue: houseExit?.metricValue || s.exitValueMetricValue || null,
@@ -2501,6 +2603,7 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
   };
 }
 function renderDetail(s) {
+  const house = isHouseSite(s);
   const costs = costModelForSite(s);
   const income = incomeStatementForSite(s, costs);
   const valuation = valuationForSite(s, costs, income);
@@ -2556,9 +2659,15 @@ function renderDetail(s) {
     const valuationEl = g('valuation-' + s.id);
     const pencilEl = g('pencil-' + s.id);
     const capKpiEl = g('cap-kpi-source-' + s.id);
+    const grossKpiEl = g('gross-kpi-' + s.id);
+    const rocKpiEl = g('roc-kpi-' + s.id);
     if (valuationEl) valuationEl.innerHTML = valuationTableHTML(compValuation, costs, appraisal.capRateSource);
     if (pencilEl) pencilEl.innerHTML = pencilReadHTML(s, costs, income, compValuation);
-    if (capKpiEl) capKpiEl.textContent = 'vs ' + (compValuation.entryCap * 100).toFixed(2) + '% comp entry cap';
+    if (capKpiEl) capKpiEl.textContent = house
+      ? (compValuation.exitValueMetricValue ? fmtD(compValuation.exitValueMetricValue) + '/SF from local sales' : 'local sales benchmark unavailable')
+      : 'vs ' + (compValuation.entryCap * 100).toFixed(2) + '% comp entry cap';
+    if (house && grossKpiEl) grossKpiEl.textContent = ((compValuation.grossMarginPct || 0) * 100).toFixed(1) + '%';
+    if (house && rocKpiEl) rocKpiEl.textContent = ((compValuation.returnOnCost || 0) * 100).toFixed(1) + '%';
     if (appraisalEl) appraisalEl.innerHTML = appraisalDetailHTML(appraisal);
     if (compsEl) compsEl.innerHTML = comparableEvidenceHTML(comps, rentComps, appraisal);
   }, 100);
@@ -2580,9 +2689,9 @@ function renderDetail(s) {
     <div class="sh">Returns</div>
     <div class="mbg">
       <div class="mb" style="border-left-color:${pc}"><div class="mbl">Net profit</div><div class="mbv" style="color:${pc}">${fmtM(prof)}</div><div class="mbs">exit − all-in</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">IRR (5-yr)</div><div class="mbv" style="color:${ic}">${Math.round(irr*10)/10}%</div><div class="mbs">${irrL(irr)}</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">Cap on cost</div><div class="mbv">${valuation.capOnCost||0}%</div><div class="mbs" id="cap-kpi-source-${s.id}">loading comp cap</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">Dev spread</div><div class="mbv">${spd}%</div><div class="mbs">${fmtM(prof)} above cost</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Annualized IRR' : 'IRR (5-yr)'}</div><div class="mbv" style="color:${ic}">${Math.round(irr*10)/10}%</div><div class="mbs">${house ? `${costs.months || 18}-month build and sale` : irrL(irr)}</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Gross margin' : 'Cap on cost'}</div><div class="mbv" ${house ? `id="gross-kpi-${s.id}"` : ''}>${house ? ((valuation.grossMarginPct || 0) * 100).toFixed(1) : (valuation.capOnCost || 0)}%</div><div class="mbs" id="cap-kpi-source-${s.id}">${house ? 'loading local home sales' : 'loading comp cap'}</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Return on cost' : 'Dev spread'}</div><div class="mbv" ${house ? `id="roc-kpi-${s.id}"` : ''}>${house ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : spd}%</div><div class="mbs">${fmtM(prof)} above cost</div></div>
     </div>
     <div class="sh">Cost waterfall</div>
     ${bars.map(([v,c,l])=>`<div class="wfr"><div class="wfl"><span>${l}</span><span>${fmtD(v)}</span></div><div class="wft"><div class="wff" style="width:${Math.round(v/tc*100)}%;background:${c}"></div></div></div>`).join('')}
@@ -2607,11 +2716,11 @@ function renderDetail(s) {
     <div style="font-size:9px;color:#6f7b8c;line-height:1.35;margin:5px 0 8px">${costs.planNote} ${hardCostRead}${costs.recast && costs.storedHardPsf ? ' Stored hard cost was about ' + fmtD(costs.storedHardPsf) + '/SF, so this view is recast to ' + fmtD(costs.hardPerSf) + '/SF.' : ''} The Excel Construction Costs tab includes detailed hard and soft cost line items.</div>
     <div class="sh">Plan comparison</div>
     ${scenarioComparisonHTML(s)}
-    <div class="sh">Valuation</div>
-    <div id="valuation-${s.id}">${valuationTableHTML(valuation, costs, 'Loading comp cap evidence...')}</div>
-    <div class="sh">Comp-driven appraisal</div>
+    <div class="sh">${house ? 'Completed-home sales valuation' : 'Valuation'}</div>
+    <div id="valuation-${s.id}">${valuationTableHTML(valuation, costs, house ? 'Loading recent local house sales...' : 'Loading comp cap evidence...')}</div>
+    <div class="sh">${house ? 'Local sales appraisal' : 'Comp-driven appraisal'}</div>
     <div id="appraisal-${s.id}" style="font-size:10px;color:#aaa">Loading appraisal comps...</div>
-    <div class="sh">Unit mix / rent roll</div>
+    ${house ? '' : `<div class="sh">Unit mix / rent roll</div>
     ${unitMixRowsHTML(s)}
     <div class="sh">Income statement</div>
     <table class="ct">
@@ -2626,7 +2735,7 @@ function renderDetail(s) {
       <tr class="tot"><td>Cash flow before tax</td><td>${fmtD(income.cfbt)}</td></tr>
     </table>
     <div class="sh">Comparable evidence - ${siteNeighborhood(s)}</div>
-    <div id="comps-${s.id}" style="font-size:10px;color:#aaa">Loading comps...</div>
+    <div id="comps-${s.id}" style="font-size:10px;color:#aaa">Loading comps...</div>`}
 
     <div class="sh">Assumption sources</div>
     ${sourceLinksHTML(s)}
@@ -2790,6 +2899,7 @@ async function fetchJSON(path) {
 function compQueryForSite(s, limit = 12) {
   const p = new URLSearchParams({ limit: String(limit) });
   p.set('recencyDays', '1095');
+  if (isHouseSite(s)) p.set('subjectType', 'New House');
   if (s?.lat && s?.lng) {
     p.set('siteLat', s.lat);
     p.set('siteLng', s.lng);
@@ -2867,30 +2977,50 @@ function weightedValue(items, valueFn, weightFn) {
 }
 
 function scoreSalesComp(comp, site) {
+  const house = isHouseSite(site);
   const reportedCapRate = normalizeCapRate(comp.capRate);
   const salePrice = numberOrNull(comp.salePrice);
   const compNoi = numberOrNull(comp.noi);
   const inferredCapRate = !reportedCapRate && salePrice && compNoi ? normalizeCapRate(compNoi / salePrice) : null;
   const capRateNorm = reportedCapRate || inferredCapRate;
   const pricePerUnit = numberOrNull(comp.pricePerUnit);
-  const pricePerSf = numberOrNull(comp.pricePerSf);
+  const compBuildingSf = numberOrNull(comp.buildingSf)
+    || ((numberOrNull(comp.units) || 0) * (numberOrNull(comp.avgUnitSf) || 0))
+    || null;
+  const pricePerSf = numberOrNull(comp.pricePerSf)
+    || (salePrice && compBuildingSf ? salePrice / compBuildingSf : null);
+  const subjectSize = house ? siteBuildingSf(site) : numberOrNull(site.units);
+  const comparableSize = house ? compBuildingSf : numberOrNull(comp.units);
   const dataScore = (capRateNorm ? 0.35 : 0) + (pricePerUnit ? 0.30 : 0) + (pricePerSf ? 0.25 : 0) + (salePrice ? 0.10 : 0);
-  const score =
-    distanceScore(comp.distanceMiles) * 0.30 +
-    recencyScore(comp.saleDate, 72) * 0.20 +
-    typeScore(site.type, comp.projectType) * 0.15 +
-    sizeScore(site.units, comp.units) * 0.15 +
-    clampNumber(dataScore, 0.35, 1) * 0.20;
+  const score = house
+    ? distanceScore(comp.distanceMiles) * 0.25 +
+      recencyScore(comp.saleDate, 36) * 0.20 +
+      typeScore(site.type, comp.projectType) * 0.25 +
+      sizeScore(subjectSize, comparableSize) * 0.25 +
+      clampNumber(dataScore, 0.35, 1) * 0.05
+    : distanceScore(comp.distanceMiles) * 0.30 +
+      recencyScore(comp.saleDate, 36) * 0.20 +
+      typeScore(site.type, comp.projectType) * 0.15 +
+      sizeScore(site.units, comp.units) * 0.15 +
+      clampNumber(dataScore, 0.35, 1) * 0.20;
   return {
     ...comp,
     capRateNorm,
     capRateSource: reportedCapRate ? 'reported cap rate' : inferredCapRate ? 'NOI / sale price' : '',
     usablePricePerUnit: pricePerUnit,
     usablePricePerSf: pricePerSf,
+    usableBuildingSf: compBuildingSf,
     compMonthsOld: monthsSince(comp.saleDate),
     compScore: Math.round(score * 1000) / 1000,
     weightPct: 0,
   };
+}
+
+function isHouseComparable(comp) {
+  const type = String(comp?.projectType || '').toLowerCase();
+  if (/apartment|multifamily|mixed|condo|townhome|duplex|triplex/.test(type)) return false;
+  if (/single|house|sfr|detached|residential/.test(type)) return true;
+  return Number(comp?.units) === 1 && Number(comp?.usableBuildingSf) > 0;
 }
 
 function scoreRentComp(comp, site) {
@@ -2930,10 +3060,40 @@ function appraisalPct(value) {
 }
 
 function valuationWithAppraisal(base, appraisal, costs, income) {
-  if (/house resale|external value/i.test(String(base?.exitValueSource || ''))) {
+  if (appraisal?.isHouse) {
+    const exitValue = Math.round(appraisal?.values?.reconciled || base.exitValue || 0);
+    const totalCost = Number(costs?.totalCost || 0);
+    const netProfit = base.needsLandComp ? null : exitValue - totalCost;
+    const loanAmount = base.loanAmount || Math.round(totalCost * metricRate('loanToCostPct'));
+    const equity = base.equity || Math.max(0, totalCost - loanAmount);
+    const netSaleProceeds = Math.max(0, exitValue - loanAmount);
+    const holdPeriodYears = Math.max(1, (Number(costs?.months) || 18) / 12);
+    const leveragedIRR = base.needsLandComp || equity <= 0
+      ? null
+      : netSaleProceeds > 0
+        ? (Math.pow(netSaleProceeds / equity, 1 / holdPeriodYears) - 1) * 100
+        : -100;
     return {
       ...base,
-      capRateSource: base.exitValueSource,
+      noi: 0,
+      year5Noi: 0,
+      entryCap: null,
+      exitCap: null,
+      capOnCost: null,
+      exitValue,
+      netProfit,
+      loanAmount,
+      equity,
+      leveragedIRR,
+      equityMultiple: equity > 0 ? netSaleProceeds / equity : 0,
+      devSpreadPct: totalCost ? (exitValue - totalCost) / totalCost : 0,
+      returnOnCost: totalCost && netProfit !== null ? netProfit / totalCost : null,
+      grossMarginPct: exitValue && netProfit !== null ? netProfit / exitValue : null,
+      exitValueSource: appraisal.valuationSource,
+      exitValueFormula: appraisal.valuationFormula,
+      exitValueMetricValue: appraisal.weightedPsf || appraisal.fallbackPsf || null,
+      exitValueBasisQuantity: appraisal.subjectBuildingSf || null,
+      capRateSource: 'Not applicable to for-sale house valuation',
     };
   }
   const entryCap = appraisal?.entryCap || base.entryCap;
@@ -2972,13 +3132,16 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
 
 function valuationTableHTML(valuation, costs, sourceNote = '') {
   const profitColor = (valuation.netProfit || 0) >= 0 ? '#1d9e75' : '#e24b4a';
-  const houseValuation = /house resale|external value/i.test(String(valuation.exitValueSource || ''));
+  const houseValuation = /house|home|external value/i.test(String(valuation.exitValueSource || ''));
   return `<table class="ct">
-      <tr><td>NOI (stabilized)</td><td>${fmtD(valuation.noi)}</td></tr>
-      ${houseValuation ? '' : `<tr><td>Entry cap rate</td><td>${(valuation.entryCap*100).toFixed(2)}%</td></tr>
+      ${houseValuation ? `<tr><td>Completed home area</td><td>${Math.round(valuation.exitValueBasisQuantity || 0).toLocaleString()} SF</td></tr>
+      <tr><td>Comp-derived resale value / SF</td><td>${valuation.exitValueMetricValue ? fmtD(valuation.exitValueMetricValue) + '/SF' : 'n/a'}</td></tr>
+      <tr><td>Gross margin</td><td>${valuation.grossMarginPct === null || valuation.grossMarginPct === undefined ? 'n/a' : (valuation.grossMarginPct * 100).toFixed(1) + '%'}</td></tr>
+      <tr><td>Return on cost</td><td>${valuation.returnOnCost === null || valuation.returnOnCost === undefined ? 'n/a' : (valuation.returnOnCost * 100).toFixed(1) + '%'}</td></tr>` : `<tr><td>NOI (stabilized)</td><td>${fmtD(valuation.noi)}</td></tr>
+      <tr><td>Entry cap rate</td><td>${(valuation.entryCap*100).toFixed(2)}%</td></tr>
       <tr><td>Exit cap rate</td><td>${(valuation.exitCap*100).toFixed(2)}%</td></tr>
-      <tr><td>Cap source</td><td>${escapeText(sourceNote || valuation.capRateSource || 'base market cap rate')}</td></tr>`}
-      <tr><td>Year 5 NOI</td><td>${fmtD(valuation.year5Noi)}</td></tr>
+      <tr><td>Cap source</td><td>${escapeText(sourceNote || valuation.capRateSource || 'base market cap rate')}</td></tr>
+      <tr><td>Year 5 NOI</td><td>${fmtD(valuation.year5Noi)}</td></tr>`}
       <tr><td>Exit value</td><td>${fmtD(valuation.exitValue)}</td></tr>
       <tr><td>Valuation source</td><td>${escapeText(valuation.exitValueSource || 'Income cap rate')}</td></tr>
       <tr><td>Valuation formula</td><td>${escapeText(valuation.exitValueFormula || `${fmtD(valuation.year5Noi)} / ${(valuation.exitCap*100).toFixed(2)}%`)}</td></tr>
@@ -2988,7 +3151,82 @@ function valuationTableHTML(valuation, costs, sourceNote = '') {
 }
 function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) {
   const metrics = currentUserMetrics();
-  const sales = assignCompWeights((comps?.recentComps || []).map(c => scoreSalesComp(c, site)))
+  const scoredSales = (comps?.recentComps || []).map(c => scoreSalesComp(c, site));
+  if (isHouseSite(site)) {
+    const sales = assignCompWeights(scoredSales.filter(c => isHouseComparable(c) && c.usablePricePerSf))
+      .sort((a, b) => b.compScore - a.compScore);
+    const subjectBuildingSf = siteBuildingSf(site) || Number(costs?.totalSF || 0);
+    const weightedPsf = weightedValue(sales, c => c.usablePricePerSf, c => c.compScore);
+    const fallback = houseExitValueForSite(site);
+    const fallbackPsf = numberOrNull(fallback?.metricValue);
+    const appliedPsf = weightedPsf || fallbackPsf;
+    const reconciled = appliedPsf && subjectBuildingSf
+      ? Math.round(appliedPsf * subjectBuildingSf)
+      : Math.round(fallback?.value || valuation?.exitValue || 0);
+    const netProfit = valuation?.needsLandComp ? null : reconciled - Number(costs?.totalCost || 0);
+    const returnOnCost = costs?.totalCost && netProfit !== null ? netProfit / costs.totalCost : null;
+    const grossMarginPct = reconciled && netProfit !== null ? netProfit / reconciled : null;
+    const source = sales.length
+      ? `${comps?.matchLabel || 'recent local sales'}; weighted completed-home price per building SF`
+      : fallback?.source || 'Neighborhood new-home $/SF benchmark (fallback)';
+    const formula = appliedPsf && subjectBuildingSf
+      ? `${Math.round(subjectBuildingSf).toLocaleString()} building SF x ${fmtD(appliedPsf)}/SF`
+      : fallback?.formula || 'Insufficient building-area and sales-comp data';
+    const confidence = sales.length >= 5 ? 'High' : sales.length >= 3 ? 'Medium' : sales.length ? 'Preliminary' : 'Benchmark fallback';
+    const reconciliation = reconciled > 0 ? [{
+      label: sales.length ? 'Sales comparison - completed home price per building SF' : 'Neighborhood new-home $/SF benchmark',
+      value: reconciled,
+      baseWeight: 100,
+      weightPct: 100,
+      note: sales.length
+        ? 'Recent comparable house sales weighted by distance, recency, property type, and building-size similarity.'
+        : 'Used only because no recent usable local house sale with building-area data was returned.',
+    }] : [];
+    return {
+      siteId: site.id,
+      isHouse: true,
+      valuationMethod: 'Sales comparison - price per building SF',
+      sales,
+      rents: [],
+      source,
+      rentSource: 'Not applicable to for-sale house valuation',
+      confidence,
+      entryCap: null,
+      exitCap: null,
+      capRateSource: 'Not applicable to for-sale house valuation',
+      exitCapSpreadBps: 0,
+      weightedPpu: null,
+      weightedPsf: appliedPsf,
+      fallbackPsf,
+      subjectBuildingSf,
+      weightedMonthlyRent: null,
+      weightedRentPerSf: null,
+      rentCompNoi: null,
+      valuationSource: source,
+      valuationFormula: formula,
+      returnOnCost,
+      grossMarginPct,
+      values: {
+        incomeApproach: null,
+        rentCompValue: null,
+        salesPpuValue: null,
+        salesPsfValue: reconciled,
+        reconciled,
+        lowValue: reconciled ? reconciled * 0.92 : 0,
+        highValue: reconciled ? reconciled * 1.08 : 0,
+        appraisedProfit: netProfit,
+      },
+      reconciliation,
+      notes: [
+        sales.length
+          ? `${sales.length} recent house sale(s) with usable building-area data were weighted by distance, recency, property type, and home-size similarity.`
+          : 'No recent usable local house sales with building-area data were returned; the neighborhood $/SF benchmark is shown as a fallback.',
+        `SFR resale value is ${formula}. NOI and cap rates are not used.`,
+      ],
+    };
+  }
+
+  const sales = assignCompWeights(scoredSales)
     .sort((a, b) => b.compScore - a.compScore);
   const rents = assignCompWeights((rentComps?.recentComps || []).map(c => scoreRentComp(c, site)))
     .sort((a, b) => b.compScore - a.compScore);
@@ -3084,6 +3322,22 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
 
 function appraisalDetailHTML(appraisal) {
   const v = appraisal.values || {};
+  if (appraisal.isHouse) {
+    return `
+      <table class="ct">
+        <tr><td>Valuation method</td><td>Sales comparison - price per building SF</td></tr>
+        <tr><td>Subject completed home area</td><td>${Math.round(appraisal.subjectBuildingSf || 0).toLocaleString()} SF</td></tr>
+        <tr><td>Weighted local sale price / SF</td><td>${appraisal.weightedPsf ? fmtD(appraisal.weightedPsf) + '/SF' : 'n/a'}</td></tr>
+        <tr><td>Estimated completed-home value</td><td>${appraisalMoney(v.reconciled)}</td></tr>
+        <tr><td>Value range</td><td>${appraisalMoney(v.lowValue)} - ${appraisalMoney(v.highValue)}</td></tr>
+        <tr><td>Sales comp support</td><td>${appraisal.sales.length} usable house comp(s)</td></tr>
+        <tr><td>Confidence</td><td>${escapeText(appraisal.confidence)}</td></tr>
+        <tr><td>Gross margin</td><td>${appraisal.grossMarginPct === null ? 'n/a' : (appraisal.grossMarginPct * 100).toFixed(1) + '%'}</td></tr>
+        <tr><td>Return on cost</td><td>${appraisal.returnOnCost === null ? 'n/a' : (appraisal.returnOnCost * 100).toFixed(1) + '%'}</td></tr>
+        <tr class="tot"><td>Profit vs. all-in cost</td><td style="color:${(v.appraisedProfit || 0) >= 0 ? '#1d9e75' : '#e24b4a'}">${v.appraisedProfit === null ? 'Land basis needed' : fmtD(v.appraisedProfit)}</td></tr>
+      </table>
+      <div style="font-size:9px;color:#6f7b8c;line-height:1.35;margin:5px 0 8px">${appraisal.notes.map(escapeText).join(' ')}</div>`;
+  }
   return `
     <table class="ct">
       <tr><td>Reconciled appraised value</td><td>${appraisalMoney(v.reconciled)}</td></tr>
@@ -3102,6 +3356,23 @@ function appraisalDetailHTML(appraisal) {
 }
 
 function comparableEvidenceHTML(comps, rentComps, appraisal) {
+  if (appraisal.isHouse) {
+    const houseRows = appraisal.sales.slice(0, 8).map(c => `<tr>
+      <td>${escapeText(c.address || '')}<span style="display:block;color:#9aa3af;font-size:8px">${escapeText(c.neighborhood || '')}</span></td>
+      <td>${c.weightPct}%</td>
+      <td>${c.distanceMiles ?? 'n/a'}</td>
+      <td>${fmtCompDate(c.saleDate)}</td>
+      <td>${appraisalMoney(c.salePrice)}</td>
+      <td>${c.usableBuildingSf ? Math.round(c.usableBuildingSf).toLocaleString() : 'n/a'}</td>
+      <td>${c.usablePricePerSf ? fmtD(c.usablePricePerSf) + '/SF' : 'n/a'}</td>
+    </tr>`).join('');
+    return `
+      <div style="font-size:9px;color:#6f7b8c;margin-bottom:5px">Source: ${escapeText(appraisal.source)}. Sales are limited to the most recent three years.</div>
+      <table class="ct">
+        <tr><td style="font-weight:700;color:#7f8a9a">Completed-home comp</td><td style="font-weight:700;color:#7f8a9a">Weight</td><td style="font-weight:700;color:#7f8a9a">Mi</td><td style="font-weight:700;color:#7f8a9a">Sale date</td><td style="font-weight:700;color:#7f8a9a">Sale price</td><td style="font-weight:700;color:#7f8a9a">Home SF</td><td style="font-weight:700;color:#7f8a9a">$/SF</td></tr>
+        ${houseRows || `<tr><td colspan="7">${escapeText(comps?.message || 'No recent comparable house sale with usable building-area data was returned. The neighborhood benchmark is used as a fallback.')}</td></tr>`}
+      </table>`;
+  }
   const salesRows = appraisal.sales.slice(0, 6).map(c => `<tr>
     <td>${escapeText(c.address || '')}<span style="display:block;color:#9aa3af;font-size:8px">${escapeText(c.neighborhood || '')}</span></td>
     <td>${c.weightPct}%</td>
@@ -3219,6 +3490,41 @@ function appraisalDetailRows(appraisal, s, costs, income, valuation) {
 
 function pdfAppraisalReportHTML(appraisal) {
   const v = appraisal.values || {};
+  if (appraisal.isHouse) {
+    const houseRows = appraisal.sales.slice(0, 10).map(c => `<tr>
+      <td>${escapeText(c.address || '')}</td>
+      <td>${escapeText(c.neighborhood || '')}</td>
+      <td>${c.weightPct}%</td>
+      <td>${c.distanceMiles ?? 'n/a'}</td>
+      <td>${fmtCompDate(c.saleDate)}</td>
+      <td>${appraisalMoney(c.salePrice)}</td>
+      <td>${c.usableBuildingSf ? Math.round(c.usableBuildingSf).toLocaleString() : 'n/a'}</td>
+      <td>${c.usablePricePerSf ? fmtD(c.usablePricePerSf) + '/SF' : 'n/a'}</td>
+    </tr>`).join('');
+    return `
+<!-- SFR COMP-DRIVEN APPRAISAL -->
+<h2>VIII. Completed-Home Sales Comparables</h2>
+<div class="summary-box">
+  <div class="label">Estimated Completed-Home Value</div>
+  <div class="value">${appraisalMoney(v.reconciled)}</div>
+  <div style="font-size:9px;margin-top:4px;color:rgba(255,255,255,0.75)">Range ${appraisalMoney(v.lowValue)} - ${appraisalMoney(v.highValue)} | ${escapeText(appraisal.confidence)} confidence | ${appraisal.weightedPsf ? fmtD(appraisal.weightedPsf) + '/building SF' : 'benchmark fallback'}</div>
+</div>
+<div class="two-col">
+  <div><h3>Sales Comparison Conclusion</h3><table>
+    <tr><td>Subject building area</td><td>${Math.round(appraisal.subjectBuildingSf || 0).toLocaleString()} SF</td></tr>
+    <tr><td>Weighted completed-home sale / SF</td><td>${appraisal.weightedPsf ? fmtD(appraisal.weightedPsf) + '/SF' : 'n/a'}</td></tr>
+    <tr><td>Estimated completed-home value</td><td>${appraisalMoney(v.reconciled)}</td></tr>
+    <tr><td>Profit / gap vs. cost</td><td class="${(v.appraisedProfit || 0) >= 0 ? 'green' : 'red'}">${v.appraisedProfit === null ? 'Land basis needed' : fmtD(v.appraisedProfit)}</td></tr>
+  </table></div>
+  <div><h3>Methodology</h3><div class="note">${escapeText(appraisal.valuationFormula)}. Recent comparable houses are weighted by distance, sale recency, property type, and completed building-size similarity. NOI, rent, and cap rates are excluded.</div></div>
+</div>
+<h3>Scored Completed-Home Sales</h3>
+<table>
+  <tr><th>Property</th><th>Submarket</th><th>Weight</th><th>Mi</th><th>Sale Date</th><th>Sale Price</th><th>Home SF</th><th>$/SF</th></tr>
+  ${houseRows || '<tr><td colspan="8">No recent comparable house sale with usable building-area data was returned. The report uses the explicitly labeled neighborhood fallback benchmark.</td></tr>'}
+</table>
+<div class="note"><strong>Methodology:</strong> ${appraisal.notes.map(escapeText).join(' ')}</div>`;
+  }
   const salesRows = appraisal.sales.slice(0, 8).map(c => `<tr>
     <td>${escapeText(c.address || '')}</td>
     <td>${escapeText(c.neighborhood || '')}</td>
@@ -3753,6 +4059,8 @@ async function exportExcel(id) {
       rentGrowthPct: metrics.rentGrowthPct,
       entryCap: compValuation.entryCap || exportAppraisal.entryCap || valuation.entryCap,
       exitCapSpreadBps: metrics.exitCapSpreadBps,
+      resalePricePerSf: exportAppraisal.weightedPsf || compValuation.exitValueMetricValue || 0,
+      resalePricePerSfSource: exportAppraisal.valuationSource || compValuation.exitValueSource || '',
       otherIncomePerUnit: s.units ? Math.round((income.otherIncome || 0) / s.units) : 600,
       landSource: landValueSourceNote(s),
     },
@@ -3764,6 +4072,15 @@ async function exportExcel(id) {
       devSpreadPct: compValuation.devSpreadPct || valuation.devSpreadPct || 0,
     },
     appraisal: {
+      isHouse: !!exportAppraisal.isHouse,
+      valuationMethod: exportAppraisal.valuationMethod || '',
+      valuationSource: exportAppraisal.valuationSource || exportAppraisal.source || '',
+      valuationFormula: exportAppraisal.valuationFormula || '',
+      confidence: exportAppraisal.confidence || '',
+      weightedPsf: exportAppraisal.weightedPsf || 0,
+      subjectBuildingSf: exportAppraisal.subjectBuildingSf || siteBuildingSf(s),
+      returnOnCost: exportAppraisal.returnOnCost,
+      grossMarginPct: exportAppraisal.grossMarginPct,
       entryCap: exportAppraisal.entryCap,
       exitCap: exportAppraisal.exitCap,
       capRateSource: exportAppraisal.capRateSource,
@@ -3828,8 +4145,9 @@ async function exportPDF(id) {
   const costs = costModelForSite(s);
   const pdfIncome = incomeStatementForSite(s, costs);
   const valuation = valuationForSite(s, costs, pdfIncome);
+  const house = isHouseSite(s);
   const metrics = currentUserMetrics();
-  const irr  = valuation.leveragedIRR || 0;
+  let irr  = valuation.leveragedIRR || 0;
   let prof = valuation.netProfit || 0;
   let pc   = prof > 0 ? '#1d9e75' : '#e24b4a';
   const ic   = irrC(irr);
@@ -3839,7 +4157,7 @@ async function exportPDF(id) {
   let exitV = valuation.exitValue || 0;
   let entryCap = valuation.entryCap || 0.0475;
   let exitCap  = valuation.exitCap || entryCap + 0.0025;
-  const capoc    = valuation.capOnCost || 0;
+  let capoc    = valuation.capOnCost || 0;
   let spread   = Math.round((valuation.devSpreadPct || 0) * 1000) / 10;
   const today    = new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'});
   const pdfTotalSF = costs.totalSF;
@@ -3869,10 +4187,13 @@ async function exportPDF(id) {
     fetchOwnerInfo(s).catch(() => null),
   ]);
   const pdfAppraisal = buildAppraisalEngine(s, pdfComps, pdfRentComps, costs, pdfIncome, valuation);
-  entryCap = pdfAppraisal.entryCap || entryCap;
-  exitCap = pdfAppraisal.exitCap || exitCap;
-  exitV = exitCap ? Math.round((valuation.year5Noi || 0) / exitCap) : exitV;
+  const pdfCompValuation = valuationWithAppraisal(valuation, pdfAppraisal, costs, pdfIncome);
+  entryCap = pdfCompValuation.entryCap || entryCap;
+  exitCap = pdfCompValuation.exitCap || exitCap;
+  exitV = pdfCompValuation.exitValue || exitV;
   prof = exitV - tc;
+  irr = pdfCompValuation.leveragedIRR || 0;
+  capoc = pdfCompValuation.capOnCost || 0;
   pc = prof > 0 ? '#1d9e75' : '#e24b4a';
   spread = tc ? Math.round(((exitV - tc) / tc) * 1000) / 10 : spread;
 
@@ -3922,10 +4243,13 @@ async function exportPDF(id) {
     .bar-track { flex: 1; height: 14px; background: #f0f0f0; border-radius: 2px; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 2px; }
     .bar-val { width: 80px; font-size: 9px; font-weight: 600; flex-shrink: 0; }
+    .sfr-only { display: none; }
+    .house-report .apartment-only { display: none; }
+    .house-report .sfr-only { display: block; }
     @media print { .no-print { display: none; } }
   </style>
 </head>
-<body>
+<body class="${house ? 'house-report' : ''}">
 <div class="watermark">PARCELLA</div>
 
 <!-- COVER PAGE -->
@@ -3949,19 +4273,19 @@ async function exportPDF(id) {
     <div class="kpi-s">exit value minus all-in cost</div>
   </div>
   <div class="kpi" style="border-left-color:${ic}">
-    <div class="kpi-l">Levered IRR</div>
+    <div class="kpi-l">${house ? 'Annualized Levered IRR' : 'Levered IRR'}</div>
     <div class="kpi-v" style="color:${ic}">${Math.round(irr*10)/10}%</div>
-    <div class="kpi-s">5-year hold · ${irrL(irr)} return</div>
+    <div class="kpi-s">${house ? `${costs.months || 18}-month construction and sale` : `5-year hold · ${irrL(irr)} return`}</div>
   </div>
   <div class="kpi" style="border-left-color:${ic}">
-    <div class="kpi-l">Cap Rate on Cost</div>
-    <div class="kpi-v">${capoc}%</div>
-    <div class="kpi-s">vs ${(entryCap*100).toFixed(2)}% market cap rate</div>
+    <div class="kpi-l">${house ? 'Gross Margin' : 'Cap Rate on Cost'}</div>
+    <div class="kpi-v">${house ? ((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1) : capoc}%</div>
+    <div class="kpi-s">${house ? 'profit / completed-home value' : `vs ${(entryCap*100).toFixed(2)}% market cap rate`}</div>
   </div>
   <div class="kpi" style="border-left-color:${ic}">
-    <div class="kpi-l">Development Spread</div>
-    <div class="kpi-v">${spread}%</div>
-    <div class="kpi-s">value created above cost</div>
+    <div class="kpi-l">${house ? 'Return on Cost' : 'Development Spread'}</div>
+    <div class="kpi-v">${house ? ((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1) : spread}%</div>
+    <div class="kpi-s">${house ? 'profit / all-in cost' : 'value created above cost'}</div>
   </div>
 </div>
 
@@ -3969,8 +4293,10 @@ async function exportPDF(id) {
   <strong>Investment Summary:</strong> This analysis presents a ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'multifamily')} development opportunity located at ${displayAddr} in ${siteNeighborhood(s)}, CA.
   ${escapeText(siteLotText(s))}.
   ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'submitted' ? 'The project has been submitted to the city and is awaiting plan check or approval.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
-  Based on RSMeans 2024 construction cost data and CoStar Q3 2024 market cap rates, the projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF), 
-  with a stabilized exit value of <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding a net development profit of <strong>${fmtD(prof)}</strong>.
+  The projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/unit; ${fmtD(pdfTotalPerSf)}/SF).
+  ${house
+    ? `The completed-home value is <strong>${fmtD(exitV)}</strong>, based on ${Math.round(pdfCompValuation.exitValueBasisQuantity || pdfTotalSF).toLocaleString()} building SF at <strong>${fmtD(pdfCompValuation.exitValueMetricValue || 0)}/SF</strong> from recent comparable home sales${pdfAppraisal.sales.length ? '' : ' (neighborhood fallback benchmark)'}, yielding net development profit of <strong>${fmtD(prof)}</strong>. NOI and cap rates are not used for this SFR valuation.`
+    : `The stabilized exit value is <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding net development profit of <strong>${fmtD(prof)}</strong>.`}
 </div>
 
 <div class="two-col">
@@ -3978,7 +4304,7 @@ async function exportPDF(id) {
     <h3>Investment Read</h3>
     <table>
       <tr><th>Status</th><th>Read</th></tr>
-      ${pencilReadItems(s, costs, pdfIncome, valuation).map(item => `<tr><td class="${item.status === 'Pass' ? 'green' : item.status === 'Watch' ? 'amber' : 'red'}">${item.status}</td><td>${item.text}</td></tr>`).join('')}
+       ${pencilReadItems(s, costs, pdfIncome, pdfCompValuation).map(item => `<tr><td class="${item.status === 'Pass' ? 'green' : item.status === 'Watch' ? 'amber' : 'red'}">${item.status}</td><td>${item.text}</td></tr>`).join('')}
     </table>
   </div>
   <div>
@@ -4030,11 +4356,11 @@ async function exportPDF(id) {
       <tr><td>Price per SF (land)</td><td>${landPricePerSfText(s, land)}</td></tr>
     </table>
 
-    <h3>Unit Mix</h3>
+    ${house ? '' : `<h3>Unit Mix</h3>
     <table>
       <tr><th>Type</th><th>Mix</th><th>Units</th><th>Rent/mo</th></tr>
       ${unitMixPDFRows(s)}
-    </table>
+    </table>`}
 
     <h3>Location Research</h3>
     <table>
@@ -4049,7 +4375,22 @@ async function exportPDF(id) {
 <!-- MARKET ANALYSIS -->
 <div class="page-break"></div>
 <h2>III. Market Analysis — ${siteNeighborhood(s)} Submarket</h2>
-<div class="two-col">
+${house ? `<div class="two-col">
+  <div>
+    <h3>Completed-Home Sales Benchmark</h3>
+    <table>
+      <tr><td>Subject building area</td><td>${Math.round(pdfAppraisal.subjectBuildingSf || pdfTotalSF).toLocaleString()} SF</td></tr>
+      <tr><td>Weighted comparable sale price / SF</td><td>${pdfAppraisal.weightedPsf ? fmtD(pdfAppraisal.weightedPsf) + '/SF' : 'n/a'}</td></tr>
+      <tr><td>Usable recent house sales</td><td>${pdfAppraisal.sales.length}</td></tr>
+      <tr><td>Comp recency</td><td>Last 3 years</td></tr>
+      <tr><td>Completed-home value</td><td>${fmtD(exitV)}</td></tr>
+    </table>
+  </div>
+  <div>
+    <h3>Valuation Method</h3>
+    <div class="note"><strong>Sales comparison approach:</strong> ${escapeText(pdfAppraisal.valuationFormula)}. Comparable houses are weighted by distance, sale recency, property type, and building-size similarity. ${pdfAppraisal.sales.length ? '' : 'No usable recent local house sale with building-area data was returned, so the neighborhood benchmark is shown as a labeled fallback.'}</div>
+  </div>
+</div>` : `<div class="two-col">
   <div>
     <h3>Rental Market Overview</h3>
     <div class="note" style="margin-bottom:10px">
@@ -4083,7 +4424,7 @@ async function exportPDF(id) {
       transacting in the ${siteNeighborhood(s)} submarket over the trailing 24 months.
     </div>
   </div>
-</div>
+</div>`}
 
 <!-- COST APPROACH -->
 <h2>IV. Cost Approach — All-In Development Budget</h2>
@@ -4122,7 +4463,7 @@ async function exportPDF(id) {
   </div>
 </div>
 <div class="note">
-  <strong>Selected plan:</strong> ${costs.planLabel}. ${costs.planNote || ''} Rent impact: ${pdfRentImpact}. The construction budget, income statement, exit value, and net profit are recalculated from this selected plan.
+  <strong>Selected plan:</strong> ${costs.planLabel}. ${costs.planNote || ''} ${house ? 'The construction budget, completed-home value, and net profit are recalculated from this selected plan.' : `Rent impact: ${pdfRentImpact}. The construction budget, income statement, exit value, and net profit are recalculated from this selected plan.`}
 </div>
 
 <table style="background:#0f1f3d;color:white">
@@ -4149,23 +4490,34 @@ async function exportPDF(id) {
   <tr><td>Total Cost / Unit</td><td>${fmtD(pdfTotalPerUnit)}/unit</td><td>All-in delivered unit basis</td></tr>
   <tr><td>Soft Costs / Hard Costs</td><td>${pdfSoftPctHard}%</td><td>Soft-cost reasonableness check</td></tr>
   <tr><td>Construction Period</td><td>${costs.months || 18} months</td><td>Carry-cost timing assumption</td></tr>
-  <tr><td>Rent Premium / Haircut</td><td>${pdfRentImpact}</td><td>Income-statement scenario adjustment</td></tr>
+  ${house
+    ? `<tr><td>Completed-home resale benchmark</td><td>${fmtD(pdfCompValuation.exitValueMetricValue || 0)}/SF</td><td>Recent local house sales weighted by distance, recency, property type, and size</td></tr>`
+    : `<tr><td>Rent Premium / Haircut</td><td>${pdfRentImpact}</td><td>Income-statement scenario adjustment</td></tr>`}
 </table>
-<!-- INCOME APPROACH -->
+<!-- VALUATION APPROACH -->
 <div class="page-break"></div>
-<h2>V. Income Approach — Stabilized Pro Forma</h2>
+<h2>V. ${house ? 'Sales Comparison Approach — Completed Home' : 'Income Approach — Stabilized Pro Forma'}</h2>
 <div class="two-col">
   <div>
-    <h3>Rent Roll (Stabilized Year 1)</h3>
+    <h3>${house ? 'Subject & Comparable-Sale Inputs' : 'Rent Roll (Stabilized Year 1)'}</h3>
     <table>
-      <tr><th>Unit Type</th><th>Units</th><th>Rent/mo</th><th>Annual</th></tr>
+      ${house ? `<tr><td>Subject completed home SF</td><td>${Math.round(pdfAppraisal.subjectBuildingSf || pdfTotalSF).toLocaleString()} SF</td></tr>
+      <tr><td>Weighted comp sale price / SF</td><td>${pdfAppraisal.weightedPsf ? fmtD(pdfAppraisal.weightedPsf) + '/SF' : 'n/a'}</td></tr>
+      <tr><td>Usable house comps</td><td>${pdfAppraisal.sales.length}</td></tr>
+      <tr><td>Comp period</td><td>Most recent 3 years</td></tr>
+      <tr class="tot"><td>Estimated completed-home value</td><td>${fmtD(exitV)}</td></tr>` : `<tr><th>Unit Type</th><th>Units</th><th>Rent/mo</th><th>Annual</th></tr>
       ${unitMixRentRollPDFRows(s)}
-      <tr class="tot"><td colspan="3">Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
+      <tr class="tot"><td colspan="3">Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>`}
     </table>
 
-    <h3>Operating Statement</h3>
+    <h3>${house ? 'Development Profitability' : 'Operating Statement'}</h3>
     <table>
-      <tr><td>Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
+      ${house ? `<tr><td>Estimated completed-home value</td><td>${fmtD(exitV)}</td></tr>
+      <tr><td>All-in development cost</td><td>${fmtD(tc)}</td></tr>
+      <tr class="tot"><td>Net development profit</td><td>${fmtD(prof)}</td></tr>
+      <tr><td>Gross margin</td><td>${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}%</td></tr>
+      <tr><td>Return on cost</td><td>${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}%</td></tr>
+      <tr><td>Valuation method</td><td>Building SF x local comp $/SF</td></tr>` : `<tr><td>Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
       <tr><td>Less: Vacancy (${metrics.vacancyPct}%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.vacancyLoss)})</td></tr>
       <tr><td>Plus: Other Income</td><td>${fmtD(pdfIncome.otherIncome)}</td></tr>
       <tr class="tot"><td>Effective Gross Income</td><td>${fmtD(pdfIncome.effectiveGrossIncome)}</td></tr>
@@ -4181,13 +4533,19 @@ async function exportPDF(id) {
       <tr><td>Total Operating Expenses (${metrics.expenseRatioPct}%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.operatingExpenses)})</td></tr>
       <tr class="tot" style="background:#e8f5ee"><td style="color:#1d9e75;font-weight:700">NET OPERATING INCOME</td><td style="color:#1d9e75;font-weight:700;font-size:12px">${fmtD(pdfIncome.noi)}</td></tr>
       <tr><td>Debt Service</td><td style="color:#e24b4a">(${fmtD(pdfIncome.debtService)})</td></tr>
-      <tr class="tot"><td>Cash Flow Before Tax</td><td>${fmtD(pdfIncome.cfbt)}</td></tr>
+      <tr class="tot"><td>Cash Flow Before Tax</td><td>${fmtD(pdfIncome.cfbt)}</td></tr>`}
     </table>
   </div>
   <div>
-    <h3>Valuation Summary</h3>
+    <h3>${house ? 'Completed-Home Value Summary' : 'Valuation Summary'}</h3>
     <table>
-      <tr><td>NOI (stabilized)</td><td>${fmtD(noi)}</td></tr>
+      ${house ? `<tr><td>Completed home building SF</td><td>${Math.round(pdfCompValuation.exitValueBasisQuantity || pdfTotalSF).toLocaleString()} SF</td></tr>
+      <tr><td>Comp-derived resale value / SF</td><td>${fmtD(pdfCompValuation.exitValueMetricValue || 0)}/SF</td></tr>
+      <tr><td>Completed-home value</td><td>${fmtD(exitV)}</td></tr>
+      <tr><td>All-in development cost</td><td>${fmtD(tc)}</td></tr>
+      <tr class="tot" style="background:${prof>0?'#e8f5ee':'#fdecea'}"><td style="color:${pc};font-weight:700">NET DEVELOPMENT PROFIT</td><td style="color:${pc};font-weight:700;font-size:12px">${fmtD(prof)}</td></tr>
+      <tr><td>Formula</td><td>${escapeText(pdfAppraisal.valuationFormula)}</td></tr>
+      <tr><td>Source</td><td>${escapeText(pdfAppraisal.valuationSource)}</td></tr>` : `<tr><td>NOI (stabilized)</td><td>${fmtD(noi)}</td></tr>
       <tr><td>Entry Cap Rate</td><td>${(entryCap*100).toFixed(2)}%</td></tr>
       <tr><td>Stabilized Value (entry cap)</td><td>${fmtD(noi/entryCap)}</td></tr>
       <tr><td>&nbsp;</td><td>&nbsp;</td></tr>
@@ -4201,10 +4559,16 @@ async function exportPDF(id) {
       <tr class="tot" style="background:${prof>0?'#e8f5ee':'#fdecea'}">
         <td style="color:${pc};font-weight:700">NET DEVELOPMENT PROFIT</td>
         <td style="color:${pc};font-weight:700;font-size:12px">${fmtD(prof)}</td>
-      </tr>
+      </tr>`}
     </table>
 
-    <h3>Cap Rate Benchmarking</h3>
+    <h3>${house ? 'SFR Return Benchmarks' : 'Cap Rate Benchmarking'}</h3>
+    ${house ? `<table>
+      <tr><td>Gross margin</td><td>${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}%</td></tr>
+      <tr><td>Return on cost</td><td>${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}%</td></tr>
+      <tr><td>Annualized levered IRR</td><td>${Math.round(irr * 10) / 10}%</td></tr>
+      <tr><td>Construction period</td><td>${costs.months || 18} months</td></tr>
+    </table>` : `<div>
     <div class="chart-bar">
       <div class="bar-label">Cap on Cost</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,capoc/8*100)}%;background:#1d9e75"></div></div>
@@ -4220,10 +4584,12 @@ async function exportPDF(id) {
       <div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,exitCap*100/8*100)}%;background:#ef9f27"></div></div>
       <div class="bar-val">${(exitCap*100).toFixed(2)}%</div>
     </div>
+    </div>`}
   </div>
 </div>
 
 <!-- DCF / RETURNS -->
+<div class="apartment-only">
 <h2>VI. Discounted Cash Flow — 5-Year Hold Period</h2>
 <table>
   <tr>
@@ -4299,6 +4665,25 @@ async function exportPDF(id) {
     <div class="kpi-s">NOI / debt service</div>
   </div>
 </div>
+</div>
+
+<div class="sfr-only">
+<h2>VI. SFR Construction & Sale Cash Flow</h2>
+<table>
+  <tr><th>Line Item</th><th>Initial Funding</th><th>At Completion</th></tr>
+  <tr><td>Equity required</td><td style="color:#e24b4a">(${fmtD(pdfEquity)})</td><td>—</td></tr>
+  <tr><td>Completed-home sale value</td><td>—</td><td>${fmtD(exitV)}</td></tr>
+  <tr><td>Less: construction loan repayment</td><td>—</td><td style="color:#e24b4a">(${fmtD(pdfLoan)})</td></tr>
+  <tr class="tot"><td>Equity cash flow</td><td style="color:#e24b4a">(${fmtD(pdfEquity)})</td><td>${fmtD(Math.max(0, exitV - pdfLoan))}</td></tr>
+</table>
+<div class="kpi-grid" style="margin-top:12px">
+  <div class="kpi"><div class="kpi-l">Construction Period</div><div class="kpi-v">${costs.months || 18} mo</div><div class="kpi-s">editable assumption</div></div>
+  <div class="kpi"><div class="kpi-l">Levered IRR</div><div class="kpi-v" style="color:${ic}">${Math.round(irr * 10) / 10}%</div><div class="kpi-s">annualized through completion</div></div>
+  <div class="kpi"><div class="kpi-l">Return on Cost</div><div class="kpi-v">${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}%</div><div class="kpi-s">profit / all-in cost</div></div>
+  <div class="kpi"><div class="kpi-l">Gross Margin</div><div class="kpi-v">${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}%</div><div class="kpi-s">profit / sale value</div></div>
+</div>
+<div class="note">Financing carry is already included in all-in project cost, so it is not deducted a second time in the SFR equity cash flow.</div>
+</div>
 
 <!-- RISK FACTORS -->
 <div class="page-break"></div>
@@ -4309,23 +4694,32 @@ async function exportPDF(id) {
     <table>
       <tr><th>Risk Factor</th><th>Impact</th><th>Mitigation</th></tr>
       <tr><td>Cost overrun (10%)</td><td class="red">−${fmtM(tc*0.10)} profit</td><td>10% contingency included</td></tr>
-      <tr><td>Rent miss (${metrics.vacancyPct}%)</td><td class="red">−${fmtM(noi*(metrics.vacancyPct/100)*5)} NPV</td><td>Conservative rent assumptions</td></tr>
-      <tr><td>Cap rate expansion (+50bps)</td><td class="red">−${fmtM(noi/0.005)}</td><td>Exit cap already +25bps over entry</td></tr>
+      ${house ? `<tr><td>Resale value / SF decline (10%)</td><td class="red">−${fmtM(exitV * 0.10)} value</td><td>Use multiple recent local house comps and refresh before acquisition</td></tr>
+      <tr><td>Building area variance (10%)</td><td class="red">−${fmtM(exitV * 0.10)} value</td><td>Verify permitted completed-home SF against approved plans</td></tr>` : `<tr><td>Rent miss (${metrics.vacancyPct}%)</td><td class="red">−${fmtM(noi*(metrics.vacancyPct/100)*5)} NPV</td><td>Conservative rent assumptions</td></tr>
+      <tr><td>Cap rate expansion (+50bps)</td><td class="red">−${fmtM(noi/0.005)}</td><td>Exit cap includes a spread over entry</td></tr>`}
       <tr><td>Construction delay (6 mo)</td><td class="amber">+${fmtM(pdfLoan*(metrics.interestRatePct/100)*0.5)} carry</td><td>${s.rti ? 'RTI eliminates entitlement delay' : 'Depends on plan check timeline'}</td></tr>
       <tr><td>Interest rate spike (+1%)</td><td class="amber">+${fmtM(pdfLoan*0.01*1.5)} carry</td><td>Rate cap recommended</td></tr>
     </table>
   </div>
   <div>
-    <h3>Sensitivity: IRR vs. Exit Cap Rate</h3>
+    <h3>${house ? 'Sensitivity: Completed-Home Sale Price / SF' : 'Sensitivity: IRR vs. Exit Cap Rate'}</h3>
     <table>
-      <tr><th>Exit Cap</th><th>Exit Value</th><th>Net Profit</th><th>IRR (est)</th></tr>
+      ${house ? `<tr><th>Sale $/SF</th><th>Completed Value</th><th>Net Profit</th><th>Return on Cost</th></tr>
+      ${[-0.15, -0.10, -0.05, 0, 0.05, 0.10].map(delta => {
+        const psf = (pdfCompValuation.exitValueMetricValue || 0) * (1 + delta);
+        const ev = psf * (pdfCompValuation.exitValueBasisQuantity || pdfTotalSF);
+        const np = ev - tc;
+        const roc = tc ? np / tc * 100 : 0;
+        const color = roc >= 20 ? '#1d9e75' : roc >= 10 ? '#ef9f27' : '#e24b4a';
+        return `<tr><td>${fmtD(psf)}/SF</td><td>${fmtM(ev)}</td><td style="color:${color}">${fmtM(np)}</td><td style="color:${color}">${roc.toFixed(1)}%</td></tr>`;
+      }).join('')}` : `<tr><th>Exit Cap</th><th>Exit Value</th><th>Net Profit</th><th>IRR (est)</th></tr>
       ${[0.045, 0.0475, 0.05, 0.0525, 0.055, 0.0575].map(cap => {
         const ev = noi/cap;
         const np = ev - tc;
         const irrEst = Math.round((np/tc/5 + (noi-pdfDebtService)/Math.max(1,pdfEquity))*500)/10;
         const color = irrEst >= 15 ? '#1d9e75' : irrEst >= 10 ? '#ef9f27' : '#e24b4a';
         return `<tr><td>${(cap*100).toFixed(2)}%</td><td>${fmtM(ev)}</td><td style="color:${color}">${fmtM(np)}</td><td style="color:${color}">${irrEst}%</td></tr>`;
-      }).join('')}
+      }).join('')}`}
     </table>
   </div>
 </div>
@@ -4338,20 +4732,21 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
   <strong>Analyst Conclusion:</strong> Based on our underwriting analysis, the subject property at ${displayAddr} represents
   a ${irr >= 15 ? 'compelling' : irr >= 10 ? 'moderate' : 'marginal'} development opportunity in the ${siteNeighborhood(s)} submarket.
   
-  The project is projected to generate a ${Math.round(irr*10)/10}% levered IRR on a 5-year hold basis, 
-  a ${capoc}% cap rate on cost (vs. ${(entryCap*100).toFixed(2)}% market entry cap), 
-  and a net development profit of ${fmtD(prof)}.
+  ${house
+    ? `The project is projected to generate a ${Math.round(irr * 10) / 10}% annualized levered IRR through the ${costs.months || 18}-month construction period, a ${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}% return on cost, a ${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}% gross margin, and net development profit of ${fmtD(prof)}. The completed-home value is driven by recent local sale price per building square foot, not NOI or a cap rate.`
+    : `The project is projected to generate a ${Math.round(irr*10)/10}% levered IRR on a 5-year hold basis, a ${capoc}% cap rate on cost (vs. ${(entryCap*100).toFixed(2)}% market entry cap), and a net development profit of ${fmtD(prof)}.`}
   
-  ${irr >= 15 
-    ? `At ${Math.round(irr*10)/10}% IRR, the deal clears most institutional return hurdles (14-16% minimum for ground-up development) 
-       and offers an attractive ${spread}% development spread. We recommend proceeding to LOI subject to standard due diligence.`
-    : irr >= 10
-    ? `At ${Math.round(irr*10)/10}% IRR, the return is below typical institutional minimums for ground-up development risk. 
-       The deal may work for a developer with lower cost of capital or with specific expertise in this submarket.
-       Key upside levers: land price reduction, value engineering on hard costs, or rent premium for amenities.`
-    : `At ${Math.round(irr*10)/10}% IRR, the project does not meet standard development return thresholds. 
-       Recommend passing unless significant cost reduction is achievable or rent assumptions can be validated substantially higher.`
-  }
+  ${house
+    ? (irr >= 15
+      ? `The indicated return clears the model's development threshold. Confirm the subject building area, land basis, construction bids, and each comparable sale before proceeding.`
+      : irr >= 10
+        ? `The indicated return is moderate for ground-up SFR risk. The primary upside levers are land-price reduction, value engineering, and support for a higher completed-home sale price per SF.`
+        : `The indicated return does not meet the model's development threshold. A lower land basis, lower construction cost, or stronger supportable resale price per SF is required.`)
+    : (irr >= 15
+      ? `At ${Math.round(irr*10)/10}% IRR, the deal clears most institutional return hurdles (14-16% minimum for ground-up development) and offers an attractive ${spread}% development spread. We recommend proceeding to LOI subject to standard due diligence.`
+      : irr >= 10
+        ? `At ${Math.round(irr*10)/10}% IRR, the return is below typical institutional minimums for ground-up development risk. The deal may work for a developer with lower cost of capital or with specific expertise in this submarket. Key upside levers: land price reduction, value engineering on hard costs, or rent premium for amenities.`
+        : `At ${Math.round(irr*10)/10}% IRR, the project does not meet standard development return thresholds. Recommend passing unless significant cost reduction is achievable or rent assumptions can be validated substantially higher.`)}
 </div>
 
 <div class="disclaimer">
