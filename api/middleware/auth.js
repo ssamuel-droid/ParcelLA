@@ -13,7 +13,10 @@ const supabase = createClient(
 const FREE_ACCESS_HOURS = 24;
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing']);
 const AUTH_LOOKUP_TIMEOUT_MS = Number(process.env.AUTH_LOOKUP_TIMEOUT_MS || 2500);
-const DEFAULT_ALWAYS_ACCESS_EMAILS = ['ssamuel@goodhealthcorp.com'];
+const DEFAULT_ALWAYS_ACCESS_EMAILS = [
+  'ssamuel@goodhealthcorp.com',
+  'kambizkamdar@gmail.com',
+];
 const ALWAYS_ACCESS_EMAILS = new Set([
   ...DEFAULT_ALWAYS_ACCESS_EMAILS,
   ...String(process.env.ALWAYS_ACCESS_EMAILS || '')
