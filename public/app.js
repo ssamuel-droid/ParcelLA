@@ -610,8 +610,16 @@ function renderMapPanel(s) {
       ).join('')}
     </div>`;
 }
-const fmtM = n => n >= 1e6 ? '$'+(Math.round(n/1e5)/10)+'M' : n >= 1e3 ? '$'+Math.round(n/1e3)+'K' : '$'+Math.round(n||0);
-const fmtD = n => '$'+Math.round(n||0).toLocaleString();
+const fmtN = n => Math.round(Number(n) || 0).toLocaleString('en-US');
+const fmtD = n => {
+  const value = Math.round(Number(n) || 0);
+  return `${value < 0 ? '-' : ''}$${Math.abs(value).toLocaleString('en-US')}`;
+};
+const fmtM = fmtD;
+function profitSupportText(value) {
+  const amount = Math.round(Number(value) || 0);
+  return amount >= 0 ? `${fmtD(amount)} above cost` : `${fmtD(Math.abs(amount))} below cost`;
+}
 function calcIRR(cashflows, guess = 0.15) {
   let rate = guess;
   for (let i = 0; i < 200; i++) {
@@ -632,6 +640,7 @@ const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
 const houseCompBenchmarks = new Map();
 const houseCompBenchmarkPending = new Set();
+const underwritingSnapshots = new Map();
 let siteLoadRunId = 0;
 let sitePageTotal = 0, sitePageLimit = SITE_PAGE_LIMIT, currentSiteQuery = '';
 let siteNotice = null;
@@ -996,8 +1005,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .card:hover{border-color:var(--gold);box-shadow:0 2px 10px rgba(20,32,52,0.07);transform:translateY(-1px)}.card.sel{border-color:var(--navy);box-shadow:inset 3px 0 0 var(--navy),0 2px 10px rgba(15,31,61,0.08)}
 .ch{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;gap:12px}.ca{font-size:13px;font-weight:800;overflow-wrap:anywhere}.cp{font-size:12px;font-weight:800;color:var(--navy);text-align:right;white-space:nowrap}.cm{font-size:10px;color:#768295;margin-top:2px;margin-bottom:5px;line-height:1.25}
 .bdgs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}.bdg{font-size:8px;padding:2px 6px;border-radius:999px;font-weight:800}.b1{background:#e1f5ee;color:#085041}.b2{background:#e6f1fb;color:#0c447c}.b3{background:#edf1f5;color:#536071}.b4{background:#faeeda;color:#854f0b}
-.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:6px}.kp{background:#f6f8fa;border:1px solid #edf1f4;border-radius:6px;padding:4px 6px}.kpl{font-size:8px;color:#7f8a9a;text-transform:uppercase;letter-spacing:0;margin-bottom:1px;font-weight:800}.kpv{font-size:12px;font-weight:800;white-space:nowrap}
-.pb{display:flex;align-items:center;gap:7px}.pbl{font-size:10px;color:#7f8a9a;min-width:62px}.pbt{flex:1;height:5px;background:#edf1f5;border-radius:3px;overflow:hidden}.pbf{height:100%;border-radius:3px}.pbv{font-size:10px;font-weight:800;min-width:58px;text-align:right;white-space:nowrap}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:6px}.kp{background:#f6f8fa;border:1px solid #edf1f4;border-radius:6px;padding:4px 6px;min-width:0}.kpl{font-size:8px;color:#7f8a9a;text-transform:uppercase;letter-spacing:0;margin-bottom:1px;font-weight:800}.kpv{font-size:12px;font-weight:800;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.pb{display:flex;align-items:center;gap:7px}.pbl{font-size:10px;color:#7f8a9a;min-width:62px;white-space:nowrap;font-variant-numeric:tabular-nums}.pbt{flex:1;height:5px;background:#edf1f5;border-radius:3px;overflow:hidden}.pbf{height:100%;border-radius:3px}.pbv{font-size:10px;font-weight:800;min-width:58px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .empty{text-align:center;padding:34px 16px;color:#7f8a9a;font-size:12px}.sw{text-align:center;padding:34px;color:#7f8a9a;font-size:12px}.spin{width:26px;height:26px;border:3px solid #e7edf4;border-top-color:var(--navy);border-radius:50%;animation:sp 0.8s linear infinite;margin:0 auto 9px}@keyframes sp{to{transform:rotate(360deg)}}
 .detail{position:fixed;right:0;top:48px;width:min(560px,46vw);max-width:100vw;height:calc(100vh - 48px);background:#fff;border-left:1px solid var(--line);overflow-y:auto;overflow-x:hidden;transform:translateX(100%);transition:transform 0.2s;z-index:50;box-shadow:-10px 0 30px rgba(15,31,61,0.14)}.detail.open{transform:translateX(0)}
 .settings,.authmodal{position:fixed;inset:0;background:rgba(15,31,61,.42);display:none;align-items:flex-start;justify-content:center;padding:70px 16px 16px;z-index:200;overflow:auto}.settings.open,.authmodal.open{display:flex}.settings-panel,.authpanel{width:min(820px,100%);background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 50px rgba(15,31,61,.25);overflow:hidden}.authpanel{width:min(430px,100%)}.settings-head,.authhead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);background:#f8fafc}.settings-head h3,.authhead h3{font-size:14px;color:var(--navy)}.settings-head p,.authhead p{font-size:10px;color:#6f7b8c;margin-top:2px}.settings-body,.authbody{padding:12px 14px}.settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.setfield{border:1px solid var(--line);border-radius:8px;padding:8px;background:#fbfcfd}.setfield label{display:block;font-size:8px;font-weight:900;text-transform:uppercase;color:#7f8a9a;margin-bottom:5px}.setfield .mfr input{font-size:12px}.setnote{font-size:10px;color:#6f7b8c;line-height:1.35;margin:10px 0 0}.setactions{display:flex;justify-content:flex-end;gap:7px;padding:10px 14px;border-top:1px solid var(--line);background:#f8fafc}.setactions button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:800;cursor:pointer;color:#536071}.setactions button.primary{background:var(--navy);border-color:var(--navy);color:#fff}.setactions button.warn{color:#8a5b06;background:#fffaf0;border-color:#ead7a6}
@@ -2174,10 +2183,10 @@ function renderCards() {
   const el = g('list');
   if (!filtered.length) { el.innerHTML = emptyResultsHTML(); return; }
   if (activeView === 'map') { renderMapView(); return; }
-  const maxP = Math.max(...filtered.map(s => hasReliableLandBasis(s) ? (valuationForSite(s, costModelForSite(s)).netProfit || 0) : 0), 1);
+  const maxP = Math.max(...filtered.map(s => hasReliableLandBasis(s) ? (valuationForScreenSite(s, costModelForSite(s)).netProfit || 0) : 0), 1);
   el.innerHTML = filtered.map(s => {
     const costs = costModelForSite(s);
-    const valuation = valuationForSite(s, costs);
+    const valuation = valuationForScreenSite(s, costs);
     const irr=valuation.leveragedIRR||0, prof=valuation.netProfit||0;
     const pc = prof>1e6?'#1d9e75':prof>0?'#ef9f27':'#e24b4a';
     const pp = Math.max(0,Math.round(prof/maxP*100));
@@ -2238,7 +2247,7 @@ function renderMapView() {
     .slice(0, 250);
   const pins = visibleSites.map(({ s, pt }) => {
     const costs = costModelForSite(s);
-    const valuation = valuationForSite(s, costs);
+    const valuation = valuationForScreenSite(s, costs);
     const color = markerColorForSite(s, valuation);
     const displayAddr = siteDisplayAddress(s);
     const addrNote = siteAddressNote(s);
@@ -2248,7 +2257,7 @@ function renderMapView() {
     return `<button class="pin" data-label="${xmlEscape(label)}" onclick="openDetail(${s.id})" style="left:${pt.x}%;top:${pt.y}%;background:${color}">
       <span class="pintip">
         <b>${xmlEscape(displayAddr)}</b>
-        <em>${addrNote ? xmlEscape(addrNote) + ' · ' : ''}${xmlEscape(developmentStatusLabel(s))} · ${s.units || 0} units · ${xmlEscape(siteNeighborhood(s))}</em>
+        <em>${addrNote ? xmlEscape(addrNote) + ' · ' : ''}${xmlEscape(developmentStatusLabel(s))} · ${fmtN(s.units || 0)} ${isHouseSite(s) ? 'homes' : 'units'} · ${xmlEscape(siteNeighborhood(s))}</em>
         <span><small>Price</small><strong>${price}</strong></span>
         <span><small>Net profit</small><strong style="color:${profitColor}">${fmtM(valuation.netProfit)}</strong></span>
         <span><small>${isHouseSite(s) ? 'Return on cost' : 'Cap on cost'}</small><strong>${isHouseSite(s) ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : (valuation.capOnCost || 0)}%</strong></span>
@@ -2262,7 +2271,7 @@ function renderMapView() {
     return `<span class="transitdot" title="${node.name}" style="left:${pt.x}%;top:${pt.y}%"></span>`;
   }).join('') : '';
   const topDeals = visibleSites.map(row => row.s).slice(0, 6).map(s => {
-    const valuation = valuationForSite(s, costModelForSite(s));
+    const valuation = valuationForScreenSite(s, costModelForSite(s));
     return `<div class="topdeal" onclick="openDetail(${s.id})"><b>${escapeText(siteDisplayAddress(s))}</b><span>${siteNeighborhood(s)} - ${fmtM(valuation.netProfit)} - ${isHouseSite(s) ? ((valuation.returnOnCost || 0) * 100).toFixed(1) + '% return on cost' : (valuation.capOnCost || 0) + '% cap on cost'}</span></div>`;
   }).join('');
   const baseButtons = [
@@ -2475,7 +2484,7 @@ function unitMixRowsHTML(s = {}) {
   return `
     <table class="ct">
       <tr><td>Source</td><td>${escapeText(unitMixSourceText(s))}</td></tr>
-      ${rows.map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}% | ${row.units} units | ${fmtD(row.rent)}/mo | ${fmtD(row.annual)}/yr</td></tr>`).join('')}
+      ${rows.map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}% | ${fmtN(row.units)} units | ${fmtD(row.rent)}/mo | ${fmtD(row.annual)}/yr</td></tr>`).join('')}
       <tr class="tot"><td>Gross potential rent</td><td>${fmtD(grossPotentialRentFromUnitMix(s))}</td></tr>
     </table>`;
 }
@@ -2483,11 +2492,11 @@ function unitMixRowsHTML(s = {}) {
 function unitMixPDFRows(s = {}) {
   return `
       <tr><td>Source</td><td colspan="3" style="text-align:left;font-weight:400;color:#666">${escapeText(unitMixSourceText(s))}</td></tr>
-      ${unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}%</td><td>${row.units}</td><td>${fmtD(row.rent)}/mo</td></tr>`).join('')}`;
+      ${unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}%</td><td>${fmtN(row.units)}</td><td>${fmtD(row.rent)}/mo</td></tr>`).join('')}`;
 }
 
 function unitMixRentRollPDFRows(s = {}) {
-  return unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${row.units}</td><td>${fmtD(row.rent)}</td><td>${fmtD(row.annual)}</td></tr>`).join('');
+  return unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${fmtN(row.units)}</td><td>${fmtD(row.rent)}</td><td>${fmtD(row.annual)}</td></tr>`).join('');
 }
 
 function expenseRowsHTML(expenseDetail = {}) {
@@ -2639,7 +2648,7 @@ function renderDetail(s) {
   const house = isHouseSite(s);
   const costs = costModelForSite(s);
   const income = incomeStatementForSite(s, costs);
-  const valuation = valuationForSite(s, costs, income);
+  const valuation = valuationForScreenSite(s, costs, income);
   const irr=valuation.leveragedIRR||0, prof=valuation.netProfit||0, tc=costs.totalCost||0;
   const pc=prof>0?'#1d9e75':'#e24b4a', ic=irrC(irr);
   const spd=Math.round((valuation.devSpreadPct||0)*1000)/10;
@@ -2681,28 +2690,52 @@ function renderDetail(s) {
     [carryCost,'#ef9f27','Financing carry'],
   ].filter(x=>x[0]>0);
 
-  // Load appraisal comps async
+  // Load the same comp-driven underwriting snapshot used by both exports.
   setTimeout(async () => {
     const appraisalEl = g('appraisal-' + s.id);
     const compsEl = g('comps-' + s.id);
     if (!appraisalEl && !compsEl) return;
-    const [comps, rentComps] = await Promise.all([loadComps(s), house ? Promise.resolve(null) : loadRentComps(s)]);
-    const appraisal = buildAppraisalEngine(s, comps, rentComps, costs, income, valuation);
-    const compValuation = valuationWithAppraisal(valuation, appraisal, costs, income);
-    const valuationEl = g('valuation-' + s.id);
-    const pencilEl = g('pencil-' + s.id);
-    const capKpiEl = g('cap-kpi-source-' + s.id);
-    const grossKpiEl = g('gross-kpi-' + s.id);
-    const rocKpiEl = g('roc-kpi-' + s.id);
-    if (valuationEl) valuationEl.innerHTML = valuationTableHTML(compValuation, costs, appraisal.capRateSource);
-    if (pencilEl) pencilEl.innerHTML = pencilReadHTML(s, costs, income, compValuation);
-    if (capKpiEl) capKpiEl.textContent = house
-      ? (compValuation.exitValueMetricValue ? fmtD(compValuation.exitValueMetricValue) + '/SF from local sales' : 'local sales benchmark unavailable')
-      : 'vs ' + (compValuation.entryCap * 100).toFixed(2) + '% comp entry cap';
-    if (house && grossKpiEl) grossKpiEl.textContent = ((compValuation.grossMarginPct || 0) * 100).toFixed(1) + '%';
-    if (house && rocKpiEl) rocKpiEl.textContent = ((compValuation.returnOnCost || 0) * 100).toFixed(1) + '%';
-    if (appraisalEl) appraisalEl.innerHTML = appraisalDetailHTML(appraisal);
-    if (compsEl) compsEl.innerHTML = comparableEvidenceHTML(comps, rentComps, appraisal);
+    try {
+      const snapshot = await getUnderwritingSnapshot(s);
+      const { comps, rentComps, appraisal, valuation: compValuation } = snapshot;
+      const valuationEl = g('valuation-' + s.id);
+      const pencilEl = g('pencil-' + s.id);
+      const profitKpiEl = g('profit-kpi-' + s.id);
+      const profitSupportEl = g('profit-kpi-support-' + s.id);
+      const irrKpiEl = g('irr-kpi-' + s.id);
+      const irrSupportEl = g('irr-kpi-support-' + s.id);
+      const capKpiEl = g('cap-kpi-source-' + s.id);
+      const grossKpiEl = g('gross-kpi-' + s.id);
+      const rocKpiEl = g('roc-kpi-' + s.id);
+      const rocSupportEl = g('roc-kpi-support-' + s.id);
+      const compProfit = Number(compValuation.netProfit || 0);
+      const compIrr = Number(compValuation.leveragedIRR || 0);
+      const compProfitColor = compProfit >= 0 ? '#1d9e75' : '#e24b4a';
+      if (valuationEl) valuationEl.innerHTML = valuationTableHTML(compValuation, costs, appraisal.capRateSource);
+      if (pencilEl) pencilEl.innerHTML = pencilReadHTML(s, costs, income, compValuation);
+      if (profitKpiEl) {
+        profitKpiEl.textContent = compValuation.needsLandComp ? 'Needs land' : fmtM(compProfit);
+        profitKpiEl.style.color = compValuation.needsLandComp ? '#b98b2f' : compProfitColor;
+      }
+      if (profitSupportEl) profitSupportEl.textContent = compValuation.needsLandComp ? 'land basis required' : 'exit minus all-in cost';
+      if (irrKpiEl) {
+        irrKpiEl.textContent = compValuation.needsLandComp || compValuation.leveragedIRR === null ? 'n/a' : `${Math.round(compIrr * 10) / 10}%`;
+        irrKpiEl.style.color = compValuation.needsLandComp ? '#b98b2f' : irrC(compIrr);
+      }
+      if (irrSupportEl) irrSupportEl.textContent = house ? `${costs.months || 18}-month build and sale` : irrL(compIrr);
+      if (capKpiEl) capKpiEl.textContent = house
+        ? (compValuation.exitValueMetricValue ? fmtD(compValuation.exitValueMetricValue) + '/SF from local sales' : 'local sales benchmark unavailable')
+        : 'vs ' + (compValuation.entryCap * 100).toFixed(2) + '% comp entry cap';
+      if (house && grossKpiEl) grossKpiEl.textContent = compValuation.needsLandComp ? 'n/a' : ((compValuation.grossMarginPct || 0) * 100).toFixed(1) + '%';
+      if (house && rocKpiEl) rocKpiEl.textContent = compValuation.needsLandComp ? 'n/a' : ((compValuation.returnOnCost || 0) * 100).toFixed(1) + '%';
+      if (rocSupportEl) rocSupportEl.textContent = compValuation.needsLandComp ? 'land basis required' : profitSupportText(compProfit);
+      if (appraisalEl) appraisalEl.innerHTML = appraisalDetailHTML(appraisal);
+      if (compsEl) compsEl.innerHTML = comparableEvidenceHTML(comps, rentComps, appraisal);
+      renderCards();
+    } catch (error) {
+      if (appraisalEl) appraisalEl.textContent = 'Comparable appraisal data could not be loaded.';
+      if (compsEl) compsEl.textContent = 'Comparable evidence could not be loaded.';
+    }
   }, 100);
   g('d-body').innerHTML = `
     <div class="ig">
@@ -2721,10 +2754,10 @@ function renderDetail(s) {
     ${renderMapPanel(s)}
     <div class="sh">Returns</div>
     <div class="mbg">
-      <div class="mb" style="border-left-color:${pc}"><div class="mbl">Net profit</div><div class="mbv" style="color:${pc}">${fmtM(prof)}</div><div class="mbs">exit − all-in</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Annualized IRR' : 'IRR (5-yr)'}</div><div class="mbv" style="color:${ic}">${Math.round(irr*10)/10}%</div><div class="mbs">${house ? `${costs.months || 18}-month build and sale` : irrL(irr)}</div></div>
+      <div class="mb" style="border-left-color:${pc}"><div class="mbl">Net profit</div><div class="mbv" id="profit-kpi-${s.id}" style="color:${pc}">${fmtM(prof)}</div><div class="mbs" id="profit-kpi-support-${s.id}">exit minus all-in cost</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Annualized IRR' : 'IRR (5-yr)'}</div><div class="mbv" id="irr-kpi-${s.id}" style="color:${ic}">${Math.round(irr*10)/10}%</div><div class="mbs" id="irr-kpi-support-${s.id}">${house ? `${costs.months || 18}-month build and sale` : irrL(irr)}</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Gross margin' : 'Cap on cost'}</div><div class="mbv" ${house ? `id="gross-kpi-${s.id}"` : ''}>${house ? ((valuation.grossMarginPct || 0) * 100).toFixed(1) : (valuation.capOnCost || 0)}%</div><div class="mbs" id="cap-kpi-source-${s.id}">${house ? 'loading local home sales' : 'loading comp cap'}</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Return on cost' : 'Dev spread'}</div><div class="mbv" ${house ? `id="roc-kpi-${s.id}"` : ''}>${house ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : spd}%</div><div class="mbs">${fmtM(prof)} above cost</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Return on cost' : 'Dev spread'}</div><div class="mbv" ${house ? `id="roc-kpi-${s.id}"` : ''}>${house ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : spd}%</div><div class="mbs" id="roc-kpi-support-${s.id}">${profitSupportText(prof)}</div></div>
     </div>
     <div class="sh">Cost waterfall</div>
     ${bars.map(([v,c,l])=>`<div class="wfr"><div class="wfl"><span>${l}</span><span>${fmtD(v)}</span></div><div class="wft"><div class="wff" style="width:${Math.round(v/tc*100)}%;background:${c}"></div></div></div>`).join('')}
@@ -2784,7 +2817,7 @@ function renderDetail(s) {
 async function loadComps(siteOrHood) {
   try {
     const hood = typeof siteOrHood === 'object' ? siteNeighborhood(siteOrHood) : siteOrHood;
-    const qs = typeof siteOrHood === 'object' ? compQueryForSite(siteOrHood, 6) : '';
+    const qs = typeof siteOrHood === 'object' ? compQueryForSite(siteOrHood, 12) : '';
     const r = await fetch(API + '/api/comps/submarket/' + encodeURIComponent(hood) + qs);
     if (!r.ok) return null;
     return await r.json();
@@ -2939,6 +2972,71 @@ function compQueryForSite(s, limit = 12) {
   }
   const q = p.toString();
   return q ? '?' + q : '';
+}
+
+function underwritingSnapshotSignature(s, costs, income, baseValuation) {
+  return JSON.stringify([
+    Number(s?.id || 0),
+    siteNeighborhood(s),
+    siteBuildingSf(s),
+    costs?.planKey,
+    costs?.land,
+    costs?.totalSF,
+    costs?.hardCosts,
+    costs?.softCosts,
+    costs?.carryCost,
+    costs?.totalCost,
+    costs?.months,
+    income?.noi,
+    income?.grossPotentialRent,
+    baseValuation?.exitValue,
+    baseValuation?.exitValueMetricValue,
+  ]);
+}
+
+function cachedUnderwritingSnapshot(s, costs, income, baseValuation) {
+  const key = underwritingSnapshotSignature(s, costs, income, baseValuation);
+  const entry = underwritingSnapshots.get(String(s.id));
+  return entry?.key === key ? entry.data || null : null;
+}
+
+async function getUnderwritingSnapshot(s) {
+  const costs = costModelForSite(s);
+  const income = incomeStatementForSite(s, costs);
+  const baseValuation = valuationForSite(s, costs, income);
+  const key = underwritingSnapshotSignature(s, costs, income, baseValuation);
+  const id = String(s.id);
+  const existing = underwritingSnapshots.get(id);
+  if (existing?.key === key) {
+    if (existing.data) return existing.data;
+    return existing.promise;
+  }
+
+  const promise = (async () => {
+    const [comps, rentComps] = await Promise.all([
+      loadComps(s),
+      isHouseSite(s) ? Promise.resolve(null) : loadRentComps(s),
+    ]);
+    const appraisal = buildAppraisalEngine(s, comps, rentComps, costs, income, baseValuation);
+    const valuation = valuationWithAppraisal(baseValuation, appraisal, costs, income);
+    return { costs, income, baseValuation, comps, rentComps, appraisal, valuation };
+  })();
+  underwritingSnapshots.set(id, { key, promise, data: null });
+  try {
+    const data = await promise;
+    if (underwritingSnapshots.get(id)?.key === key) {
+      underwritingSnapshots.set(id, { key, promise: Promise.resolve(data), data });
+    }
+    return data;
+  } catch (error) {
+    if (underwritingSnapshots.get(id)?.key === key) underwritingSnapshots.delete(id);
+    throw error;
+  }
+}
+
+function valuationForScreenSite(s, costs = costModelForSite(s), income = incomeStatementForSite(s, costs)) {
+  const baseValuation = valuationForSite(s, costs, income);
+  return cachedUnderwritingSnapshot(s, costs, income, baseValuation)?.valuation || baseValuation;
 }
 
 function numberOrNull(value) {
@@ -4024,19 +4122,20 @@ async function exportExcel(id) {
   const displayAddr = siteDisplayAddress(s);
   const isHouse = isHouseSite(s);
 
-  const compQuery = compQueryForSite(s, 12);
-  const [submarket, comps, rentComps] = await Promise.all([
+  const [submarket, ownerInfo, snapshot] = await Promise.all([
     fetchJSON('/api/submarkets/' + encodeURIComponent(siteNeighborhood(s))),
-    fetchJSON('/api/comps/submarket/' + encodeURIComponent(siteNeighborhood(s)) + compQuery),
-    isHouse ? Promise.resolve(null) : fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(siteNeighborhood(s)) + compQuery),
+    fetchOwnerInfo(s).catch(() => null),
+    getUnderwritingSnapshot(s),
   ]);
-  const ownerInfo = await fetchOwnerInfo(s).catch(() => null);
-
-  const costs = costModelForSite(s);
-  const income = incomeStatementForSite(s, costs);
-  const valuation = valuationForSite(s, costs, income);
-  const exportAppraisal = buildAppraisalEngine(s, comps, rentComps, costs, income, valuation);
-  const compValuation = valuationWithAppraisal(valuation, exportAppraisal, costs, income);
+  const {
+    costs,
+    income,
+    baseValuation: valuation,
+    appraisal: exportAppraisal,
+    valuation: compValuation,
+    comps,
+    rentComps,
+  } = snapshot;
   const metrics = currentUserMetrics();
   const preCarryCost = (costs.land || 0) + (costs.hardCosts || 0) + (costs.softCosts || 0);
   const payload = {
@@ -4051,7 +4150,9 @@ async function exportExcel(id) {
       zone: s.zone,
       type: s.type,
       units: s.units || 0,
-      avgUnitSf: s.usf || 800,
+      avgUnitSf: isHouse
+        ? (siteBuildingSf(s) ? siteBuildingSf(s) / Math.max(1, Number(s.units || 1)) : Number(s.usf || 0))
+        : (s.usf || 800),
       lotSf: knownLotSf(s),
       listingStatus: siteListingStatus(s),
       developmentStatus: developmentStatusLabel(s),
@@ -4183,23 +4284,31 @@ async function exportPDF(id) {
   const addrNote = siteAddressNote(s);
 
   const win = window.open('', '_blank');
-  const costs = costModelForSite(s);
-  const pdfIncome = incomeStatementForSite(s, costs);
-  const valuation = valuationForSite(s, costs, pdfIncome);
   const house = isHouseSite(s);
+  const [snapshot, pdfOwner] = await Promise.all([
+    getUnderwritingSnapshot(s),
+    fetchOwnerInfo(s).catch(() => null),
+  ]);
+  const {
+    costs,
+    income: pdfIncome,
+    baseValuation: valuation,
+    appraisal: pdfAppraisal,
+    valuation: pdfCompValuation,
+  } = snapshot;
   const metrics = currentUserMetrics();
-  let irr  = valuation.leveragedIRR || 0;
-  let prof = valuation.netProfit || 0;
-  let pc   = prof > 0 ? '#1d9e75' : '#e24b4a';
+  const irr  = pdfCompValuation.leveragedIRR || 0;
+  const prof = pdfCompValuation.netProfit ?? 0;
+  const pc   = prof > 0 ? '#1d9e75' : '#e24b4a';
   const ic   = irrC(irr);
   const tc   = costs.totalCost || 0;
   const land = costs.land || siteAskPrice(s) || 0;
-  const noi  = valuation.noi || 0;
-  let exitV = valuation.exitValue || 0;
-  let entryCap = valuation.entryCap || 0.0475;
-  let exitCap  = valuation.exitCap || entryCap + 0.0025;
-  let capoc    = valuation.capOnCost || 0;
-  let spread   = Math.round((valuation.devSpreadPct || 0) * 1000) / 10;
+  const noi  = pdfCompValuation.noi || pdfIncome.noi || 0;
+  const exitV = pdfCompValuation.exitValue || 0;
+  const entryCap = pdfCompValuation.entryCap || 0.0475;
+  const exitCap  = pdfCompValuation.exitCap || entryCap + 0.0025;
+  const capoc    = pdfCompValuation.capOnCost || 0;
+  const spread   = Math.round((pdfCompValuation.devSpreadPct || 0) * 1000) / 10;
   const today    = new Date().toLocaleDateString('en-US', {year:'numeric',month:'long',day:'numeric'});
   const pdfTotalSF = costs.totalSF;
   const pdfHardCosts = costs.hardCosts;
@@ -4219,24 +4328,8 @@ async function exportPDF(id) {
   const pdfDebtService = Math.round(pdfLoan * (metrics.interestRatePct / 100));
   const pdfRentGrowth = metrics.rentGrowthPct / 100;
   const pdfRentImpact = signedPlanPct(costs.rentPremium);
-  const pdfCompQuery = compQueryForSite(s, 12);
   const pdfContractorLine = [s.contractorName, [s.contractorAddress, s.contractorCity, s.contractorState].filter(Boolean).join(', ')].filter(Boolean).join(' - ');
   const pdfApplicantLine = [s.applicantName, s.applicantBusinessName].filter(Boolean).join(' - ');
-  const [pdfComps, pdfRentComps, pdfOwner] = await Promise.all([
-    fetchJSON('/api/comps/submarket/' + encodeURIComponent(siteNeighborhood(s)) + pdfCompQuery).catch(() => null),
-    fetchJSON('/api/comps/rent/submarket/' + encodeURIComponent(siteNeighborhood(s)) + pdfCompQuery).catch(() => null),
-    fetchOwnerInfo(s).catch(() => null),
-  ]);
-  const pdfAppraisal = buildAppraisalEngine(s, pdfComps, pdfRentComps, costs, pdfIncome, valuation);
-  const pdfCompValuation = valuationWithAppraisal(valuation, pdfAppraisal, costs, pdfIncome);
-  entryCap = pdfCompValuation.entryCap || entryCap;
-  exitCap = pdfCompValuation.exitCap || exitCap;
-  exitV = pdfCompValuation.exitValue || exitV;
-  prof = exitV - tc;
-  irr = pdfCompValuation.leveragedIRR || 0;
-  capoc = pdfCompValuation.capOnCost || 0;
-  pc = prof > 0 ? '#1d9e75' : '#e24b4a';
-  spread = tc ? Math.round(((exitV - tc) / tc) * 1000) / 10 : spread;
 
   win.document.write(`<!DOCTYPE html>
 <html>

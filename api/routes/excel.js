@@ -286,7 +286,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     addAssumption('rate', 'Interest rate', pct(assumptions.interestRatePct), FMT.pct, isHouse ? 'Construction-loan interest and financing carry.' : 'Interest-only debt service and carry.');
     addAssumption('carryPct', 'Financing carry / pre-carry cost', carryPctValue, FMT.pct, 'Derived from current site model so the budget ties to the app; edit to stress-test carry.');
     if (isHouse) {
-      addAssumption('resalePsf', 'Completed-home sale price / building SF', money(assumptions.resalePricePerSf || appraisal.weightedPsf || valuation.exitValueMetricValue), FMT.money, text(assumptions.resalePricePerSfSource || appraisal.valuationSource || 'Recent local completed-home sales; neighborhood benchmark only when comps are unavailable.'));
+      addAssumption('resalePsf', 'Completed-home sale price / building SF', num(assumptions.resalePricePerSf || appraisal.weightedPsf || valuation.exitValueMetricValue), FMT.money, text(assumptions.resalePricePerSfSource || appraisal.valuationSource || 'Recent local completed-home sales; neighborhood benchmark only when comps are unavailable.'));
     } else {
       addAssumption('vacancy', 'Vacancy / credit loss', pct(assumptions.vacancyPct), FMT.pct, 'Applied to gross potential rent.');
       addAssumption('expenseRatio', 'Operating expenses / EGI', pct(assumptions.expenseRatioPct), FMT.pct, 'Stabilized operating expense ratio.');
