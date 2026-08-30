@@ -2314,7 +2314,7 @@ function renderMapView() {
   </div>`;
 }
 
-function openDetail(id) {
+async function openDetail(id) {
   openId = id;
   const s = allSites.find(x => x.id===id);
   if (!s) return;
@@ -2327,6 +2327,18 @@ function openDetail(id) {
   }
   renderDetail(s);
   renderCards();
+
+  try {
+    const detail = await fetchJSONWithTimeout(API + '/api/sites/' + encodeURIComponent(id), {}, 20000);
+    const fullSite = detail?.site;
+    if (openId !== id || !fullSite || !Array.isArray(fullSite.planningDocuments) || !fullSite.planningDocuments.length) return;
+    Object.assign(s, fullSite);
+    g('d-title').textContent = gatedDisplayAddress(s);
+    renderDetail(s);
+    renderCards();
+  } catch (error) {
+    console.warn('[site-detail] Protected details could not be loaded:', error.message);
+  }
 }
 
 function planningDocumentsHTML(site) {
