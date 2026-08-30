@@ -2430,6 +2430,14 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         applicantName: s.applicantName,
         applicantBusinessName: s.applicantBusinessName,
         addressAliases: s.addressAliases || [],
+        hasPlanningDocuments: planningDocumentsForSite({
+          address: s.addr ?? s.address,
+          raw_permit_data: { address_aliases: s.addressAliases || [] },
+        }).length > 0,
+        planningDocuments: planningDocumentsForSite({
+          address: s.addr ?? s.address,
+          raw_permit_data: { address_aliases: s.addressAliases || [] },
+        }),
         ownerName:    s.ownerName,
         ownerApplicantName: s.ownerApplicantName,
         ownerMailingAddress: s.ownerMailingAddress,
