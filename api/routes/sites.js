@@ -34,6 +34,7 @@ const _housePageCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const HOUSE_PAGE_CACHE_TTL = 5 * 60 * 1000;
 const SITE_PAGE_QUERY_TIMEOUT_MS = 8 * 1000;
+const SITE_PAGE_RETRY_DELAY_MS = 150;
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
@@ -1938,6 +1939,20 @@ async function runTimedSitePageQuery(query) {
   }
 }
 
+function isTransientSitePageError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return [
+    'exceeded',
+    'timeout',
+    'timed out',
+    'abort',
+    'fetch failed',
+    'connection',
+    'temporarily unavailable',
+    'gateway',
+  ].some(fragment => message.includes(fragment));
+}
+
 async function fetchMergedDashboardTypePage(projectTypes, queryParams, requestedLimit, requestedOffset) {
   const sort = queryParams.sort || 'profit';
   const sortColumns = {
@@ -2173,6 +2188,20 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   const rollingTotal = requestedOffset + rows.length + (rows.length === requestedLimit ? requestedLimit : 0);
   return { sites: mapped, total: skipEstimatedCount ? rollingTotal : (count ?? rollingTotal) };
 }
+
+async function fetchSupabaseSitePageWithRetry(queryParams, requestedLimit, requestedOffset) {
+  try {
+    return await fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset);
+  } catch (error) {
+    const fastRequest = String(queryParams.fast || '') === '1';
+    if (!fastRequest || !isTransientSitePageError(error)) throw error;
+
+    console.warn('[sites] Transient Supabase page failure; retrying once:', error.message);
+    await new Promise(resolve => setTimeout(resolve, SITE_PAGE_RETRY_DELAY_MS));
+    return fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset);
+  }
+}
+
 router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
   try {
     const {
@@ -2200,7 +2229,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
 
     if (process.env.SUPABASE_URL) {
       try {
-        const fastPage = await fetchSupabaseSitePage(req.query, requestedLimit, requestedOffset);
+        const fastPage = await fetchSupabaseSitePageWithRetry(req.query, requestedLimit, requestedOffset);
         if (fastPage) {
           sites = fastPage.sites;
           fastTotal = fastPage.total;
