@@ -917,6 +917,38 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   };
 }
 
+const OFFICIAL_PLANNING_DOCUMENTS = [
+  {
+    addressPattern: /\b125(?:00|32)\b.*\bRIVERSIDE\b/i,
+    documents: [
+      {
+        id: 'ear-2024-5095-determination-and-exhibit-a',
+        title: 'Determination and Architectural Plans',
+        caseNumber: 'EAR-2024-5095-DB-VHCA',
+        source: 'Los Angeles City Planning',
+        determinationDate: '2025-05-07',
+        planSetDate: '2024-12-05',
+        determinationPage: 1,
+        plansPage: 15,
+        url: 'https://planning.lacity.gov/pdiscaseinfo/document/MzQ50/82065561-f922-4efb-8b32-0e189f041683/pdd',
+      },
+    ],
+  },
+];
+
+function planningDocumentsForSite(site) {
+  const rawPermit = site.raw_permit_data || {};
+  const aliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
+  const searchableAddresses = [site.address, site.addr, ...aliases]
+    .filter(Boolean)
+    .map(value => String(value).replace(/[^a-z0-9]+/gi, ' ').trim());
+
+  const match = OFFICIAL_PLANNING_DOCUMENTS.find(entry =>
+    searchableAddresses.some(address => entry.addressPattern.test(address))
+  );
+  return match ? match.documents.map(document => ({ ...document })) : [];
+}
+
 function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const rawPermit = s.raw_permit_data || {};
   const addressAliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
@@ -929,6 +961,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const unitMix = unitMixForSite(rawPermit, s, s.project_type ?? s.type);
   const ownerInfo = ownerInfoFromRaw(rawPermit, s);
   const externalSources = Array.isArray(s.external_data_sources) ? s.external_data_sources : [];
+  const planningDocuments = planningDocumentsForSite(s);
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
@@ -987,6 +1020,8 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     externalValueEstimate: s.external_value_estimate || null,
     externalRentComps: Array.isArray(s.external_rent_comps) ? s.external_rent_comps : [],
     externalSaleComps: Array.isArray(s.external_sale_comps) ? s.external_sale_comps : [],
+    hasPlanningDocuments: planningDocuments.length > 0,
+    planningDocuments,
     ...ownerInfo,
     unitMixSource: unitMix.source,
     unitMixCounts: unitMix.counts,
@@ -1111,6 +1146,7 @@ function redactSiteResult(site, hasAccess) {
     lng: null,
     landValueMatch: null,
     landValueComps: [],
+    planningDocuments: [],
   };
 }
 

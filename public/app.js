@@ -2329,6 +2329,37 @@ function openDetail(id) {
   renderCards();
 }
 
+function planningDocumentsHTML(site) {
+  const documents = Array.isArray(site?.planningDocuments) ? site.planningDocuments : [];
+  if (!documents.length) return '';
+
+  return documents.map(document => {
+    const title = escapeText(document.title || 'Official planning document');
+    const source = escapeText(document.source || 'Official source');
+    const caseNumber = escapeText(document.caseNumber || 'Case number not provided');
+    const determinationDate = document.determinationDate
+      ? new Date(document.determinationDate + 'T12:00:00').toLocaleDateString()
+      : 'Date not provided';
+    const planSetDate = document.planSetDate
+      ? new Date(document.planSetDate + 'T12:00:00').toLocaleDateString()
+      : 'Date not provided';
+    const url = String(document.url || '');
+    if (!/^https:\/\//i.test(url)) return '';
+    const determinationUrl = `${url}#page=${Number(document.determinationPage) || 1}`;
+    const plansUrl = `${url}#page=${Number(document.plansPage) || 1}`;
+
+    return `<div class="ownerbox" style="gap:7px">
+      <b>${title}</b>
+      <span>${source} | Case ${caseNumber}</span>
+      <span>Determination dated ${escapeText(determinationDate)}. Architectural plan set dated ${escapeText(planSetDate)}.</span>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:2px">
+        <a class="ab as" href="${determinationUrl}" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">Open determination</a>
+        <a class="ab ap" href="${plansUrl}" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">Open architectural plans</a>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 function closeDetail() {
   g('detail').classList.remove('open');
   openId = null;
@@ -2677,6 +2708,7 @@ function renderDetail(s) {
     : 'Hard cost per SF is the primary construction benchmark. Per-unit cost is a secondary check and rises quickly for larger units.';
   const contractorLine = [s.contractorName, [s.contractorAddress, s.contractorCity, s.contractorState].filter(Boolean).join(', ')].filter(Boolean).join(' - ');
   const applicantLine = [s.applicantName, s.applicantBusinessName].filter(Boolean).join(' - ');
+  const planningDocuments = planningDocumentsHTML(s);
   const projectDetailRows = [
     s.workDescription ? `<tr><td>Work description</td><td>${escapeText(s.workDescription)}</td></tr>` : '',
     s.stories ? `<tr><td>Stories</td><td>${escapeText(String(s.stories))}</td></tr>` : '',
@@ -2748,6 +2780,7 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
     <button class="ab as" onclick="toggleWatch(${s.id}, event)">${isWatched(s.id)?'Remove from watchlist':'Save to watchlist'}</button>
+    ${planningDocuments ? `<div class="sh">Planning documents</div>${planningDocuments}` : ''}
     <div class="sh">Owner information</div>
     <div id="owner-${s.id}">${ownerInfoHTML(siteOwnerInfo(s), s)}</div>
     <div class="sh">Map options</div>
