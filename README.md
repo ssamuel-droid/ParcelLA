@@ -31,6 +31,7 @@ Pre-underwriting search engine for LA development sites. Every listing is automa
 - LA Open Data integration: LADBS permits, RTI status, zoning, RSO
 - Census ACS: median income, renter %, population density by tract
 - Google Maps: street map, satellite, Street View, geocoding
+- Automated City Planning discovery: current/completed case reports, APN/address matching, related cases, PDIS determinations and submitted plans, plus LADBS records-request fallback
 
 ### Exports & Sharing
 - PDF deal memo (4-page: summary, costs, cash flow, sensitivity)
@@ -92,6 +93,14 @@ POST /api/stripe/checkout
 
 ## Database setup
 Run `supabase/schema.sql` in Supabase SQL editor. Seeds 27 sites, 40 rent comps, 10 sold comps.
+
+### City Planning case engine
+
+1. Run `supabase/migrations/014_planning_case_engine.sql` once in the Supabase SQL editor.
+2. In GitHub Actions, run **Sync City Planning Cases** once.
+3. The workflow then runs daily and refreshes official filed/completed cases, APN/address matches, related cases, ZIMAS links, and available PDIS documents.
+
+Only the existing `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` GitHub secrets are required. If City Planning has no discretionary case for a property, the app shows the LADBS property-record and records-request path instead of implying that plans are available.
 
 ## County recorder comp imports
 Use `docs/county-recorder-comps-template.csv` as the template, then preview with:

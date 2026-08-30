@@ -936,6 +936,25 @@ const OFFICIAL_PLANNING_DOCUMENTS = [
   },
 ];
 
+const PLANNING_CASE_REPORTS_URL = 'https://planning.lacity.gov/resources/case-reports';
+const ZIMAS_URL = 'https://planning.lacity.gov/zoning/zoning-search';
+const LADBS_RECORDS_URL = 'https://dbs.lacity.gov/services/search-online-building-records';
+const LADBS_RECORDS_REQUEST_URL = 'https://www.ladbs.org/docs/default-source/forms/administrative/research-request-form-ad-form-01.pdf';
+
+function planningCaseUrl(caseNumber) {
+  return `https://planning.lacity.gov/pdiscaseinfo/search/casenumber/${encodeURIComponent(caseNumber)}`;
+}
+
+function uniquePlanningDocuments(documents) {
+  const seen = new Set();
+  return documents.filter(document => {
+    const key = `${document.caseNumber || ''}|${document.id || document.url || ''}|${document.section || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function planningDocumentsForSite(site) {
   const rawPermit = site.raw_permit_data || {};
   const aliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
@@ -946,7 +965,154 @@ function planningDocumentsForSite(site) {
   const match = OFFICIAL_PLANNING_DOCUMENTS.find(entry =>
     searchableAddresses.some(address => entry.addressPattern.test(address))
   );
-  return match ? match.documents.map(document => ({ ...document })) : [];
+  const stored = [
+    ...(Array.isArray(site.planning_documents) ? site.planning_documents : []),
+    ...(Array.isArray(rawPermit.planning_documents) ? rawPermit.planning_documents : []),
+  ];
+  const manual = match ? match.documents.map(document => ({ ...document })) : [];
+  return uniquePlanningDocuments([...stored, ...manual]);
+}
+
+function planningDocumentFromRow(document) {
+  return {
+    id: document.provider_document_id || document.id,
+    title: document.title || 'Planning document',
+    caseNumber: document.case_number,
+    source: 'Los Angeles City Planning PDIS',
+    documentType: document.document_type || 'other',
+    category: document.document_category || null,
+    section: document.section || null,
+    documentDate: document.document_date || null,
+    comments: document.comments || null,
+    isApprovedPlan: document.is_approved_plan,
+    url: document.url,
+  };
+}
+
+function planningCaseFromRow(planningCase, match, documents) {
+  const caseDocuments = documents.filter(document => document.case_number === planningCase.case_number);
+  return {
+    caseNumber: planningCase.case_number,
+    caseId: planningCase.case_id,
+    apn: planningCase.apn,
+    address: planningCase.address,
+    neighborhoodCouncil: planningCase.neighborhood_council,
+    communityPlanArea: planningCase.community_plan_area,
+    councilDistrict: planningCase.council_district,
+    projectDescription: planningCase.project_description,
+    requestType: planningCase.request_type,
+    applicationDate: planningCase.application_date,
+    completionDate: planningCase.completion_date,
+    status: planningCase.case_status,
+    pdisUrl: planningCase.pdis_url || planningCaseUrl(planningCase.case_number),
+    zimasPin: planningCase.zimas_pin || null,
+    zimasUrl: planningCase.zimas_url || null,
+    caseAddresses: Array.isArray(planningCase.case_addresses) ? planningCase.case_addresses : [],
+    relatedCaseNumbers: Array.isArray(planningCase.related_case_numbers) ? planningCase.related_case_numbers : [],
+    matchMethod: match?.match_method || null,
+    matchConfidence: match?.match_confidence || null,
+    isPrimary: match?.is_primary || false,
+    documents: caseDocuments.map(planningDocumentFromRow),
+  };
+}
+
+async function attachPlanningDiscovery(site, siteId) {
+  const manualDocuments = planningDocumentsForSite(site);
+  const manualCaseNumbers = [...new Set(manualDocuments.map(document => document.caseNumber).filter(Boolean))];
+  try {
+    const [{ data: syncState, error: stateError }, { data: matches, error: matchError }] = await Promise.all([
+      supabase.from('planning_sync_state').select('*').eq('id', 1).maybeSingle(),
+      supabase.from('site_planning_cases').select('*').eq('site_id', siteId),
+    ]);
+    if (stateError) throw stateError;
+    if (matchError) throw matchError;
+
+    const caseNumbers = [...new Set([...(matches || []).map(match => match.case_number), ...manualCaseNumbers])];
+    let caseRows = [];
+    let documentRows = [];
+    if (caseNumbers.length) {
+      const [{ data: cases, error: casesError }, { data: documents, error: documentsError }] = await Promise.all([
+        supabase.from('planning_cases').select('*').in('case_number', caseNumbers),
+        supabase.from('planning_documents').select('*').in('case_number', caseNumbers).order('document_date', { ascending: false }),
+      ]);
+      if (casesError) throw casesError;
+      if (documentsError) throw documentsError;
+      caseRows = cases || [];
+      documentRows = documents || [];
+    }
+
+    const matchesByCase = new Map((matches || []).map(match => [match.case_number, match]));
+    const cases = caseRows.map(row => planningCaseFromRow(row, matchesByCase.get(row.case_number), documentRows));
+    for (const caseNumber of manualCaseNumbers) {
+      if (!cases.some(planningCase => planningCase.caseNumber === caseNumber)) {
+        cases.push({
+          caseNumber,
+          status: 'verified_manual',
+          pdisUrl: planningCaseUrl(caseNumber),
+          relatedCaseNumbers: [],
+          documents: manualDocuments.filter(document => document.caseNumber === caseNumber),
+          matchMethod: 'verified_manual',
+          matchConfidence: 1,
+          isPrimary: cases.length === 0,
+        });
+      }
+    }
+
+    const discoveredDocuments = cases.flatMap(planningCase => planningCase.documents || []);
+    const planningDocuments = uniquePlanningDocuments([...discoveredDocuments, ...manualDocuments]);
+    const syncComplete = syncState?.status === 'complete';
+    const status = cases.length
+      ? 'cases_found'
+      : (syncComplete ? 'no_discretionary_case_found' : 'index_pending');
+    return {
+      ...site,
+      hasPlanningDocuments: planningDocuments.length > 0,
+      planningCases: cases,
+      planningDocuments,
+      planningDiscovery: {
+        status,
+        checkedAt: syncState?.completed_at || syncState?.updated_at || null,
+        caseReportsUrl: PLANNING_CASE_REPORTS_URL,
+        zimasUrl: ZIMAS_URL,
+        ladbsRecordsUrl: LADBS_RECORDS_URL,
+        ladbsRecordsRequestUrl: LADBS_RECORDS_REQUEST_URL,
+        message: cases.length
+          ? `${cases.length} related discretionary planning case${cases.length === 1 ? '' : 's'} found.`
+          : (syncComplete
+            ? 'No discretionary planning case found. Plans may require an LADBS records request.'
+            : 'The City Planning case index has not completed its first sync.'),
+      },
+    };
+  } catch (error) {
+    console.warn(`[planning] Discovery unavailable for site ${siteId}: ${error.message}`);
+    const manualCases = manualCaseNumbers.map((caseNumber, index) => ({
+      caseNumber,
+      status: 'verified_manual',
+      pdisUrl: planningCaseUrl(caseNumber),
+      relatedCaseNumbers: [],
+      documents: manualDocuments.filter(document => document.caseNumber === caseNumber),
+      matchMethod: 'verified_manual',
+      matchConfidence: 1,
+      isPrimary: index === 0,
+    }));
+    return {
+      ...site,
+      hasPlanningDocuments: manualDocuments.length > 0,
+      planningCases: manualCases,
+      planningDocuments: manualDocuments,
+      planningDiscovery: {
+        status: manualCases.length ? 'cases_found' : 'index_unavailable',
+        checkedAt: null,
+        caseReportsUrl: PLANNING_CASE_REPORTS_URL,
+        zimasUrl: ZIMAS_URL,
+        ladbsRecordsUrl: LADBS_RECORDS_URL,
+        ladbsRecordsRequestUrl: LADBS_RECORDS_REQUEST_URL,
+        message: manualCases.length
+          ? `${manualCases.length} verified planning case${manualCases.length === 1 ? '' : 's'} found.`
+          : 'Planning-case discovery is temporarily unavailable. LADBS permit records remain available.',
+      },
+    };
+  }
 }
 
 function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
@@ -962,6 +1128,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const ownerInfo = ownerInfoFromRaw(rawPermit, s);
   const externalSources = Array.isArray(s.external_data_sources) ? s.external_data_sources : [];
   const planningDocuments = planningDocumentsForSite(s);
+  const planningCases = Array.isArray(rawPermit.planning_cases) ? rawPermit.planning_cases : [];
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
@@ -1021,7 +1188,9 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     externalRentComps: Array.isArray(s.external_rent_comps) ? s.external_rent_comps : [],
     externalSaleComps: Array.isArray(s.external_sale_comps) ? s.external_sale_comps : [],
     hasPlanningDocuments: planningDocuments.length > 0,
+    planningCases,
     planningDocuments,
+    planningDiscovery: rawPermit.planning_discovery || null,
     ...ownerInfo,
     unitMixSource: unitMix.source,
     unitMixCounts: unitMix.counts,
@@ -1123,6 +1292,10 @@ function redactSiteResult(site, hasAccess) {
     applicantName: null,
     applicantBusinessName: null,
     addressAliases: [],
+    hasPlanningDocuments: false,
+    planningCases: [],
+    planningDocuments: [],
+    planningDiscovery: null,
     ownerName: null,
     ownerApplicantName: null,
     ownerMailingAddress: null,
@@ -2430,14 +2603,13 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         applicantName: s.applicantName,
         applicantBusinessName: s.applicantBusinessName,
         addressAliases: s.addressAliases || [],
-        hasPlanningDocuments: planningDocumentsForSite({
-          address: s.addr ?? s.address,
-          raw_permit_data: { address_aliases: s.addressAliases || [] },
-        }).length > 0,
-        planningDocuments: planningDocumentsForSite({
+        hasPlanningDocuments: s.hasPlanningDocuments ?? (s.planningDocuments || []).length > 0,
+        planningCases: s.planningCases || [],
+        planningDocuments: s.planningDocuments || planningDocumentsForSite({
           address: s.addr ?? s.address,
           raw_permit_data: { address_aliases: s.addressAliases || [] },
         }),
+        planningDiscovery: s.planningDiscovery || null,
         ownerName:    s.ownerName,
         ownerApplicantName: s.ownerApplicantName,
         ownerMailingAddress: s.ownerMailingAddress,
@@ -2521,6 +2693,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
       if (error) throw error;
       if (data) {
         site = mapSupabaseSite(data);
+        site = await attachPlanningDiscovery(site, data.id);
         model = runModel(normalizeSite(site), overrides);
         scenarios = runScenarios(normalizeSite(site), overrides);
       }

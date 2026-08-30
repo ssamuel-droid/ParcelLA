@@ -230,6 +230,8 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     const valuation = p.valuation || {};
     const appraisal = p.appraisal || {};
     const owner = compactOwner(p.owner || {});
+    const planning = p.planning || {};
+    const planningCases = tableRows(planning.cases || [], 100);
     const unitMix = tableRows(p.unitMix || [], 12);
     const schedules = p.schedules || {};
     const scenarios = tableRows(p.scenarios || [], 12);
@@ -323,6 +325,53 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     writeRow(permitWs, ['Work description', text(site.workDescription)]);
     writeRow(permitWs, ['Contractor', text([site.contractorName, site.contractorAddress].filter(Boolean).join(' - '))]);
     writeRow(permitWs, ['Applicant', text([site.applicantName, site.applicantBusinessName].filter(Boolean).join(' - '))]);
+
+    const planningWs = wb.addWorksheet('Planning Cases');
+    setupSheet(planningWs, [24, 14, 15, 15, 16, 22, 60, 24, 20]);
+    writeRow(planningWs, ['Planning Cases & Documents', siteName, generated], 'title');
+    writeRow(planningWs, ['Discovery status', text(planning.status), 'Last checked', text(planning.checkedAt)]);
+    writeRow(planningWs, ['Result', text(planning.message)], 'section');
+    writeRow(planningWs, ['Case number', 'Status', 'Filed', 'Completed', 'APN', 'Request type', 'Project description', 'PDIS link', 'ZIMAS'], 'header');
+    if (planningCases.length) {
+      planningCases.forEach(planningCase => writeRow(planningWs, [
+        text(planningCase.caseNumber),
+        text(planningCase.status),
+        text(planningCase.applicationDate),
+        text(planningCase.completionDate),
+        text(planningCase.apn),
+        text(planningCase.requestType),
+        text(planningCase.projectDescription),
+        planningCase.pdisUrl ? { text: 'Open complete PDIS case', hyperlink: text(planningCase.pdisUrl) } : '',
+        planningCase.zimasUrl ? { text: 'Open property', hyperlink: text(planningCase.zimasUrl) } : '',
+      ]));
+    } else {
+      writeRow(planningWs, ['No discretionary planning case found', '', '', '', '', '', text(planning.message), '']);
+    }
+    writeRow(planningWs, []);
+    writeRow(planningWs, ['Available PDIS Documents'], 'section');
+    writeRow(planningWs, ['Case number', 'Document type', 'Section', 'Document date', 'Title', 'Comments', 'Document link'], 'header');
+    const planningDocuments = planningCases.flatMap(planningCase =>
+      tableRows(planningCase.documents || [], 250).map(document => ({ caseNumber: planningCase.caseNumber, ...document }))
+    );
+    if (planningDocuments.length) {
+      planningDocuments.forEach(document => writeRow(planningWs, [
+        text(document.caseNumber),
+        text(document.documentType),
+        text(document.section),
+        text(document.documentDate),
+        text(document.title),
+        text(document.comments),
+        document.url ? { text: 'Open document', hyperlink: text(document.url) } : '',
+      ]));
+    } else {
+      writeRow(planningWs, ['No public PDIS documents are currently attached to the matched cases.']);
+    }
+    writeRow(planningWs, []);
+    writeRow(planningWs, ['Official fallback research'], 'section');
+    writeRow(planningWs, ['LADBS property records', planning.ladbsRecordsUrl ? { text: 'Open', hyperlink: text(planning.ladbsRecordsUrl) } : '']);
+    writeRow(planningWs, ['LADBS records request', planning.ladbsRecordsRequestUrl ? { text: 'Open form', hyperlink: text(planning.ladbsRecordsRequestUrl) } : '']);
+    writeRow(planningWs, ['ZIMAS', planning.zimasUrl ? { text: 'Open', hyperlink: text(planning.zimasUrl) } : '']);
+    writeRow(planningWs, ['City Planning case reports', planning.caseReportsUrl ? { text: 'Open', hyperlink: text(planning.caseReportsUrl) } : '']);
 
     let rentAnnualRef = '';
     if (isHouse) {
