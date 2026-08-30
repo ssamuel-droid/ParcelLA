@@ -1740,16 +1740,6 @@ function pencilReadHTML(s, costs, income, valuation) {
   </div>`;
 }
 
-function sourceLinksHTML(s) {
-  const links = [
-    ['LA City Open Data', 'https://data.lacity.org/'],
-    ['LADBS permits', officialResearchLink(s.addr, 'LADBS permits PCIS')],
-    ['Google Maps', mapsLink(s.addr)],
-    ['County recorder', officialResearchLink(s.addr, 'Los Angeles county recorder deed sale')],
-  ];
-  return `<div class="sourcelinks">${links.map(([label, href]) => `<a href="${href}" target="_blank" rel="noopener">${label}</a>`).join('')}</div>`;
-}
-
 function ownerQueryForSite(s = {}) {
   const p = new URLSearchParams();
   if (s.addr) p.set('address', s.addr);
@@ -2847,9 +2837,6 @@ function renderDetail(s) {
     </table>
     <div class="sh">Comparable evidence - ${siteNeighborhood(s)}</div>
     <div id="comps-${s.id}" style="font-size:10px;color:#aaa">Loading comps...</div>`}
-
-    <div class="sh">Assumption sources</div>
-    ${sourceLinksHTML(s)}
 
     <div class="sh">AI deal analysis <span style="font-size:8px;color:#bbb;font-weight:400">powered by Claude</span></div>
     <div id="narr-${s.id}"><button class="gb" onclick="generateNarrative(${s.id})">Generate analysis →</button></div>
