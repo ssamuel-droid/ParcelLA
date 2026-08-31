@@ -1,14 +1,17 @@
 // ParceLLA - optional owner/sale enrichment.
-// Uses Regrid when REGRID_API_KEY or REGRID_TOKEN is present. If the key or
-// owner cache columns are missing, this script logs and exits successfully.
+// Uses Regrid first and RentCast as a countywide fallback. If neither key is
+// configured, the job logs and exits successfully.
 
 const https = require('https');
 
 const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const REGRID_TOKEN = process.env.REGRID_API_KEY || process.env.REGRID_TOKEN;
+const RENTCAST_KEY = process.env.RENTCAST_API_KEY;
 const REGRID_BASE = 'https://app.regrid.com/api/v2/parcels';
 const REGRID_LA_PATH = '/us/ca/los-angeles';
+const RENTCAST_BASE = 'https://api.rentcast.io/v1/properties';
+let regridAuthRejected = false;
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
@@ -125,7 +128,42 @@ function normalizeRegrid(feature) {
   } : null;
 }
 
-async function lookupOwner(site) {
+function normalizeRentCast(record) {
+  const names = Array.isArray(record?.owner?.names)
+    ? [...new Set(record.owner.names.map(clean).filter(Boolean))]
+    : [];
+  const ownerName = first(
+    names.join(' / '),
+    record?.ownerName,
+    typeof record?.owner === 'string' ? record.owner : null,
+    record?.owner1,
+    record?.owner_name
+  );
+  const saleDate = cleanDate(first(
+    record?.lastSaleDate,
+    record?.lastSoldDate,
+    record?.saleDate,
+    record?.saleHistory?.[0]?.date,
+    record?.saleHistory?.[0]?.saleDate
+  ));
+  const saleAmount = money(first(
+    record?.lastSalePrice,
+    record?.lastSoldPrice,
+    record?.salePrice,
+    record?.saleHistory?.[0]?.price,
+    record?.saleHistory?.[0]?.salePrice
+  ));
+  return ownerName || saleDate || saleAmount ? {
+    owner_name: ownerName || null,
+    owner_last_sale_date: saleDate,
+    owner_last_sale_amount: saleAmount,
+    owner_source: 'RentCast property records',
+    owner_enriched_at: new Date().toISOString(),
+  } : null;
+}
+
+async function lookupRegrid(site) {
+  if (!REGRID_TOKEN || regridAuthRejected) return null;
   const attempts = [];
   const lat = Number(site.lat);
   const lng = Number(site.lng);
@@ -172,19 +210,49 @@ async function lookupOwner(site) {
     } catch (e) {
       console.warn(`[owners] Lookup failed for ${site.address}: ${e.message}`);
       if (e.status === 401 || e.status === 403) {
-        throw new Error(`Regrid rejected REGRID_API_KEY (${e.message}). Replace it before rerunning owner enrichment.`);
+        regridAuthRejected = true;
+        console.warn('[owners] Regrid rejected REGRID_API_KEY; disabling Regrid for this run and using RentCast when configured.');
+        break;
       }
     }
   }
   return null;
 }
 
+async function lookupRentCast(site) {
+  const address = clean(site.address);
+  if (!RENTCAST_KEY || !address) return null;
+  const url = new URL(RENTCAST_BASE);
+  url.searchParams.set('address', /\bCA\b|CALIFORNIA/i.test(address)
+    ? address
+    : `${address}, Los Angeles, CA`);
+  url.searchParams.set('limit', '1');
+  try {
+    const data = await requestJson('GET', url.toString(), null, { 'X-Api-Key': RENTCAST_KEY });
+    const record = Array.isArray(data) ? data[0] : data?.properties?.[0] || data?.data?.[0];
+    return record ? normalizeRentCast(record) : null;
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) {
+      throw new Error(`RentCast rejected RENTCAST_API_KEY (${e.message}). Replace it before rerunning owner enrichment.`);
+    }
+    console.warn(`[owners] RentCast lookup failed for ${site.address}: ${e.message}`);
+    return null;
+  }
+}
+
+async function lookupOwner(site) {
+  const regrid = await lookupRegrid(site);
+  if (regrid) return regrid;
+  return lookupRentCast(site);
+}
+
 async function main() {
   if (!SB_URL || !SB_KEY) throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY are required');
-  if (!REGRID_TOKEN) {
-    console.log('[owners] REGRID_API_KEY not set; skipping owner/sale enrichment.');
+  if (!REGRID_TOKEN && !RENTCAST_KEY) {
+    console.log('[owners] No ownership provider key set; add REGRID_API_KEY or RENTCAST_API_KEY.');
     return;
   }
+  console.log(`[owners] Providers: Regrid ${REGRID_TOKEN ? 'configured' : 'not configured'}; RentCast ${RENTCAST_KEY ? 'configured' : 'not configured'}.`);
 
   const sites = await requestJson(
     'GET',
@@ -239,7 +307,11 @@ async function main() {
   console.log(`[owners] Complete. Updated ${updated}; no match ${misses}.`);
 }
 
-main().catch(err => {
-  console.error('[owners] Fatal:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[owners] Fatal:', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { normalizeRegrid, normalizeRentCast };

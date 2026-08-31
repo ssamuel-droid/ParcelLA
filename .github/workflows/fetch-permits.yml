@@ -24,4 +24,5 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           REGRID_API_KEY: ${{ secrets.REGRID_API_KEY }}
+          RENTCAST_API_KEY: ${{ secrets.RENTCAST_API_KEY }}
         run: node .github/scripts/enrich-owners.cjs
