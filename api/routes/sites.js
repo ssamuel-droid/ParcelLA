@@ -1089,8 +1089,8 @@ async function attachPlanningDiscovery(site, siteId) {
         message: cases.length
           ? `${cases.length} related discretionary planning case${cases.length === 1 ? '' : 's'} found.`
           : (syncComplete
-            ? 'No discretionary planning case found. Plans may require an LADBS records request.'
-            : 'The City Planning case index has not completed its first sync.'),
+            ? 'No verified planning PDF was found for this property.'
+            : 'Planning PDF discovery has not completed its first sync.'),
       },
     };
   } catch (error) {
@@ -1119,7 +1119,7 @@ async function attachPlanningDiscovery(site, siteId) {
         ladbsRecordsRequestUrl: LADBS_RECORDS_REQUEST_URL,
         message: manualCases.length
           ? `${manualCases.length} verified planning case${manualCases.length === 1 ? '' : 's'} found.`
-          : 'Planning-case discovery is temporarily unavailable. LADBS permit records remain available.',
+          : 'Planning PDF discovery is temporarily unavailable.',
       },
     };
   }

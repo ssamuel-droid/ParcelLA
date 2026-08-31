@@ -2374,7 +2374,13 @@ function planningDocumentsHTML(site) {
   const cases = Array.isArray(site?.planningCases) ? site.planningCases : [];
   const documents = Array.isArray(site?.planningDocuments) ? site.planningDocuments : [];
   const discovery = site?.planningDiscovery || {};
-  const safeUrl = value => /^https:\/\//i.test(String(value || '')) ? String(value) : '';
+  const pdfUrl = value => {
+    const url = String(value || '').trim();
+    if (!/^https:\/\//i.test(url)) return '';
+    if (/\.pdf(?:$|[?#])/i.test(url)) return url;
+    if (/planning\.lacity\.gov\/pdiscaseinfo\/document\//i.test(url)) return url;
+    return '';
+  };
   const dateText = value => {
     if (!value) return '';
     const date = new Date(String(value).slice(0, 10) + 'T12:00:00');
@@ -2390,13 +2396,13 @@ function planningDocumentsHTML(site) {
     application: 'Application',
   }[value] || 'Planning document');
   const documentButton = document => {
-    const url = safeUrl(document.url);
+    const url = pdfUrl(document.url);
     if (!url) return '';
     const title = escapeText(document.title || documentTypeLabel(document.documentType));
     const type = escapeText(documentTypeLabel(document.documentType));
     const date = dateText(document.documentDate || document.determinationDate || document.planSetDate);
-    return `<a class="ab as" href="${url}" target="_blank" rel="noopener noreferrer" style="display:block;text-decoration:none;text-align:left;padding:7px 9px">
-      <b>${type}</b><span style="display:block;font-size:9px;font-weight:500;margin-top:2px">${title}${date ? ` | ${escapeText(date)}` : ''}</span>
+    return `<a class="ab as" href="${escapeText(url)}" target="_blank" rel="noopener noreferrer" style="display:block;text-decoration:none;text-align:left;padding:7px 9px">
+      <b>Open PDF: ${type}</b><span style="display:block;font-size:9px;font-weight:500;margin-top:2px">${title}${date ? ` | ${escapeText(date)}` : ''}</span>
     </a>`;
   };
 
@@ -2404,10 +2410,10 @@ function planningDocumentsHTML(site) {
     const sortedCases = [...cases].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
     return sortedCases.map(planningCase => {
       const caseNumber = escapeText(planningCase.caseNumber || 'Case number unavailable');
-      const caseUrl = safeUrl(planningCase.pdisUrl);
       const caseDocuments = Array.isArray(planningCase.documents) && planningCase.documents.length
         ? planningCase.documents
         : documents.filter(document => document.caseNumber === planningCase.caseNumber);
+      const directDocuments = caseDocuments.map(documentButton).filter(Boolean);
       const related = Array.isArray(planningCase.relatedCaseNumbers) ? planningCase.relatedCaseNumbers : [];
       const applicationDate = dateText(planningCase.applicationDate);
       const completionDate = dateText(planningCase.completionDate);
@@ -2420,33 +2426,39 @@ function planningDocumentsHTML(site) {
         ${planningCase.projectDescription ? `<span><b>Project:</b> ${escapeText(planningCase.projectDescription)}</span>` : ''}
         ${(applicationDate || completionDate) ? `<span>${applicationDate ? `Filed ${escapeText(applicationDate)}` : ''}${applicationDate && completionDate ? ' | ' : ''}${completionDate ? `Completed ${escapeText(completionDate)}` : ''}</span>` : ''}
         ${planningCase.apn ? `<span>APN ${escapeText(planningCase.apn)}${planningCase.matchMethod ? ` | Matched by ${escapeText(String(planningCase.matchMethod).replace('_', ' '))}` : ''}</span>` : ''}
-        ${caseUrl ? `<a class="ab ap" href="${caseUrl}" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">Open complete PDIS case</a>` : ''}
-        ${safeUrl(planningCase.zimasUrl) ? `<a class="ab as" href="${safeUrl(planningCase.zimasUrl)}" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">Open property in ZIMAS</a>` : ''}
-        ${caseDocuments.length ? `<div style="display:grid;gap:5px">${caseDocuments.map(documentButton).join('')}</div>` : '<span>No public PDIS documents are currently attached to this case.</span>'}
-        ${related.length ? `<span><b>Related cases:</b> ${related.map(number => `<a href="https://planning.lacity.gov/pdiscaseinfo/search/casenumber/${encodeURIComponent(number)}" target="_blank" rel="noopener noreferrer">${escapeText(number)}</a>`).join(', ')}</span>` : ''}
+        ${directDocuments.length ? `<div style="display:grid;gap:5px">${directDocuments.join('')}</div>` : '<span><b>No verified planning PDF is available for this case yet.</b></span>'}
+        ${related.length ? `<span><b>Related cases:</b> ${related.map(escapeText).join(', ')}</span>` : ''}
       </div>`;
     }).join('');
   }
 
-  const message = discovery.message || 'No discretionary planning case found. Plans may require an LADBS records request.';
-  const ladbsUrl = safeUrl(discovery.ladbsRecordsUrl) || ladbsPermitsLink();
-  const requestUrl = safeUrl(discovery.ladbsRecordsRequestUrl);
-  const zimasUrl = safeUrl(discovery.zimasUrl) || zimasLink(site?.addr || '');
-  const reportsUrl = safeUrl(discovery.caseReportsUrl);
+  const unassignedDocuments = documents.map(documentButton).filter(Boolean);
+  if (unassignedDocuments.length) {
+    return `<div class="ownerbox" style="gap:7px">
+      <b>Planning PDFs</b>
+      <div style="display:grid;gap:5px">${unassignedDocuments.join('')}</div>
+    </div>`;
+  }
+
   return `<div class="ownerbox" style="gap:7px">
-    <b>${discovery.status === 'index_pending' || discovery.status === 'index_unavailable' ? 'Planning case check pending' : 'No discretionary planning case found'}</b>
-    <span>${escapeText(message)}</span>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-      <a class="ab as" href="${ladbsUrl}" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">Search LADBS records</a>
-      ${requestUrl ? `<a class="ab as" href="${requestUrl}" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">LADBS records request</a>` : ''}
-      <a class="ab as" href="${zimasUrl}" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">Check ZIMAS</a>
-      ${reportsUrl ? `<a class="ab as" href="${reportsUrl}" target="_blank" rel="noopener noreferrer" style="text-align:center;text-decoration:none">City case reports</a>` : ''}
-    </div>
+    <b>${discovery.status === 'index_pending' || discovery.status === 'index_unavailable' ? 'Planning PDF check pending' : 'No planning PDF available'}</b>
+    <span>${discovery.status === 'index_pending' || discovery.status === 'index_unavailable'
+      ? 'ParcelLA has not completed document discovery for this property.'
+      : 'ParcelLA did not find a verified direct PDF for this property.'}</span>
   </div>`;
 }
 
 function planningExportData(site) {
   const discovery = site?.planningDiscovery || {};
+  const documentData = document => ({
+    caseNumber: document.caseNumber || '',
+    title: document.title || '',
+    documentType: document.documentType || '',
+    section: document.section || '',
+    documentDate: document.documentDate || '',
+    url: document.url || '',
+    comments: document.comments || '',
+  });
   const cases = (Array.isArray(site?.planningCases) ? site.planningCases : []).map(planningCase => ({
     caseNumber: planningCase.caseNumber || '',
     status: planningCase.status || '',
@@ -2460,14 +2472,7 @@ function planningExportData(site) {
     pdisUrl: planningCase.pdisUrl || '',
     zimasUrl: planningCase.zimasUrl || '',
     relatedCaseNumbers: Array.isArray(planningCase.relatedCaseNumbers) ? planningCase.relatedCaseNumbers : [],
-    documents: (Array.isArray(planningCase.documents) ? planningCase.documents : []).map(document => ({
-      title: document.title || '',
-      documentType: document.documentType || '',
-      section: document.section || '',
-      documentDate: document.documentDate || '',
-      url: document.url || '',
-      comments: document.comments || '',
-    })),
+    documents: (Array.isArray(planningCase.documents) ? planningCase.documents : []).map(documentData),
   }));
   return {
     status: discovery.status || '',
@@ -2477,20 +2482,23 @@ function planningExportData(site) {
     ladbsRecordsRequestUrl: discovery.ladbsRecordsRequestUrl || '',
     zimasUrl: discovery.zimasUrl || '',
     caseReportsUrl: discovery.caseReportsUrl || '',
+    documents: (Array.isArray(site?.planningDocuments) ? site.planningDocuments : []).map(documentData),
     cases,
   };
 }
 
 function planningPDFHTML(site) {
   const planning = planningExportData(site);
+  const isDirectPdf = document => /^https:\/\//i.test(document.url || '') && (
+    /\.pdf(?:$|[?#])/i.test(document.url)
+    || /planning\.lacity\.gov\/pdiscaseinfo\/document\//i.test(document.url)
+  );
   if (!planning.cases.length) {
+    const directDocuments = planning.documents.filter(isDirectPdf);
     return `<h3>Planning Cases & Documents</h3>
-      <div class="note"><strong>No discretionary planning case found.</strong> ${escapeText(planning.message || 'Plans may require an LADBS records request.')}</div>
-      <table>
-        ${planning.ladbsRecordsUrl ? `<tr><td>LADBS property records</td><td><a href="${planning.ladbsRecordsUrl}" target="_blank">Open</a></td></tr>` : ''}
-        ${planning.ladbsRecordsRequestUrl ? `<tr><td>LADBS records request</td><td><a href="${planning.ladbsRecordsRequestUrl}" target="_blank">Open form</a></td></tr>` : ''}
-        ${planning.zimasUrl ? `<tr><td>ZIMAS</td><td><a href="${planning.zimasUrl}" target="_blank">Open</a></td></tr>` : ''}
-      </table>`;
+      ${directDocuments.length
+        ? `<table>${directDocuments.map(document => `<tr><td>${escapeText(document.documentType || 'Document')}</td><td><a href="${escapeText(document.url)}" target="_blank">Open PDF: ${escapeText(document.title || 'Planning document')}</a>${document.documentDate ? ` | ${escapeText(document.documentDate)}` : ''}</td></tr>`).join('')}</table>`
+        : '<div class="note"><strong>No verified planning PDF is available for this property yet.</strong></div>'}`;
   }
   return `<h3>Planning Cases & Documents</h3>${planning.cases.map(planningCase => `
     <table>
@@ -2500,9 +2508,7 @@ function planningPDFHTML(site) {
       ${planningCase.projectDescription ? `<tr><td>Project description</td><td>${escapeText(planningCase.projectDescription)}</td></tr>` : ''}
       ${planningCase.applicationDate ? `<tr><td>Application date</td><td>${escapeText(planningCase.applicationDate)}</td></tr>` : ''}
       ${planningCase.completionDate ? `<tr><td>Completion date</td><td>${escapeText(planningCase.completionDate)}</td></tr>` : ''}
-      ${planningCase.pdisUrl ? `<tr><td>PDIS case</td><td><a href="${planningCase.pdisUrl}" target="_blank">Open complete case</a></td></tr>` : ''}
-      ${planningCase.zimasUrl ? `<tr><td>ZIMAS property</td><td><a href="${planningCase.zimasUrl}" target="_blank">Open</a></td></tr>` : ''}
-      ${planningCase.documents.map(document => `<tr><td>${escapeText(document.documentType || 'Document')}</td><td><a href="${document.url}" target="_blank">${escapeText(document.title || 'Open document')}</a>${document.documentDate ? ` | ${escapeText(document.documentDate)}` : ''}</td></tr>`).join('')}
+      ${planningCase.documents.filter(isDirectPdf).map(document => `<tr><td>${escapeText(document.documentType || 'Document')}</td><td><a href="${escapeText(document.url)}" target="_blank">Open PDF: ${escapeText(document.title || 'Planning document')}</a>${document.documentDate ? ` | ${escapeText(document.documentDate)}` : ''}</td></tr>`).join('') || '<tr><td colspan="2">No verified planning PDF is available for this case yet.</td></tr>'}
       ${planningCase.relatedCaseNumbers.length ? `<tr><td>Related cases</td><td>${planningCase.relatedCaseNumbers.map(escapeText).join(', ')}</td></tr>` : ''}
     </table>`).join('')}`;
 }
