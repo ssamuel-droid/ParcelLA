@@ -68,7 +68,10 @@ async function fetchJSONWithTimeout(url, options = {}, timeoutMs = 60000) {
     try { data = text ? JSON.parse(text) : null; } catch {}
     if (!res.ok) {
       const msg = data?.error || data?.message || `API ${res.status}`;
-      throw new Error(msg);
+      const error = new Error(msg);
+      error.status = res.status;
+      error.retryable = data?.retryable === true || [502, 503, 504].includes(res.status);
+      throw error;
     }
     return data;
   } catch (e) {
@@ -1972,9 +1975,10 @@ async function fetchSitePage(qs) {
   try {
     data = await fetchJSONWithTimeout(url, {}, SITE_FIRST_PAGE_TIMEOUT_MS);
   } catch (e) {
-    if (!String(e.message || '').includes('too long')) throw e;
+    const retryable = e?.retryable === true || String(e.message || '').includes('too long');
+    if (!retryable) throw e;
     const list = g('list');
-    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Server woke up slowly. Retrying once...<br><small style="margin-top:8px;color:#768295">This can take up to 2 minutes after the server sleeps.</small></div>';
+    if (list) list.innerHTML = '<div class="sw"><div class="spin"></div>Data service is busy. Retrying once...<br><small style="margin-top:8px;color:#768295">Keeping the request open so this search can finish.</small></div>';
     g('albl').textContent = 'Retrying API';
     await wait(800);
     data = await fetchJSONWithTimeout(url, {}, SITE_RETRY_TIMEOUT_MS);
