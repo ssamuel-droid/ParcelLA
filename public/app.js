@@ -14,6 +14,7 @@ const SITE_RETRY_TIMEOUT_MS = 45000;
 
 let authClient = null;
 let authSession = null;
+let siteSearchDebounceTimer = null;
 let authConfig = null;
 let accountState = {
   user: null,
@@ -1071,7 +1072,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
   <div class="sb">
     <div class="sb-body">
       <h4>Search address / project</h4>
-      <input class="sbs" id="f-q" placeholder="5903, 6095, Pico, Riverside" onkeydown="if(event.key==='Enter')loadSites()">
+      <input class="sbs" id="f-q" placeholder="5903, 6095, Pico, Riverside" oninput="scheduleSiteSearch()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitSiteSearch()}">
       <h4>Listing type</h4>
       <label class="cb"><input type="checkbox" id="f-fs" checked> For sale</label>
       <label class="cb"><input type="checkbox" id="f-rti" checked> RTI / Entitled</label>
@@ -1942,6 +1943,23 @@ function buildSiteQueryParams(offset = 0) {
   return qs;
 }
 
+function submitSiteSearch() {
+  clearTimeout(siteSearchDebounceTimer);
+  siteSearchDebounceTimer = null;
+  loadSites();
+}
+
+function scheduleSiteSearch() {
+  clearTimeout(siteSearchDebounceTimer);
+  const search = (g('f-q')?.value || '').trim();
+  g('rct').textContent = search ? `Searching for "${search}"...` : 'Loading sites...';
+  g('list').innerHTML = '<div class="sw"><div class="spin"></div>' + (search ? 'Searching for "' + escapeText(search) + '"...' : 'Loading sites...') + '</div>';
+  siteSearchDebounceTimer = setTimeout(() => {
+    siteSearchDebounceTimer = null;
+    loadSites();
+  }, 450);
+}
+
 async function fetchSitePage(qs) {
   const url = API + '/api/sites?' + qs.toString();
   let data;
@@ -1964,6 +1982,8 @@ async function fetchSitePage(qs) {
 }
 
 async function loadSites(autoRetry = 0) {
+  clearTimeout(siteSearchDebounceTimer);
+  siteSearchDebounceTimer = null;
   const runId = ++siteLoadRunId;
   g('rct').textContent = 'Loading first ' + sitePageLimit + ' sites...';
   g('list').innerHTML = '<div class="sw"><div class="spin"></div>Loading first ' + sitePageLimit + ' sites...</div>';
@@ -2034,6 +2054,13 @@ async function loadMoreSites() {
 function applyFilters() {
   const searchValue = (g('f-q')?.value || '').trim();
   const search = canonicalAddress(searchValue);
+  const serverSearch = canonicalAddress(new URLSearchParams(currentSiteQuery || '').get('q') || '');
+  if (serverSearch !== search) {
+    filtered = [];
+    g('rct').textContent = searchValue ? `Searching for "${searchValue}"...` : 'Loading sites...';
+    g('list').innerHTML = '<div class="sw"><div class="spin"></div>' + (searchValue ? 'Searching for "' + escapeText(searchValue) + '"...' : 'Loading sites...') + '</div>';
+    return;
+  }
   const hood = g('f-hood')?.value||'';
   const umin = +g('f-umin')?.value||0, umax = +g('f-umax')?.value||Infinity;
   const sfmin = +g('f-sfmin')?.value||0, sfmax = +g('f-sfmax')?.value||Infinity;
