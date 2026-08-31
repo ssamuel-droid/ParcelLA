@@ -44,6 +44,7 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const HOUSE_PAGE_CACHE_TTL = 5 * 60 * 1000;
 const SITE_PAGE_QUERY_TIMEOUT_MS = 8 * 1000;
 const SITE_PAGE_RETRY_DELAY_MS = 150;
+const SITE_PAGE_RETRY_ATTEMPTS = 3;
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
 const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
@@ -1835,7 +1836,10 @@ function permitSearchDbClauses(value) {
     }
 
     if (/^\d{3,6}\s+/.test(normalized)) {
-      clauses.push(`address.ilike.${normalized.replace(/\s+/g, '%')}%`);
+      // The address btree can answer the leading street number quickly. The
+      // full token match still runs in Node, so this remains exact without a
+      // slow multi-wildcard ILIKE scan over the permit table.
+      clauses.push(`address.like.${normalized.match(/^\d{3,6}/)[0]}%`);
       continue;
     }
 
@@ -1859,7 +1863,7 @@ function siteSearchDbClauses(value) {
     }
 
     if (/^\d{3,6}\s+/.test(normalized)) {
-      clauses.push(`address.ilike.${normalized.replace(/\s+/g, '%')}%`);
+      clauses.push(`address.like.${normalized.match(/^\d{3,6}/)[0]}%`);
       continue;
     }
 
@@ -2245,7 +2249,6 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
   let rawOffset = 0;
   let reachedEnd = false;
   let indexedMode = true;
-  let indexedTotal = null;
 
   while (matches.length < target) {
     const pageSize = indexedMode
@@ -2258,10 +2261,7 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
 
     let query = supabase
       .from('permits')
-      .select(
-        indexedMode ? PERMIT_HOUSE_INDEXED_SELECT : PERMIT_HOUSE_SELECT,
-        indexedMode ? { count: 'planned' } : undefined
-      )
+      .select(indexedMode ? PERMIT_HOUSE_INDEXED_SELECT : PERMIT_HOUSE_SELECT)
       .eq('permit_type', 'Bldg-New')
       .not('address', 'is', null)
       .or('units.lte.1,units.is.null')
@@ -2272,8 +2272,12 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
       query = query.eq('project_detail_complete', true);
       const minSf = activeNumericParam(queryParams.minSf);
       const maxSf = activeNumericParam(queryParams.maxSf);
+      const minLot = activeNumericParam(queryParams.minLot);
+      const maxLot = activeNumericParam(queryParams.maxLot);
       if (minSf !== null) query = query.gte('building_sf', minSf);
       if (maxSf !== null) query = query.lte('building_sf', maxSf);
+      if (minLot !== null) query = query.gte('lot_sf', minLot);
+      if (maxLot !== null) query = query.lte('lot_sf', maxLot);
     }
 
     if (hoodBox) {
@@ -2289,17 +2293,15 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
       if (clauses.length) query = query.or(clauses.join(','));
     }
 
-    const { data, error, count } = await query;
+    const { data, error } = await query;
     if (error && indexedMode && indexedPermitFieldsUnavailable(error)) {
       console.warn('[sites:new-house] Indexed permit fields unavailable; using legacy JSON scan:', error.message);
       indexedMode = false;
-      indexedTotal = null;
       rawOffset = 0;
       matches.length = 0;
       continue;
     }
     if (error) throw error;
-    if (indexedMode && Number.isFinite(Number(count))) indexedTotal = Number(count);
     const rows = data || [];
     if (!rows.length) {
       reachedEnd = true;
@@ -2329,9 +2331,7 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
   const sorted = sortPermitHouseSites(matches, queryParams.sort || 'profit');
   const page = sorted.slice(requestedOffset, requestedOffset + requestedLimit);
   const pageLowerBound = requestedOffset + page.length + (!reachedEnd && page.length ? requestedLimit : 0);
-  const total = indexedMode && indexedTotal !== null
-    ? Math.max(indexedTotal, pageLowerBound)
-    : reachedEnd
+  const total = reachedEnd
     ? sorted.length
     : Math.max(sorted.length, requestedOffset + page.length + (page.length ? requestedLimit : 0));
   return cachePermitHousePage(cacheKey, { sites: page, total });
@@ -2412,10 +2412,14 @@ function isOffMarketSiteRow(s) {
   return !!(s?.isComp || s?.offMarket || status.includes('off') || status.includes('not for sale'));
 }
 
-function listingCategory(s) {
-  if (isOffMarketSiteRow(s)) return 'off_market';
-  if (s?.rti) return 'rti';
-  return 'for_sale';
+function siteMatchesListingFilters(s, listings) {
+  if (!listings.length) return true;
+  const offMarket = isOffMarketSiteRow(s);
+  return (
+    (listings.includes('for_sale') && !offMarket) ||
+    (listings.includes('rti') && !!s?.rti) ||
+    (listings.includes('off_market') && offMarket)
+  );
 }
 
 function developmentStatusKey(s) {
@@ -2458,7 +2462,7 @@ function sitePassesQueryFilters(s, queryParams) {
   if (queryParams.zone && !zoneMatches(s.zone, queryParams.zone)) return false;
 
   const listings = listParam(queryParams.listing);
-  if (listings.length && !listings.includes(listingCategory(s))) return false;
+  if (!siteMatchesListingFilters(s, listings)) return false;
 
   const devStatuses = listParam(queryParams.devStatus);
   const devKey = developmentStatusKey(s);
@@ -2604,14 +2608,10 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   }
   const dbTypes = [...new Set(types.flatMap(dbProjectTypeVariants))];
   const mayReturnNewHouse = !types.length && search;
-  const devStatuses = listParam(queryParams.devStatus);
-  const canPushDevStatus = devStatuses.every(status => [
-    'submitted',
-    'plan_check',
-    'city_approved_not_started',
-    'permit_issued',
-    'possibly_started_unknown',
-  ].includes(status));
+  // Development status is partly derived from permit text and RTI state. A
+  // JSON expression against raw_permit_data caused statement timeouts and did
+  // not cover those derived aliases, so validate it after the indexed fetch.
+  const canPushDevStatus = false;
   const activeNumericFilters = [
     queryParams.minUnits,
     queryParams.maxUnits,
@@ -2632,10 +2632,8 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     search ||
     mayReturnNewHouse ||
     String(queryParams.ed1 || '').toLowerCase() === 'true' ||
-    queryParams.hood ||
+    queryParams.listing ||
     (queryParams.devStatus && !canPushDevStatus) ||
-    hasActiveNumericParam(queryParams.minPrice) ||
-    hasActiveNumericParam(queryParams.maxPrice) ||
     hasActiveNumericParam(queryParams.minSf) ||
     hasActiveNumericParam(queryParams.maxSf)
   );
@@ -2657,7 +2655,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   // merge the already-sorted candidates; this keeps global paging exact.
   const dashboardTypes = (!types.length && !search ? ['Multifamily', 'Mixed-Use', 'Condo/TH'] : types)
     .filter(typeName => typeName !== 'New House');
-  if (skipEstimatedCount && !needsPostFilter && dashboardTypes.length > 1) {
+  if (skipEstimatedCount && !needsPostFilter && !usesSelectiveFilters && dashboardTypes.length > 1) {
     return fetchMergedDashboardTypePage(
       [...new Set(dashboardTypes)],
       queryParams,
@@ -2678,8 +2676,15 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   if (dbTypes.length) query = query.in('project_type', dbTypes);
   if (!hasExplicitTypeFilter && !search) query = query.neq('project_type', 'New House');
   if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
+  if (queryParams.hood) query = query.eq('neighborhood', queryParams.hood);
+  if (queryParams.rti !== undefined) query = query.eq('rti', queryParams.rti === 'true');
+  if (queryParams.isComp !== undefined) query = query.eq('is_comp', queryParams.isComp === 'true');
   const minUnits = activeNumericParam(queryParams.minUnits);
   const maxUnits = activeNumericParam(queryParams.maxUnits);
+  const minLot = activeNumericParam(queryParams.minLot);
+  const maxLot = activeNumericParam(queryParams.maxLot);
+  const minPrice = activeNumericParam(queryParams.minPrice);
+  const maxPrice = activeNumericParam(queryParams.maxPrice);
   const minCost = activeNumericParam(queryParams.minCost);
   const maxCost = activeNumericParam(queryParams.maxCost);
   const minProfit = activeNumericParam(queryParams.minProfit);
@@ -2688,6 +2693,10 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   const minCapoc = activeNumericParam(queryParams.minCapoc);
   if (minUnits !== null) query = query.gte('units', minUnits);
   if (maxUnits !== null) query = query.lte('units', maxUnits);
+  if (minLot !== null) query = query.gte('lot_sf', minLot);
+  if (maxLot !== null) query = query.lte('lot_sf', maxLot);
+  if (minPrice !== null) query = query.gte('price', minPrice);
+  if (maxPrice !== null) query = query.lte('price', maxPrice);
   if (minCost !== null) query = query.gte('total_cost', minCost);
   if (maxCost !== null) query = query.lte('total_cost', maxCost);
   if (minProfit !== null) query = query.gte('net_profit', minProfit);
@@ -2702,20 +2711,16 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
 
   const listings = listParam(queryParams.listing);
   if (listings.length) {
-    const clauses = [];
-    if (listings.includes('for_sale')) clauses.push('status.eq.active');
-    if (listings.includes('rti')) clauses.push('rti.eq.true');
-    if (listings.includes('off_market')) clauses.push('status.eq.off-market');
-    if (clauses.length) query = query.or(clauses.join(','));
-  }
-
-  if (devStatuses.length && canPushDevStatus) {
-    const clauses = [];
-    for (const status of devStatuses) {
-      clauses.push(`raw_permit_data->>development_status.eq.${status}`);
-      if (status === 'city_approved_not_started') clauses.push('rti.eq.true');
+    if (listings.length === 1 && listings[0] === 'for_sale') query = query.eq('status', 'active');
+    else if (listings.length === 1 && listings[0] === 'rti') query = query.eq('rti', true);
+    else if (listings.length === 1 && listings[0] === 'off_market') query = query.eq('status', 'off-market');
+    else {
+      const clauses = [];
+      if (listings.includes('for_sale')) clauses.push('status.eq.active');
+      if (listings.includes('rti')) clauses.push('rti.eq.true');
+      if (listings.includes('off_market')) clauses.push('status.eq.off-market');
+      if (clauses.length) query = query.or(clauses.join(','));
     }
-    if (clauses.length) query = query.or(clauses.join(','));
   }
 
   const sort = queryParams.sort || 'profit';
@@ -2776,15 +2781,17 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
 }
 
 async function fetchSupabaseSitePageWithRetry(queryParams, requestedLimit, requestedOffset) {
-  try {
-    return await fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset);
-  } catch (error) {
-    const fastRequest = String(queryParams.fast || '') === '1';
-    if (!fastRequest || !isTransientSitePageError(error)) throw error;
+  for (let attempt = 1; attempt <= SITE_PAGE_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset);
+    } catch (error) {
+      const fastRequest = String(queryParams.fast || '') === '1';
+      if (!fastRequest || !isTransientSitePageError(error) || attempt === SITE_PAGE_RETRY_ATTEMPTS) throw error;
 
-    console.warn('[sites] Transient Supabase page failure; retrying once:', error.message);
-    await new Promise(resolve => setTimeout(resolve, SITE_PAGE_RETRY_DELAY_MS));
-    return fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffset);
+      const delayMs = SITE_PAGE_RETRY_DELAY_MS * attempt;
+      console.warn(`[sites] Transient Supabase page failure; retrying ${attempt}/${SITE_PAGE_RETRY_ATTEMPTS - 1}:`, error.message);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
   }
 }
 
@@ -2893,7 +2900,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       if (hood    && s.hood  !== hood)               return false;
       if (zone    && !zoneMatches(s.zone, zone))     return false;
       const listings = listParam(req.query.listing);
-      if (listings.length && !listings.includes(listingCategory(s))) return false;
+      if (!siteMatchesListingFilters(s, listings)) return false;
       const devStatuses = listParam(req.query.devStatus);
       const devKey = developmentStatusKey(s);
       if (devStatuses.length && !(devStatuses.includes(devKey) || (devStatuses.includes('city_approved_not_started') && s.rti))) return false;
