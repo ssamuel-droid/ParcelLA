@@ -226,7 +226,8 @@ function mapStoredRentComp(d, siteLat, siteLng) {
 }
 
 async function fetchRentcastListings({ hood, siteLat, siteLng, bedrooms, limit }) {
-  if (!process.env.RENTCAST_API_KEY) return [];
+  const liveEnabled = /^(1|true|yes)$/i.test(process.env.RENTCAST_LIVE_COMP_LOOKUPS_ENABLED || '');
+  if (!process.env.RENTCAST_API_KEY || !liveEnabled) return [];
 
   const params = new URLSearchParams({
     propertyType: 'Apartment',
@@ -623,6 +624,7 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
     const benchmarkComps = propertyComps.length ? [] : benchmarkRentRows(hood, storedComps, siteLat, siteLng).slice(0, limit);
     const returnedComps = propertyComps.length ? propertyComps : benchmarkComps;
     const hasRentcast = Boolean(process.env.RENTCAST_API_KEY);
+    const liveRentcastEnabled = hasRentcast && /^(1|true|yes)$/i.test(process.env.RENTCAST_LIVE_COMP_LOOKUPS_ENABLED || '');
     const source = cachedComps.length
       ? 'monthly rentcast cache'
       : liveComps.length
@@ -645,9 +647,11 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
         : ''
       : cachedComps.length
         ? ''
-        : hasRentcast
+        : liveRentcastEnabled
         ? 'RentCast did not return nearby active apartment listings, and saved property-level rent comps are older than the recency window.'
-        : 'RENTCAST_API_KEY is not configured, so benchmark rents are shown until recent property-level comps are added.';
+        : hasRentcast
+          ? 'Live RentCast calls are disabled to control cost; the app uses the capped monthly cache and saved benchmarks.'
+          : 'RENTCAST_API_KEY is not configured, so benchmark rents are shown until recent property-level comps are added.';
 
     res.json({
       hood,

@@ -11,6 +11,9 @@ const RENTCAST_KEY = process.env.RENTCAST_API_KEY;
 const REGRID_BASE = 'https://app.regrid.com/api/v2/parcels';
 const REGRID_LA_PATH = '/us/ca/los-angeles';
 const RENTCAST_BASE = 'https://api.rentcast.io/v1/properties';
+const ENRICH_LIMIT = Math.max(0, Number.parseInt(process.env.OWNER_ENRICH_LIMIT || '25', 10) || 25);
+const STALE_DAYS = Math.max(1, Number.parseInt(process.env.OWNER_ENRICH_STALE_DAYS || '30', 10) || 30);
+const RENTCAST_BULK_ENABLED = /^(1|true|yes)$/i.test(process.env.RENTCAST_BULK_OWNER_ENABLED || '');
 let regridAuthRejected = false;
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
@@ -281,7 +284,7 @@ async function lookupRentCast(site) {
 async function lookupOwner(site) {
   const regrid = await lookupRegrid(site);
   if (regrid) return regrid;
-  return lookupRentCast(site);
+  return RENTCAST_BULK_ENABLED ? lookupRentCast(site) : null;
 }
 
 async function main() {
@@ -290,19 +293,21 @@ async function main() {
     console.log('[owners] No ownership provider key set; add REGRID_API_KEY or RENTCAST_API_KEY.');
     return;
   }
-  console.log(`[owners] Providers: Regrid ${REGRID_TOKEN ? 'configured' : 'not configured'}; RentCast ${RENTCAST_KEY ? 'configured' : 'not configured'}.`);
+  console.log(`[owners] Providers: Regrid ${REGRID_TOKEN ? 'configured' : 'not configured'}; RentCast ${RENTCAST_KEY ? (RENTCAST_BULK_ENABLED ? 'enabled' : 'configured but bulk-disabled') : 'not configured'}.`);
+  console.log(`[owners] Guardrails: at most ${ENRICH_LIMIT} stale properties; no-match cooldown ${STALE_DAYS} days.`);
 
   const corrupted = await requestJson(
     'GET',
-    `${SB_URL}/rest/v1/sites?select=id,address,lat,lng,apn,owner_enriched_at&owner_name=eq.${encodeURIComponent('[object Object]')}&order=updated_at.desc&limit=300`,
+    `${SB_URL}/rest/v1/sites?select=id,address,lat,lng,apn,owner_enriched_at&owner_name=eq.${encodeURIComponent('[object Object]')}&order=updated_at.desc&limit=${ENRICH_LIMIT}`,
     null,
     sbHeaders()
   );
-  const remaining = Math.max(0, 300 - (Array.isArray(corrupted) ? corrupted.length : 0));
-  const pendingFilter = encodeURIComponent('(owner_name.is.null,owner_name.neq.[object Object])');
+  const remaining = Math.max(0, ENRICH_LIMIT - (Array.isArray(corrupted) ? corrupted.length : 0));
+  const staleBefore = new Date(Date.now() - STALE_DAYS * 86400000).toISOString();
+  const pendingFilter = encodeURIComponent(`(owner_enriched_at.is.null,owner_enriched_at.lt.${staleBefore})`);
   const pending = remaining ? await requestJson(
     'GET',
-    `${SB_URL}/rest/v1/sites?select=id,address,lat,lng,apn,owner_enriched_at&or=${pendingFilter}&order=owner_enriched_at.asc.nullsfirst,updated_at.desc&limit=${remaining}`,
+    `${SB_URL}/rest/v1/sites?select=id,address,lat,lng,apn,owner_enriched_at&owner_name=is.null&or=${pendingFilter}&order=owner_enriched_at.asc.nullsfirst,updated_at.desc&limit=${remaining}`,
     null,
     sbHeaders()
   ) : [];

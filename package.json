@@ -9,6 +9,7 @@
     "dev": "NODE_ENV=development node --watch api/server.js",
     "sync": "node api/jobs/sync.js --run-now",
     "test-apis": "python scripts/test_apis.py",
+    "audit:filters": "node scripts/audit-site-filters.mjs",
     "db:migrate": "echo 'Paste supabase/schema.sql into Supabase SQL editor and click Run'",
     "excel": "python scripts/generate_excel.py",
     "build": "vite build",

@@ -1315,7 +1315,7 @@ async function recoverPlanningMatches(site, siteId) {
       const previous = matchByCase.get(row.case_number);
       if (!previous || result.confidence > previous.match_confidence) {
         matchByCase.set(row.case_number, {
-          site_id: siteId,
+          ...(siteId ? { site_id: siteId } : {}),
           case_number: row.case_number,
           match_method: result.method,
           match_confidence: result.confidence,
@@ -1331,8 +1331,10 @@ async function recoverPlanningMatches(site, siteId) {
     matches.sort((left, right) => String(rowsByCase.get(right.case_number)?.completion_date || rowsByCase.get(right.case_number)?.application_date || '')
       .localeCompare(String(rowsByCase.get(left.case_number)?.completion_date || rowsByCase.get(left.case_number)?.application_date || '')));
     matches[0].is_primary = true;
-    const { error } = await planningDb.from('site_planning_cases').upsert(matches, { onConflict: 'site_id,case_number' });
-    if (error) console.warn(`[planning] Could not persist recovered matches for site ${siteId}: ${error.message}`);
+    if (siteId) {
+      const { error } = await planningDb.from('site_planning_cases').upsert(matches, { onConflict: 'site_id,case_number' });
+      if (error) console.warn(`[planning] Could not persist recovered matches for site ${siteId}: ${error.message}`);
+    }
   }
   return { matches, cases: [...rowsByCase.values()] };
 }
@@ -1341,9 +1343,12 @@ async function attachPlanningDiscovery(site, siteId) {
   const manualDocuments = planningDocumentsForSite(site);
   const manualCaseNumbers = [...new Set(manualDocuments.map(document => document.caseNumber).filter(Boolean))];
   try {
+    const storedMatchQuery = siteId
+      ? planningDb.from('site_planning_cases').select('*').eq('site_id', siteId)
+      : Promise.resolve({ data: [], error: null });
     const [{ data: syncState, error: stateError }, { data: storedMatches, error: matchError }, { data: indexProbe, error: indexError }] = await Promise.all([
       planningDb.from('planning_sync_state').select('*').eq('id', 1).maybeSingle(),
-      planningDb.from('site_planning_cases').select('*').eq('site_id', siteId),
+      storedMatchQuery,
       planningDb.from('planning_cases').select('case_number').limit(1),
     ]);
     if (stateError) throw stateError;
@@ -2323,8 +2328,9 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
 
   const sorted = sortPermitHouseSites(matches, queryParams.sort || 'profit');
   const page = sorted.slice(requestedOffset, requestedOffset + requestedLimit);
+  const pageLowerBound = requestedOffset + page.length + (!reachedEnd && page.length ? requestedLimit : 0);
   const total = indexedMode && indexedTotal !== null
-    ? indexedTotal
+    ? Math.max(indexedTotal, pageLowerBound)
     : reachedEnd
     ? sorted.length
     : Math.max(sorted.length, requestedOffset + page.length + (page.length ? requestedLimit : 0));
@@ -2582,10 +2588,22 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   const hasExplicitTypeFilter = Boolean(queryParams.types || queryParams.type);
   const types = listParam(queryParams.types || queryParams.type).map(canonicalProjectType).filter(Boolean);
   const newHouseOnly = types.length === 1 && types[0] === 'New House';
-  if (newHouseOnly && !search) return fetchNewHousePermitPage(queryParams, requestedLimit, requestedOffset);
-  const excludesNewHouseInMixedView = types.includes('New House') && types.length > 1 && !search;
-  const dbTypes = [...new Set((excludesNewHouseInMixedView ? types.filter(type => type !== 'New House') : types).flatMap(dbProjectTypeVariants))];
-  const mayReturnNewHouse = (types.includes('New House') && !excludesNewHouseInMixedView) || (!types.length && search);
+  if (newHouseOnly) return fetchNewHousePermitPage(queryParams, requestedLimit, requestedOffset);
+  if (types.includes('New House') && types.length > 1) {
+    const nonHouseTypes = types.filter(type => type !== 'New House');
+    const candidateLimit = Math.min(250, requestedOffset + requestedLimit);
+    const [housePage, otherPage] = await Promise.all([
+      fetchNewHousePermitPage(queryParams, candidateLimit, 0),
+      fetchSupabaseSitePage({ ...queryParams, types: nonHouseTypes.join(',') }, candidateLimit, 0),
+    ]);
+    const merged = sortPermitHouseSites([...(housePage?.sites || []), ...(otherPage?.sites || [])], queryParams.sort || 'profit');
+    return {
+      sites: merged.slice(requestedOffset, requestedOffset + requestedLimit),
+      total: Number(housePage?.total || 0) + Number(otherPage?.total || 0),
+    };
+  }
+  const dbTypes = [...new Set(types.flatMap(dbProjectTypeVariants))];
+  const mayReturnNewHouse = !types.length && search;
   const devStatuses = listParam(queryParams.devStatus);
   const canPushDevStatus = devStatuses.every(status => [
     'submitted',
@@ -2637,10 +2655,8 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   // but a global ORDER BY across multiple IN values can select a slow plan on
   // the small Supabase instance. Fetch each canonical type concurrently and
   // merge the already-sorted candidates; this keeps global paging exact.
-  const dashboardTypes = (excludesNewHouseInMixedView
-    ? types.filter(typeName => typeName !== 'New House')
-    : (!types.length && !search ? ['Multifamily', 'Mixed-Use', 'Condo/TH'] : types)
-  ).filter(typeName => typeName !== 'New House');
+  const dashboardTypes = (!types.length && !search ? ['Multifamily', 'Mixed-Use', 'Condo/TH'] : types)
+    .filter(typeName => typeName !== 'New House');
   if (skipEstimatedCount && !needsPostFilter && dashboardTypes.length > 1) {
     return fetchMergedDashboardTypePage(
       [...new Set(dashboardTypes)],
@@ -3057,6 +3073,24 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
         site = await attachPlanningDiscovery(site, data.id);
         model = runModel(normalizeSite(site), overrides);
         scenarios = runScenarios(normalizeSite(site), overrides);
+      }
+    }
+
+    if (!site && process.env.SUPABASE_URL) {
+      const { data: permit, error: permitError } = await supabase
+        .from('permits')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (permitError) throw permitError;
+      if (permit) {
+        const permitSite = permitRowAsHouseSite(permit);
+        if (isNewHouseSite(permitSite) && isPrimaryNewHouseWorkDescription(permitSite.raw_permit_data?.work_description || '')) {
+          site = mapSupabaseSite(permitSite);
+          site = await attachPlanningDiscovery(site, null);
+          model = runModel(normalizeSite(site), overrides);
+          scenarios = runScenarios(normalizeSite(site), overrides);
+        }
       }
     }
 

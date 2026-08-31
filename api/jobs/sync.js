@@ -262,6 +262,11 @@ async function syncAssessorData() {
 async function syncRentComps() {
   console.log('[sync] Rent comp sync — checking RentCast API...');
 
+  if (!/^(1|true|yes)$/i.test(process.env.RENTCAST_MARKET_SYNC_ENABLED || '')) {
+    console.warn('[sync] RENTCAST_MARKET_SYNC_ENABLED is not true — skipping uncapped legacy rent sync');
+    return;
+  }
+
   if (!process.env.RENTCAST_API_KEY) {
     console.warn('[sync] RENTCAST_API_KEY not set — skipping rent comp sync');
     return;

@@ -10,6 +10,7 @@ const REGRID_BASE = 'https://app.regrid.com/api/v2/parcels';
 const REGRID_LA_PATH = '/us/ca/los-angeles';
 const RENTCAST_SOURCE = 'RentCast property records';
 const RENTCAST_BASE = 'https://api.rentcast.io/v1/properties';
+const RENTCAST_LIVE_OWNER_ENABLED = /^(1|true|yes)$/i.test(process.env.RENTCAST_LIVE_OWNER_LOOKUPS_ENABLED || '');
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const ownerCache = new Map();
 
@@ -426,8 +427,16 @@ async function lookupOwner({ address, lat, lng, apn }) {
   owner = await runProvider(REGRID_SOURCE, !!regridToken(), () => queryRegrid({ address, lat, lng, apn }));
 
   if (!owner?.ownerName) {
-    const rentcastOwner = await runProvider(RENTCAST_SOURCE, !!rentcastKey(), () => queryRentCast({ address, lat, lng, apn }));
-    owner = mergeOwnerResults(owner, rentcastOwner);
+    if (RENTCAST_LIVE_OWNER_ENABLED) {
+      const rentcastOwner = await runProvider(RENTCAST_SOURCE, !!rentcastKey(), () => queryRentCast({ address, lat, lng, apn }));
+      owner = mergeOwnerResults(owner, rentcastOwner);
+    } else {
+      diagnostics.push({
+        provider: RENTCAST_SOURCE,
+        status: 'disabled',
+        note: 'Live per-property RentCast calls are disabled. ParcelLA uses the capped monthly cache instead.',
+      });
+    }
   }
 
   const ain = clean(apn).replace(/\D/g, '');
@@ -460,7 +469,7 @@ async function lookupOwner({ address, lat, lng, apn }) {
 
   const uniqueDiagnostics = [...new Map(diagnostics.map(item => [`${item.provider}|${item.status}`, item])).values()];
   const failed = uniqueDiagnostics.filter(item => item.status === 'error');
-  const configuredCountywide = uniqueDiagnostics.filter(item => item.provider !== OWNER_SOURCE && item.status !== 'not_configured');
+  const configuredCountywide = uniqueDiagnostics.filter(item => item.provider !== OWNER_SOURCE && !['not_configured', 'disabled'].includes(item.status));
   const message = failed.length
     ? `Owner lookup could not complete: ${failed.map(item => `${item.provider}: ${item.message}`).join('; ')}.`
     : configuredCountywide.length

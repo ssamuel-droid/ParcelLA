@@ -8,7 +8,7 @@ on:
       site_limit:
         description: 'Max individual site records to enrich'
         required: false
-        default: '25'
+        default: '5'
 
 jobs:
   enrich-property-data:
@@ -23,8 +23,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           RENTCAST_API_KEY: ${{ secrets.RENTCAST_API_KEY }}
-          PROPERTY_ENRICH_SITE_LIMIT: ${{ github.event.inputs.site_limit || '25' }}
+          PROPERTY_ENRICH_SITE_LIMIT: ${{ github.event.inputs.site_limit || '5' }}
           PROPERTY_ENRICH_MARKET_LIMIT: '500'
           PROPERTY_ENRICH_STALE_DAYS: '30'
           PROPERTY_ENRICH_SALE_RECENCY_DAYS: '1095'
+          PROPERTY_ENRICH_MAX_RENTCAST_CALLS: '50'
+          PROPERTY_ENRICH_AVM: 'false'
         run: node .github/scripts/monthly-property-enrichment.cjs

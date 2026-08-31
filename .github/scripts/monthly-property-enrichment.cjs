@@ -9,13 +9,15 @@ const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const RENTCAST_KEY = process.env.RENTCAST_API_KEY;
 
-const SITE_LIMIT = intEnv('PROPERTY_ENRICH_SITE_LIMIT', 25);
+const SITE_LIMIT = intEnv('PROPERTY_ENRICH_SITE_LIMIT', 5);
 const MARKET_LIMIT = intEnv('PROPERTY_ENRICH_MARKET_LIMIT', 500);
 const STALE_DAYS = intEnv('PROPERTY_ENRICH_STALE_DAYS', 30);
 const SALE_RECENCY_DAYS = intEnv('PROPERTY_ENRICH_SALE_RECENCY_DAYS', 1095);
 const REQUEST_DELAY_MS = intEnv('PROPERTY_ENRICH_DELAY_MS', 250);
+const MAX_RENTCAST_CALLS = intEnv('PROPERTY_ENRICH_MAX_RENTCAST_CALLS', 50);
 const INCLUDE_SITE_AVM = /^(1|true|yes)$/i.test(process.env.PROPERTY_ENRICH_AVM || '');
 const RENTCAST_SALE_SOURCE = 'RentCast monthly property records';
+let rentcastCallCount = 0;
 
 const HOOD_ZIPS = {
   'Silver Lake': '90026',
@@ -335,6 +337,14 @@ async function requestJson(url, headers = {}) {
   }
 }
 
+async function requestRentcast(url) {
+  if (rentcastCallCount >= MAX_RENTCAST_CALLS) {
+    throw new Error(`RentCast call budget exhausted (${MAX_RENTCAST_CALLS} calls per run)`);
+  }
+  rentcastCallCount += 1;
+  return requestJson(url, { 'X-Api-Key': RENTCAST_KEY });
+}
+
 async function sbRequest(method, path, body = null, prefer = '') {
   const url = `${SB_URL}${path}`;
   const res = await fetch(url, {
@@ -430,9 +440,8 @@ async function pullRentcastRentalListings(hood, zip) {
     status: 'Active',
     limit: String(Math.min(MARKET_LIMIT, 500)),
   });
-  const { json, headers } = await requestJson(
-    `https://api.rentcast.io/v1/listings/rental/long-term?${params}`,
-    { 'X-Api-Key': RENTCAST_KEY }
+  const { json, headers } = await requestRentcast(
+    `https://api.rentcast.io/v1/listings/rental/long-term?${params}`
   );
   const rows = arrayFromPayload(json).map(compactRentListing).filter(r => r.formattedAddress && r.price);
   await upsertCache({
@@ -457,9 +466,8 @@ async function pullRentcastRecentSales(hood, zip) {
     saleDateRange: String(SALE_RECENCY_DAYS),
     limit: String(Math.min(MARKET_LIMIT, 500)),
   });
-  const { json, headers } = await requestJson(
-    `https://api.rentcast.io/v1/properties?${params}`,
-    { 'X-Api-Key': RENTCAST_KEY }
+  const { json, headers } = await requestRentcast(
+    `https://api.rentcast.io/v1/properties?${params}`
   );
   const rows = arrayFromPayload(json).map(compactPropertyRecord).filter(r => r.formattedAddress && r.lastSalePrice && r.lastSaleDate);
   const storedCompCount = await upsertRecentSaleComps(hood, rows);
@@ -485,9 +493,8 @@ async function pullRentcastPropertyRecord(site) {
     address,
     limit: '1',
   });
-  const { json } = await requestJson(
-    `https://api.rentcast.io/v1/properties?${params}`,
-    { 'X-Api-Key': RENTCAST_KEY }
+  const { json } = await requestRentcast(
+    `https://api.rentcast.io/v1/properties?${params}`
   );
   const rows = arrayFromPayload(json).map(compactPropertyRecord).filter(r => r.formattedAddress);
   const record = rows[0] || null;
@@ -520,9 +527,8 @@ async function pullRentcastAvm(site, endpoint, purpose) {
     compCount: '10',
     lookupSubjectAttributes: 'true',
   });
-  const { json } = await requestJson(
-    `https://api.rentcast.io/v1/avm/${endpoint}?${params}`,
-    { 'X-Api-Key': RENTCAST_KEY }
+  const { json } = await requestRentcast(
+    `https://api.rentcast.io/v1/avm/${endpoint}?${params}`
   );
   const avm = compactAvm(json);
   await upsertCache({
@@ -592,6 +598,7 @@ async function main() {
     console.log('[monthly-enrich] RENTCAST_API_KEY not set; nothing to pull. Add it as a GitHub secret before running monthly enrichment.');
     return;
   }
+  console.log(`[monthly-enrich] RentCast guardrail: maximum ${MAX_RENTCAST_CALLS} API call(s); ${SITE_LIMIT} individual site record(s); AVM ${INCLUDE_SITE_AVM ? 'enabled' : 'disabled'}.`);
 
   let marketRequests = 0;
   let rentalRows = 0;
@@ -645,7 +652,7 @@ async function main() {
     await sleep(REQUEST_DELAY_MS);
   }
 
-  console.log(`[monthly-enrich] Complete. Market API calls: ${marketRequests}; cached rentals: ${rentalRows}; cached recent sales: ${saleRows}; site records updated: ${siteUpdated}; site misses: ${siteMiss}.`);
+  console.log(`[monthly-enrich] Complete. RentCast API calls: ${rentcastCallCount}/${MAX_RENTCAST_CALLS}; successful market calls: ${marketRequests}; cached rentals: ${rentalRows}; cached recent sales: ${saleRows}; site records updated: ${siteUpdated}; site misses: ${siteMiss}.`);
 }
 
 if (require.main === module) {
