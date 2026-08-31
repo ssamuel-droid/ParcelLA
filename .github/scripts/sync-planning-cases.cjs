@@ -6,8 +6,30 @@ const DOCUMENT_CASE_LIMIT = positiveInt(process.env.PLANNING_DOCUMENT_CASE_LIMIT
 const DOCUMENT_STALE_DAYS = positiveInt(process.env.PLANNING_DOCUMENT_STALE_DAYS, 30);
 const DOCUMENT_CONCURRENCY = positiveInt(process.env.PLANNING_DOCUMENT_CONCURRENCY, 4);
 
-const FILINGS_LAYER = 'https://services1.arcgis.com/tzwalEyxl2rpamKs/arcgis/rest/services/New_PCTS_Case_Filings_Updated_All/FeatureServer/0';
-const COMPLETED_LAYER = 'https://services1.arcgis.com/tzwalEyxl2rpamKs/arcgis/rest/services/BiWeekly_Cases_Archived/FeatureServer/0';
+const ARCGIS_BASE = 'https://services1.arcgis.com/tzwalEyxl2rpamKs/arcgis/rest/services';
+const FILINGS_LAYERS = [
+  ['filed cases 2020', 'New_PCTS_Case_Filings_Updated_All', 0],
+  ['filed cases 2021', 'EntitlementCaseFilings2021_Archive', 0],
+  ['filed cases 2022', 'EntitlementCaseFilings_2022', 0],
+  ['filed cases 2023', 'EntitlementCaseFilings_2023', 0],
+  ['filed cases 2025', 'EntitlementCaseFilings_2025', 0],
+  ['filed cases current', 'New_PCTS_Case_Filings', 0],
+].map(([label, service, layer]) => ({
+  label,
+  url: `${ARCGIS_BASE}/${service}/FeatureServer/${layer}`,
+}));
+const COMPLETED_LAYERS = [
+  ['completed cases 2020', 'BiWeekly_Cases_Archived', 0],
+  ['completed cases 2021', 'BiWeekly_Cases_Archived_2021', 0],
+  ['completed cases 2022', 'BiWeekly_Cases_Archived_2022', 0],
+  ['completed cases 2023', 'BiWeekly_Cases_Achived_2023', 0],
+  ['completed cases 2024', 'EntitlementCaseFilings_2024', 0],
+  ['completed cases 2025', 'BiWeekly_Cases_Archived_2025', 1],
+  ['completed cases current', 'BiWeeklyCasesCompleted', 0],
+].map(([label, service, layer]) => ({
+  label,
+  url: `${ARCGIS_BASE}/${service}/FeatureServer/${layer}`,
+}));
 const PDIS_BASE = 'https://planning.lacity.gov/pdiscaseinfo';
 
 if (require.main === module && (!SB_URL || !SB_KEY)) {
@@ -483,10 +505,12 @@ async function main() {
   const startedAt = new Date().toISOString();
   await setSyncState({ status: 'running', started_at: startedAt, completed_at: null, error: null });
   try {
-    const [filingFeatures, completedFeatures] = await Promise.all([
-      fetchArcgisFeatures(FILINGS_LAYER, 'filed cases'),
-      fetchArcgisFeatures(COMPLETED_LAYER, 'completed cases'),
+    const [filingLayers, completedLayers] = await Promise.all([
+      Promise.all(FILINGS_LAYERS.map(layer => fetchArcgisFeatures(layer.url, layer.label))),
+      Promise.all(COMPLETED_LAYERS.map(layer => fetchArcgisFeatures(layer.url, layer.label))),
     ]);
+    const filingFeatures = filingLayers.flat();
+    const completedFeatures = completedLayers.flat();
     const cases = mergeCases(filingFeatures.map(filingCase), completedFeatures.map(completedCase));
     console.log(`[planning] ${cases.length} unique cases ready to store`);
     await upsertChunks('planning_cases', 'case_number', cases, 200);
@@ -558,6 +582,8 @@ async function main() {
       details: {
         filed_records: filingFeatures.length,
         completed_records: completedFeatures.length,
+        filed_layers: Object.fromEntries(FILINGS_LAYERS.map((layer, index) => [layer.label, filingLayers[index].length])),
+        completed_layers: Object.fromEntries(COMPLETED_LAYERS.map((layer, index) => [layer.label, completedLayers[index].length])),
         sites_checked: sites.length,
         document_cases_checked: documentCandidates.length,
         document_failures: failures.length,
