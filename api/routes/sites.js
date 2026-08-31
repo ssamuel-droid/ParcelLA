@@ -1098,16 +1098,28 @@ async function fetchPdis(url, responseType = 'json') {
     });
     const text = await response.text();
     if (!response.ok) throw new Error(`PDIS HTTP ${response.status}`);
-    return responseType === 'json' ? (text ? JSON.parse(text) : null) : text;
+    return responseType === 'json' ? parsePlanningPayload(text) : text;
   } finally {
     clearTimeout(timeout);
   }
 }
 
+function parsePlanningPayload(value, depth = 0) {
+  if (depth > 3 || typeof value !== 'string') return value;
+  const text = value.trim();
+  if (!text) return null;
+  try {
+    return parsePlanningPayload(JSON.parse(text), depth + 1);
+  } catch {
+    return value;
+  }
+}
+
 function planningArray(value) {
-  if (Array.isArray(value)) return value;
-  if (Array.isArray(value?.data)) return value.data;
-  if (Array.isArray(value?.results)) return value.results;
+  const decoded = parsePlanningPayload(value);
+  if (Array.isArray(decoded)) return decoded;
+  if (Array.isArray(decoded?.data)) return decoded.data;
+  if (Array.isArray(decoded?.results)) return decoded.results;
   return [];
 }
 

@@ -4,7 +4,7 @@ import { optionalAuth, getUserAccess } from '../middleware/auth.js';
 const router = Router();
 
 const OWNER_LAYER_QUERY_URL = 'https://services9.arcgis.com/vt06TugX2cjEwSJJ/ArcGIS/rest/services/LACo_Assessor_Parcels_2023_DS04/FeatureServer/193/query';
-const OWNER_SOURCE = 'LA County Assessor Parcels 2023 DS04 public owner feed';
+const OWNER_SOURCE = 'LA County assessor DS04 VTC limited-area layer';
 const REGRID_SOURCE = 'Regrid Parcel API';
 const REGRID_BASE = 'https://app.regrid.com/api/v2/parcels';
 const REGRID_LA_PATH = '/us/ca/los-angeles';
@@ -134,8 +134,16 @@ async function fetchJson(url, timeoutMs = 9000, headers = {}) {
       signal: controller.signal,
       headers: { Accept: 'application/json', ...headers },
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch {}
+    if (!res.ok) {
+      const detail = clean(data?.error || data?.message || data?.detail || text.slice(0, 160));
+      const error = new Error(`HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
+      error.status = res.status;
+      throw error;
+    }
+    return data;
   } finally {
     clearTimeout(timer);
   }
@@ -318,8 +326,9 @@ async function queryRegrid(params) {
     u.searchParams.set('lon', String(lng));
     u.searchParams.set('radius', '150');
     u.searchParams.set('limit', '1');
+    u.searchParams.set('return_geometry', 'false');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('enhanced_ownership', 'true');
+    u.searchParams.set('return_enhanced_ownership', 'true');
     u.searchParams.set('token', token);
     attempts.push(u);
   }
@@ -329,33 +338,40 @@ async function queryRegrid(params) {
     u.searchParams.set('query', clean(params.address));
     u.searchParams.set('path', REGRID_LA_PATH);
     u.searchParams.set('limit', '1');
+    u.searchParams.set('return_geometry', 'false');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('enhanced_ownership', 'true');
+    u.searchParams.set('return_enhanced_ownership', 'true');
     u.searchParams.set('token', token);
     attempts.push(u);
   }
 
   if (clean(params.apn)) {
-    const u = new URL(`${REGRID_BASE}/query`);
-    u.searchParams.set('fields[parcelnumb][eq]', clean(params.apn));
-    u.searchParams.set('fields[path][ilike]', REGRID_LA_PATH);
+    const u = new URL(`${REGRID_BASE}/apn`);
+    u.searchParams.set('parcelnumb', clean(params.apn));
+    u.searchParams.set('path', REGRID_LA_PATH);
     u.searchParams.set('limit', '1');
+    u.searchParams.set('return_geometry', 'false');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('enhanced_ownership', 'true');
+    u.searchParams.set('return_enhanced_ownership', 'true');
     u.searchParams.set('token', token);
     attempts.push(u);
   }
 
+  let lastError = null;
+  let requestCompleted = false;
   for (const url of attempts) {
     try {
       const data = await fetchJson(url.toString(), 9000);
+      requestCompleted = true;
       const feature = regridFeature(data);
       const normalized = normalizeRegridFeature(feature);
       if (normalized?.ownerName || normalized?.lastSaleDate || normalized?.lastSaleAmount) return normalized;
-    } catch {
-      // Fall back to the public assessor layer below.
+    } catch (error) {
+      lastError = error;
+      if (error.status === 401 || error.status === 403) throw error;
     }
   }
+  if (lastError && !requestCompleted) throw lastError;
   return null;
 }
 
@@ -386,55 +402,86 @@ async function lookupOwner({ address, lat, lng, apn }) {
   if (cached && Date.now() - cached.time < CACHE_TTL) return cached.value;
 
   let owner = null;
-  owner = await queryRegrid({ address, lat, lng, apn }).catch(() => null);
+  const diagnostics = [];
+  const runProvider = async (provider, configured, lookup, note = '') => {
+    if (!configured) {
+      diagnostics.push({ provider, status: 'not_configured', note });
+      return null;
+    }
+    try {
+      const result = await lookup();
+      diagnostics.push({ provider, status: result ? 'matched' : 'no_match', note });
+      return result;
+    } catch (error) {
+      const status = Number(error.status) || null;
+      const message = status === 401 || status === 403
+        ? `Credential rejected (HTTP ${status})`
+        : clean(error.message).slice(0, 180) || 'Request failed';
+      diagnostics.push({ provider, status: 'error', message, note });
+      console.warn(`[owners] ${provider} lookup failed for ${clean(address) || clean(apn) || 'parcel'}: ${message}`);
+      return null;
+    }
+  };
+
+  owner = await runProvider(REGRID_SOURCE, !!regridToken(), () => queryRegrid({ address, lat, lng, apn }));
 
   if (!owner?.ownerName) {
-    const rentcastOwner = await queryRentCast({ address, lat, lng, apn }).catch(() => null);
+    const rentcastOwner = await runProvider(RENTCAST_SOURCE, !!rentcastKey(), () => queryRentCast({ address, lat, lng, apn }));
     owner = mergeOwnerResults(owner, rentcastOwner);
   }
 
   const ain = clean(apn).replace(/\D/g, '');
   if (!owner?.ownerName && ain) {
-    const assessorOwner = await queryLayer({ where: `AIN='${ain}' OR AIN_1=${Number(ain) || 0}` }).catch(() => null);
+    const assessorOwner = await runProvider(OWNER_SOURCE, true, () => queryLayer({
+      where: `AIN='${ain}' OR AIN_1=${Number(ain) || 0}`,
+    }), 'This public layer covers only a small VTC study area, not all of Los Angeles County.');
     owner = mergeOwnerResults(owner, assessorOwner);
   }
 
   const latitude = Number(lat);
   const longitude = Number(lng);
   if (!owner?.ownerName && Number.isFinite(latitude) && Number.isFinite(longitude)) {
-    const assessorOwner = await queryLayer({
+    const assessorOwner = await runProvider(OWNER_SOURCE, true, () => queryLayer({
       geometry: `${longitude},${latitude}`,
       geometryType: 'esriGeometryPoint',
       inSR: '4326',
       spatialRel: 'esriSpatialRelIntersects',
-    }).catch(() => null);
+    }), 'This public layer covers only a small VTC study area, not all of Los Angeles County.');
     owner = mergeOwnerResults(owner, assessorOwner);
   }
 
   const parsed = parseAddress(address);
   if (!owner?.ownerName && parsed?.number && parsed.keyWord) {
-    const assessorOwner = await queryLayer({
+    const assessorOwner = await runProvider(OWNER_SOURCE, true, () => queryLayer({
       where: `Situs_House_No=${parsed.number} AND Street_Name LIKE '%${sqlText(parsed.keyWord)}%'`,
-    }).catch(() => null);
+    }), 'This public layer covers only a small VTC study area, not all of Los Angeles County.');
     owner = mergeOwnerResults(owner, assessorOwner);
   }
 
-  const checkedSources = [
-    regridToken() ? REGRID_SOURCE : null,
-    rentcastKey() ? RENTCAST_SOURCE : null,
-    OWNER_SOURCE,
-  ].filter(Boolean);
-  const value = owner || {
+  const uniqueDiagnostics = [...new Map(diagnostics.map(item => [`${item.provider}|${item.status}`, item])).values()];
+  const failed = uniqueDiagnostics.filter(item => item.status === 'error');
+  const configuredCountywide = uniqueDiagnostics.filter(item => item.provider !== OWNER_SOURCE && item.status !== 'not_configured');
+  const message = failed.length
+    ? `Owner lookup could not complete: ${failed.map(item => `${item.provider}: ${item.message}`).join('; ')}.`
+    : configuredCountywide.length
+      ? `No owner match was returned by ${configuredCountywide.map(item => item.provider).join(' or ')}. The free County layer is not countywide.`
+      : 'No countywide ownership provider is working. Add a valid Regrid Parcel API token or a RentCast property-data key; the free County layer covers only a small study area.';
+  const value = owner ? { ...owner, diagnostics: uniqueDiagnostics } : {
     found: false,
     ownerName: null,
     mailingAddress: null,
     situsAddress: clean(address) || null,
     apn: ain || null,
-    source: OWNER_SOURCE,
-    message: `No legal-owner match was returned for this parcel/address. Checked: ${checkedSources.join(', ')}.`,
+    source: null,
+    message,
+    diagnostics: uniqueDiagnostics,
   };
 
-  ownerCache.set(cacheKey, { time: Date.now(), value });
+  const providerFailed = uniqueDiagnostics.some(item => item.status === 'error');
+  ownerCache.set(cacheKey, {
+    time: providerFailed ? Date.now() - CACHE_TTL + 5 * 60 * 1000 : Date.now(),
+    value,
+  });
   return value;
 }
 
@@ -459,5 +506,5 @@ router.get('/', optionalAuth, async (req, res, next) => {
   }
 });
 
-export { normalizeRegridFeature };
+export { normalizeRegridFeature, queryRegrid };
 export default router;

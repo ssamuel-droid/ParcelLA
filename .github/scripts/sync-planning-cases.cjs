@@ -89,8 +89,23 @@ function addressKeys(value) {
   return [...keys];
 }
 
+function parseJsonPayload(value, depth = 0) {
+  if (depth > 3 || typeof value !== 'string') return value;
+  const text = value.trim();
+  if (!text) return null;
+  try {
+    return parseJsonPayload(JSON.parse(text), depth + 1);
+  } catch {
+    return value;
+  }
+}
+
 function array(value) {
-  return Array.isArray(value) ? value : [];
+  const decoded = parseJsonPayload(value);
+  if (Array.isArray(decoded)) return decoded;
+  if (Array.isArray(decoded?.data)) return decoded.data;
+  if (Array.isArray(decoded?.results)) return decoded.results;
+  return [];
 }
 
 async function fetchJson(url, options = {}, attempts = 2) {
@@ -110,7 +125,7 @@ async function fetchJson(url, options = {}, attempts = 2) {
       });
       const text = await response.text();
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 300)}`);
-      return text ? JSON.parse(text) : null;
+      return text ? parseJsonPayload(text) : null;
     } catch (error) {
       lastError = error;
       if (attempt < attempts) await sleep(500 * attempt);
@@ -487,14 +502,23 @@ async function main() {
       'case_number,case_id,documents_checked_at',
       'case_number.asc'
     );
+    const existingDocuments = await fetchAllSupabase(
+      'planning_documents',
+      'case_number',
+      'case_number.asc'
+    );
+    const casesWithDocuments = new Set(existingDocuments.map(row => row.case_number));
     const staleBefore = Date.now() - DOCUMENT_STALE_DAYS * 86400000;
     const documentCandidates = existingCases
       .filter(row => matchedNumbers.has(row.case_number))
-      .filter(row => !row.documents_checked_at || new Date(row.documents_checked_at).getTime() < staleBefore)
+      .filter(row => !casesWithDocuments.has(row.case_number)
+        || !row.documents_checked_at
+        || new Date(row.documents_checked_at).getTime() < staleBefore)
       .sort((a, b) => String(a.documents_checked_at || '').localeCompare(String(b.documents_checked_at || '')))
       .slice(0, DOCUMENT_CASE_LIMIT);
 
-    console.log(`[planning] refreshing PDIS documents for ${documentCandidates.length} matched case(s)`);
+    const missingDocumentCases = documentCandidates.filter(row => !casesWithDocuments.has(row.case_number)).length;
+    console.log(`[planning] refreshing PDIS documents for ${documentCandidates.length} matched case(s); ${missingDocumentCases} have no cached PDF`);
     const documentResults = await mapLimit(documentCandidates, DOCUMENT_CONCURRENCY, async planningCase => {
       const result = await fetchPdisCase(planningCase);
       if (result.documents.length) await upsertChunks('planning_documents', 'case_number,provider_document_id,section', result.documents, 100);
@@ -544,6 +568,7 @@ async function main() {
 
 module.exports = {
   addressKeys,
+  array,
   buildMatches,
   classifyDocument,
   cleanApn,
@@ -551,6 +576,7 @@ module.exports = {
   completedCase,
   mergeCases,
   normalizeAddress,
+  parseJsonPayload,
   planningDocument,
 };
 

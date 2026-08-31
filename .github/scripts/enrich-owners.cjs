@@ -58,7 +58,9 @@ function requestJson(method, url, body = null, headers = {}) {
         try { parsed = d ? JSON.parse(d) : null; } catch {}
         if (res.statusCode >= 300) {
           const msg = parsed?.message || parsed?.error || d.slice(0, 300);
-          reject(new Error(`HTTP ${res.statusCode}: ${msg}`));
+          const error = new Error(`HTTP ${res.statusCode}: ${msg}`);
+          error.status = res.statusCode;
+          reject(error);
           return;
         }
         resolve(parsed);
@@ -133,8 +135,9 @@ async function lookupOwner(site) {
     u.searchParams.set('lon', String(lng));
     u.searchParams.set('radius', '150');
     u.searchParams.set('limit', '1');
+    u.searchParams.set('return_geometry', 'false');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('enhanced_ownership', 'true');
+    u.searchParams.set('return_enhanced_ownership', 'true');
     u.searchParams.set('token', REGRID_TOKEN);
     attempts.push(u.toString());
   }
@@ -143,18 +146,20 @@ async function lookupOwner(site) {
     u.searchParams.set('query', clean(site.address));
     u.searchParams.set('path', REGRID_LA_PATH);
     u.searchParams.set('limit', '1');
+    u.searchParams.set('return_geometry', 'false');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('enhanced_ownership', 'true');
+    u.searchParams.set('return_enhanced_ownership', 'true');
     u.searchParams.set('token', REGRID_TOKEN);
     attempts.push(u.toString());
   }
   if (clean(site.apn)) {
-    const u = new URL(`${REGRID_BASE}/query`);
-    u.searchParams.set('fields[parcelnumb][eq]', clean(site.apn));
-    u.searchParams.set('fields[path][ilike]', REGRID_LA_PATH);
+    const u = new URL(`${REGRID_BASE}/apn`);
+    u.searchParams.set('parcelnumb', clean(site.apn));
+    u.searchParams.set('path', REGRID_LA_PATH);
     u.searchParams.set('limit', '1');
+    u.searchParams.set('return_geometry', 'false');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('enhanced_ownership', 'true');
+    u.searchParams.set('return_enhanced_ownership', 'true');
     u.searchParams.set('token', REGRID_TOKEN);
     attempts.push(u.toString());
   }
@@ -166,6 +171,9 @@ async function lookupOwner(site) {
       if (owner) return owner;
     } catch (e) {
       console.warn(`[owners] Lookup failed for ${site.address}: ${e.message}`);
+      if (e.status === 401 || e.status === 403) {
+        throw new Error(`Regrid rejected REGRID_API_KEY (${e.message}). Replace it before rerunning owner enrichment.`);
+      }
     }
   }
   return null;

@@ -1826,10 +1826,16 @@ function ownerInfoHTML(owner, s = {}) {
   const soldDate = owner.lastSaleDate || owner.recordingDate || owner.saleDate || '';
   const soldPrice = owner.lastSaleAmount || owner.salePrice || '';
   if (!owner.ownerName && !soldDate && !soldPrice) {
+    const diagnostics = Array.isArray(owner.diagnostics) ? owner.diagnostics : [];
+    const statusText = diagnostics.map(item => {
+      const status = item.status === 'not_configured' ? 'not configured' : String(item.status || '').replace('_', ' ');
+      return `${item.provider}: ${status}${item.message ? ` (${item.message})` : ''}`;
+    }).join(' | ');
     return `<div class="ownerbox">
       <b>Owner not returned</b>
       <span>${escapeText(owner.message || 'No owner record was returned for this parcel/address.')}</span>
       <span>Address checked: ${escapeText(owner.situsAddress || s.addr || '')}</span>
+      ${statusText ? `<span><b>Provider status:</b> ${escapeText(statusText)}</span>` : ''}
     </div>`;
   }
   return `<table class="ct ownerct">
@@ -1861,7 +1867,7 @@ async function hydrateOwnerInfo(s) {
     el.innerHTML = '<div class="ownerbox"><b>Owner data locked</b><span>Sign in for a free 24-hour account to view owner and sale data.</span></div>';
     return;
   }
-  el.innerHTML = '<div class="ownerbox"><b>Loading owner info...</b><span>Checking the assessor owner feed for this parcel.</span></div>';
+  el.innerHTML = '<div class="ownerbox"><b>Loading owner info...</b><span>Checking configured parcel and property-data providers.</span></div>';
   try {
     const owner = await fetchOwnerInfo(s);
     el.innerHTML = ownerInfoHTML(owner, s);

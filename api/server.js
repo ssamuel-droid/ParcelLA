@@ -139,7 +139,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status:    'ok',
     version:   '3.0.0',
-    release:   '2026-08-31-owner-planning-retrieval',
+    release:   '2026-08-31-planning-pdf-owner-diagnostics',
     timestamp: new Date().toISOString(),
     env:       process.env.NODE_ENV ?? 'development',
     services: {
@@ -152,6 +152,11 @@ app.get('/api/health', (req, res) => {
       resend:    !!process.env.RESEND_API_KEY,
       anthropic: !!process.env.ANTHROPIC_API_KEY,
       regrid:    !!(process.env.REGRID_API_KEY || process.env.REGRID_TOKEN),
+    },
+    ownerData: {
+      regridConfigured: !!(process.env.REGRID_API_KEY || process.env.REGRID_TOKEN),
+      rentcastConfigured: !!process.env.RENTCAST_API_KEY,
+      note: 'Configured means a credential exists; each owner lookup reports whether the provider accepted it.',
     },
   });
 });
