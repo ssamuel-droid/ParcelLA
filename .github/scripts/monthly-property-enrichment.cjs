@@ -142,13 +142,22 @@ function compactRentListing(r) {
 function compactPropertyRecord(r) {
   const lat = r.latitude ?? r.lat;
   const lng = r.longitude ?? r.lng;
+  const rentcastOwnerNames = Array.isArray(r.owner?.names)
+    ? r.owner.names.map(clean).filter(Boolean)
+    : [];
   const ownerName = first(
+    rentcastOwnerNames.length ? [...new Set(rentcastOwnerNames)].join(' / ') : null,
     r.ownerName,
-    r.owner,
+    typeof r.owner === 'string' ? r.owner : null,
     r.owner1,
     r.owner_name,
     r.ownerNames?.[0],
     r.taxAssessments?.[0]?.ownerName
+  );
+  const ownerMailingAddress = first(
+    r.owner?.mailingAddress?.formattedAddress,
+    r.ownerMailingAddress,
+    r.owner_mailing_address
   );
   const salePrice = money(
     r.lastSalePrice,
@@ -184,6 +193,11 @@ function compactPropertyRecord(r) {
     yearBuilt: asNumber(r.yearBuilt),
     units,
     ownerName,
+    ownerType: first(r.owner?.type, r.ownerType),
+    ownerMailingAddress,
+    ownerOccupied: typeof r.ownerOccupied === 'boolean' ? r.ownerOccupied : null,
+    assessorId: first(r.assessorID, r.assessorId, r.apn),
+    legalDescription: first(r.legalDescription),
     lastSaleDate: saleDate,
     lastSalePrice: salePrice,
     pricePerUnit: salePrice && units ? Math.round(salePrice / units) : null,
@@ -597,7 +611,11 @@ async function main() {
   console.log(`[monthly-enrich] Complete. Market API calls: ${marketRequests}; cached rentals: ${rentalRows}; cached recent sales: ${saleRows}; site records updated: ${siteUpdated}; site misses: ${siteMiss}.`);
 }
 
-main().catch(err => {
-  console.error('[monthly-enrich] Fatal:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[monthly-enrich] Fatal:', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { compactPropertyRecord };

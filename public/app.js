@@ -1822,19 +1822,21 @@ function ownerMoneyLine(label, value) {
 
 function ownerInfoHTML(owner, s = {}) {
   if (!owner) return '<div class="ownerbox"><b>Owner lookup unavailable</b><span>Owner data could not be loaded for this address.</span></div>';
-  if (!owner.found && !owner.ownerName) {
+  const soldDate = owner.lastSaleDate || owner.recordingDate || owner.saleDate || '';
+  const soldPrice = owner.lastSaleAmount || owner.salePrice || '';
+  if (!owner.ownerName && !soldDate && !soldPrice) {
     return `<div class="ownerbox">
       <b>Owner not returned</b>
       <span>${escapeText(owner.message || 'No owner record was returned for this parcel/address.')}</span>
       <span>Address checked: ${escapeText(owner.situsAddress || s.addr || '')}</span>
     </div>`;
   }
-  const soldDate = owner.lastSaleDate || owner.recordingDate || owner.saleDate || '';
-  const soldPrice = owner.lastSaleAmount || owner.salePrice || '';
   return `<table class="ct ownerct">
-    ${ownerLine('Owner', owner.ownerName)}
+    ${ownerLine('Owner', owner.ownerName || 'Not returned')}
+    ${ownerLine('Owner type', owner.ownerType)}
     ${ownerLine('Date sold', soldDate)}
     ${ownerMoneyLine('Sale price', soldPrice)}
+    ${ownerLine('Source', owner.source)}
   </table>`;
 }
 
@@ -1843,8 +1845,10 @@ function ownerPDFRows(owner, s = {}) {
   const soldPrice = owner?.lastSaleAmount || owner?.salePrice || '';
   const rows = [
     ['Owner', owner?.ownerName || 'Not returned'],
+    ['Owner Type', owner?.ownerType || ''],
     ['Date Sold', soldDate],
     ['Sale Price', soldPrice ? fmtD(soldPrice) : ''],
+    ['Owner Data Source', owner?.source || ''],
   ].filter(([, value]) => value);
   return rows.map(([label, value]) => `<tr><td>${escapeText(label)}</td><td>${escapeText(value)}</td></tr>`).join('');
 }
@@ -2443,8 +2447,9 @@ function planningDocumentsHTML(site) {
   return `<div class="ownerbox" style="gap:7px">
     <b>${discovery.status === 'index_pending' || discovery.status === 'index_unavailable' ? 'Planning PDF check pending' : 'No planning PDF available'}</b>
     <span>${discovery.status === 'index_pending' || discovery.status === 'index_unavailable'
-      ? 'ParcelLA has not completed document discovery for this property.'
-      : 'ParcelLA did not find a verified direct PDF for this property.'}</span>
+      ? 'ParcelLA has not completed its City Planning document sync or has not matched this address/APN yet.'
+      : 'ParcelLA did not match a verified, direct City-hosted PDF to this address/APN. This does not prove that no documents exist.'}</span>
+    <span>Planning records identify applicants and project representatives; legal ownership is checked separately against parcel, assessor, deed, and RentCast property records.</span>
   </div>`;
 }
 
@@ -4389,8 +4394,10 @@ async function exportExcel(id) {
     },
     owner: {
       ownerName: ownerInfo?.ownerName || '',
+      ownerType: ownerInfo?.ownerType || '',
       lastSaleDate: ownerInfo?.lastSaleDate || ownerInfo?.recordingDate || ownerInfo?.saleDate || '',
       lastSaleAmount: ownerInfo?.lastSaleAmount || ownerInfo?.salePrice || 0,
+      source: ownerInfo?.source || '',
     },
     planning: planningExportData(s),
     assumptions: {

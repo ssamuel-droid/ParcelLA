@@ -621,7 +621,7 @@ function ownerInfoFromRaw(raw = {}, site = {}) {
   const apn = firstText(stored.apn, raw.apn, raw.ain, raw.AIN, raw.parcel_number, site.apn);
   if (!ownerName && !applicantName && !mailingAddress && !apn) return {};
   return {
-    ownerName: ownerName || applicantName || null,
+    ownerName: ownerName || null,
     ownerApplicantName: applicantName,
     ownerMailingAddress: mailingAddress,
     ownerSitusAddress: firstText(stored.situs_address, stored.situsAddress, raw.situs_address, raw.site_address, site.address, site.addr),

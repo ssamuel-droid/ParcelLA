@@ -8,6 +8,8 @@ const OWNER_SOURCE = 'LA County Assessor Parcels 2023 DS04 public owner feed';
 const REGRID_SOURCE = 'Regrid Parcel API';
 const REGRID_BASE = 'https://app.regrid.com/api/v2/parcels';
 const REGRID_LA_PATH = '/us/ca/los-angeles';
+const RENTCAST_SOURCE = 'RentCast property records';
+const RENTCAST_BASE = 'https://api.rentcast.io/v1/properties';
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const ownerCache = new Map();
 
@@ -124,16 +126,88 @@ function normalizeOwnerFeature(feature) {
   };
 }
 
-async function fetchJson(url, timeoutMs = 9000) {
+async function fetchJson(url, timeoutMs = 9000, headers = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json', ...headers },
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } finally {
     clearTimeout(timer);
   }
+}
+
+function rentcastKey() {
+  return clean(process.env.RENTCAST_API_KEY);
+}
+
+function normalizeRentCastRecord(record) {
+  const names = Array.isArray(record?.owner?.names)
+    ? unique(record.owner.names.map(clean).filter(Boolean))
+    : [];
+  const ownerName = names.join(' / ');
+  const mailing = record?.owner?.mailingAddress || {};
+  return {
+    found: !!ownerName,
+    ownerName: ownerName || null,
+    ownerType: clean(record?.owner?.type) || null,
+    ownerOccupied: typeof record?.ownerOccupied === 'boolean' ? record.ownerOccupied : null,
+    mailingAddress: clean(mailing.formattedAddress) || formatAddress(
+      [mailing.addressLine1, mailing.addressLine2],
+      compact([mailing.city, mailing.state]).join(', '),
+      mailing.zipCode
+    ) || null,
+    situsAddress: clean(record?.formattedAddress) || null,
+    apn: clean(record?.assessorID) || null,
+    lastSaleDate: cleanDate(record?.lastSaleDate),
+    recordingDate: cleanDate(record?.lastSaleDate),
+    lastSaleAmount: cleanMoney(record?.lastSalePrice),
+    source: RENTCAST_SOURCE,
+  };
+}
+
+async function queryRentCast(params) {
+  const key = rentcastKey();
+  const address = clean(params.address);
+  if (!key || !address) return null;
+
+  const url = new URL(RENTCAST_BASE);
+  url.searchParams.set('address', /\bCA\b|CALIFORNIA/i.test(address)
+    ? address
+    : `${address}, Los Angeles, CA`);
+  url.searchParams.set('limit', '1');
+  const data = await fetchJson(url.toString(), 10000, { 'X-Api-Key': key });
+  const record = Array.isArray(data) ? data[0] : data?.properties?.[0] || data?.data?.[0];
+  if (!record) return null;
+  const normalized = normalizeRentCastRecord(record);
+  return normalized.ownerName || normalized.lastSaleDate || normalized.lastSaleAmount
+    ? normalized
+    : null;
+}
+
+function mergeOwnerResults(current, candidate) {
+  if (!current) return candidate;
+  if (!candidate) return current;
+  const sources = unique([current.source, candidate.source].map(clean).filter(Boolean));
+  return {
+    ...candidate,
+    ...current,
+    found: !!(current.ownerName || candidate.ownerName),
+    ownerName: current.ownerName || candidate.ownerName || null,
+    ownerType: current.ownerType || candidate.ownerType || null,
+    ownerOccupied: current.ownerOccupied ?? candidate.ownerOccupied ?? null,
+    mailingAddress: current.mailingAddress || candidate.mailingAddress || null,
+    situsAddress: current.situsAddress || candidate.situsAddress || null,
+    apn: current.apn || candidate.apn || null,
+    lastSaleDate: current.lastSaleDate || candidate.lastSaleDate || null,
+    recordingDate: current.recordingDate || candidate.recordingDate || null,
+    lastSaleAmount: current.lastSaleAmount || candidate.lastSaleAmount || null,
+    source: sources.join(' + '),
+  };
 }
 
 async function queryLayer(params) {
@@ -301,29 +375,42 @@ async function lookupOwner({ address, lat, lng, apn }) {
   let owner = null;
   owner = await queryRegrid({ address, lat, lng, apn }).catch(() => null);
 
+  if (!owner?.ownerName) {
+    const rentcastOwner = await queryRentCast({ address, lat, lng, apn }).catch(() => null);
+    owner = mergeOwnerResults(owner, rentcastOwner);
+  }
+
   const ain = clean(apn).replace(/\D/g, '');
-  if (!owner && ain) {
-    owner = await queryLayer({ where: `AIN='${ain}' OR AIN_1=${Number(ain) || 0}` }).catch(() => null);
+  if (!owner?.ownerName && ain) {
+    const assessorOwner = await queryLayer({ where: `AIN='${ain}' OR AIN_1=${Number(ain) || 0}` }).catch(() => null);
+    owner = mergeOwnerResults(owner, assessorOwner);
   }
 
   const latitude = Number(lat);
   const longitude = Number(lng);
-  if (!owner && Number.isFinite(latitude) && Number.isFinite(longitude)) {
-    owner = await queryLayer({
+  if (!owner?.ownerName && Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    const assessorOwner = await queryLayer({
       geometry: `${longitude},${latitude}`,
       geometryType: 'esriGeometryPoint',
       inSR: '4326',
       spatialRel: 'esriSpatialRelIntersects',
     }).catch(() => null);
+    owner = mergeOwnerResults(owner, assessorOwner);
   }
 
   const parsed = parseAddress(address);
-  if (!owner && parsed?.number && parsed.keyWord) {
-    owner = await queryLayer({
+  if (!owner?.ownerName && parsed?.number && parsed.keyWord) {
+    const assessorOwner = await queryLayer({
       where: `Situs_House_No=${parsed.number} AND Street_Name LIKE '%${sqlText(parsed.keyWord)}%'`,
     }).catch(() => null);
+    owner = mergeOwnerResults(owner, assessorOwner);
   }
 
+  const checkedSources = [
+    regridToken() ? REGRID_SOURCE : null,
+    rentcastKey() ? RENTCAST_SOURCE : null,
+    OWNER_SOURCE,
+  ].filter(Boolean);
   const value = owner || {
     found: false,
     ownerName: null,
@@ -331,7 +418,7 @@ async function lookupOwner({ address, lat, lng, apn }) {
     situsAddress: clean(address) || null,
     apn: ain || null,
     source: OWNER_SOURCE,
-    message: 'No owner match returned by the assessor owner feed for this parcel/address.',
+    message: `No legal-owner match was returned for this parcel/address. Checked: ${checkedSources.join(', ')}.`,
   };
 
   ownerCache.set(cacheKey, { time: Date.now(), value });

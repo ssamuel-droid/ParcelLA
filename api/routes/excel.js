@@ -160,8 +160,10 @@ function setRightAligned(ws, cols = []) {
 function compactOwner(owner = {}) {
   return {
     ownerName: text(owner.ownerName) || 'Not returned',
+    ownerType: text(owner.ownerType),
     lastSaleDate: text(owner.lastSaleDate || owner.recordingDate || owner.saleDate),
     lastSaleAmount: money(owner.lastSaleAmount || owner.salePrice || 0),
+    source: text(owner.source),
   };
 }
 
@@ -313,8 +315,10 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     writeRow(ownerWs, ['Owner & Sale', siteName], 'title');
     writeRow(ownerWs, ['Field', 'Value'], 'header');
     writeRow(ownerWs, ['Owner', owner.ownerName]);
+    writeRow(ownerWs, ['Owner type', owner.ownerType]);
     writeRow(ownerWs, ['Date sold', owner.lastSaleDate]);
     writeRow(ownerWs, ['Sale price', cell(owner.lastSaleAmount, FMT.money)]);
+    writeRow(ownerWs, ['Source', owner.source]);
 
     const permitWs = wb.addWorksheet('Permit Details');
     setupSheet(permitWs, [28, 72]);
