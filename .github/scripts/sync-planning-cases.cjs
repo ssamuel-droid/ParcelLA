@@ -388,9 +388,9 @@ function classifyDocument(record) {
   return 'other';
 }
 
-function planningDocument(record, section) {
+function planningDocument(record, section, requestedCaseNumber = '') {
   const providerId = clean(record.Id || record.TpId || record.EncodedId);
-  const caseNumber = clean(record.CaseNumber || record.MeetingId).toUpperCase();
+  const caseNumber = clean(requestedCaseNumber || record.CaseNumber || record.MeetingId).toUpperCase();
   const url = clean(record.ExternalUrl);
   if (!providerId || !caseNumber || !/^https:\/\//i.test(url)) return null;
   const comments = clean(record.Comments);
@@ -437,11 +437,17 @@ async function fetchPdisCase(planningCase) {
   const addressesIndex = addressesUrl ? (initialUrl ? (relatedUrl ? 3 : 2) : (relatedUrl ? 2 : 1)) : -1;
   const addresses = addressesIndex >= 0 && results[addressesIndex]?.status === 'fulfilled' ? array(results[addressesIndex].value) : [];
   const zimasPin = clean(addresses.find(row => clean(row.pin))?.pin);
+  const documentsByKey = new Map();
+  const documentRows = [
+    ...array(approved).map(row => planningDocument(row, 'approved', planningCase.case_number)),
+    ...array(initial).map(row => planningDocument(row, 'initial_submittal', planningCase.case_number)),
+  ].filter(Boolean);
+  for (const document of documentRows) {
+    const key = [document.case_number, document.provider_document_id, document.section].join('|');
+    if (!documentsByKey.has(key)) documentsByKey.set(key, document);
+  }
   return {
-    documents: [
-      ...array(approved).map(row => planningDocument(row, 'approved')),
-      ...array(initial).map(row => planningDocument(row, 'initial_submittal')),
-    ].filter(Boolean),
+    documents: [...documentsByKey.values()],
     relatedCaseNumbers: [...new Set(array(related).map(row => clean(row.caseNumber || row.CaseNumber).toUpperCase()).filter(Boolean))],
     addresses,
     zimasPin: zimasPin || null,
