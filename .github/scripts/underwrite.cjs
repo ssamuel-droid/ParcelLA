@@ -1,5 +1,9 @@
 // ParceLLA — Underwriting Engine
 const https = require('https');
+const {
+  resolveEd1Affordability,
+  rentsForSite: underwritingRentsForSite,
+} = require('../../src/data/affordableRents.cjs');
 
 const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -1048,7 +1052,15 @@ function uw(p, inspectionCheck = null) {
   const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='New House'?220000:228000;
   const estimatedUnits = Math.max(Math.round((p.valuation||228000)/costPerUnit), t==='New House' ? 1 : 2);
   const u = t==='New House' ? 1 : (actualUnits > 0 ? actualUnits : Math.max(estimatedUnits, 2));
-  const R = RENTS[h]||RENTS['Koreatown'];
+  const isEd1 = isEd1Permit(p, workDescription);
+  const ed1Affordability = resolveEd1Affordability({
+    ...p,
+    isEd1,
+    workDescription,
+  });
+  const marketRents = RENTS[h]||RENTS['Koreatown'];
+  const selectedRents = underwritingRentsForSite({ isEd1, ed1Affordability }, marketRents);
+  const R = { s:selectedRents.studio, o:selectedRents.one, t:selectedRents.two, th:selectedRents.three };
   const cap = CAPS[h]||0.0525;
   const hc = HC[t]||285;
   const unitMix = unitMixForPermit(p, t);
@@ -1125,7 +1137,8 @@ function uw(p, inspectionCheck = null) {
       unit_mix_counts:unitMix.counts,
       unit_mix_source:unitMix.source,
       unit_mix_parsed_total:unitMix.parsedTotal,
-      is_ed1:isEd1Permit(p, workDescription),
+      is_ed1:isEd1,
+      ed1_affordability:ed1Affordability,
       building_sf:buildingSize.totalSf,
       building_sf_source:buildingSize.source,
       building_sf_parsed:buildingSize.parsed,

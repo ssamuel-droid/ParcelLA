@@ -4,6 +4,9 @@
  */
 
 import { RENTS, CAP_RATES, RSMEANS, SCALE_DISCOUNTS } from '../data/submarkets.js';
+import affordableRents from '../data/affordableRents.cjs';
+
+const { resolveEd1Affordability, rentsForSite: underwritingRentsForSite } = affordableRents;
 
 const DEFAULTS = {
   softPct:       0.18,   // % of hard costs
@@ -68,7 +71,9 @@ export function runModel(site, overrides = {}) {
   if (overrides.ltc != null) cfg.ltc = +overrides.ltc;
   const { hood, type, price, units, avgUnitSF, hasDemo, unitMix } = site;
 
-  const R   = RENTS[hood] ?? RENTS['Koreatown'];  // fallback to Koreatown if hood not found
+  const marketRents = RENTS[hood] ?? RENTS['Koreatown'];  // fallback to Koreatown if hood not found
+  const ed1Affordability = resolveEd1Affordability(site);
+  const R = underwritingRentsForSite(site, marketRents);
   const cap = CAP_RATES[hood] ?? CAP_RATES['Koreatown'];
   if (!RENTS[hood]) console.warn(`[model] Unknown hood: "${hood}" — using Koreatown fallback`);
   const totalSF = units * avgUnitSF;
@@ -175,7 +180,7 @@ export function runModel(site, overrides = {}) {
 
   return {
     // inputs echoed
-    hood, type, price, units, avgUnitSF, totalSF, unitMix, cap,
+    hood, type, price, units, avgUnitSF, totalSF, unitMix, cap, ed1Affordability,
 
     // costs
     hardCosts, softCosts, softDetail, carryCost, demolition, totalCost,

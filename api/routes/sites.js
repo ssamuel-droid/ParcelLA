@@ -12,6 +12,7 @@ import { Router } from 'express';
 import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel, runScenarios } from '../../src/model/financialModel.js';
 import { RENTS } from '../../src/data/submarkets.js';
+import affordableRents from '../../src/data/affordableRents.cjs';
 import { enrichSite }    from '../../src/data/laOpenData.js';
 import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/DemandScore.js';
 import { requireAuth, optionalAuth, getUserAccessFast } from '../middleware/auth.js';
@@ -22,6 +23,8 @@ import {
   buildLandCompBenchmarks,
   estimateLandBasisFromComps,
 } from '../../src/data/landValue.js';
+
+const { resolveEd1Affordability, rentsForSite: underwritingRentsForSite } = affordableRents;
 
 const router = Router();
 
@@ -818,7 +821,12 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   });
   const neighborhood = normalizedNeighborhood(s) || 'Koreatown';
   const unitMix = unitMixForSite(rawPermit, s, type);
-  const rents = RENTS[neighborhood] || RENTS.Koreatown;
+  const ed1Affordability = resolveEd1Affordability({
+    ...s,
+    isEd1: isEd1Project(s, rawPermit),
+    workDescription: rawPermit.work_description || rawPermit.project_description,
+  });
+  const rents = underwritingRentsForSite({ ...s, isEd1: !!ed1Affordability, ed1Affordability }, RENTS[neighborhood] || RENTS.Koreatown);
   const blendedRent = (
     unitMix.mix.studio * (rents.studio || 0) +
     unitMix.mix.one * (rents.one || 0) +
@@ -861,7 +869,8 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const recastTotalCost = usedDynamicLand ? landCost + hardCosts + softCosts + recastCarry : totalCost;
   const houseExit = houseExitEstimate(s, rawPermit, neighborhood);
   const exitValue = houseExit?.value || s.exit_value || 0;
-  const noi = type === 'New House' ? 0 : (unitMix.source === 'Parsed from permit text'
+  const recastIncome = unitMix.source === 'Parsed from permit text' || !!ed1Affordability;
+  const noi = type === 'New House' ? 0 : (recastIncome
     ? Math.round(((grossPotentialRent * 0.95) + (units * 600)) * 0.65)
     : (s.noi || 0));
   const netProfit = needsLandComp ? null : (usedDynamicLand && exitValue ? exitValue - recastTotalCost : (s.net_profit || 0));
@@ -879,6 +888,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   return {
     needsLandComp,
     landBasisReliable: !needsLandComp,
+    ed1Affordability,
     noi,
     totalCost: recastTotalCost,
     landCost,
@@ -897,7 +907,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     exitValueBasisQuantity: houseExit?.basisQuantity || rawPermit.exit_value_basis_quantity || null,
     exitProceeds:  netProfit,
     netProfit,
-    grossPotentialRent: unitMix.source === 'Parsed from permit text' ? grossPotentialRent : undefined,
+    grossPotentialRent: recastIncome ? grossPotentialRent : undefined,
     leveragedIRR:  recastIrr,
     capRateOnCost: recastTotalCost ? noi / recastTotalCost : (s.cap_on_cost || 0) / 100,
     devSpreadPct:  recastTotalCost ? (exitValue - recastTotalCost) / recastTotalCost : (s.dev_spread_pct || 0) / 100,
@@ -1148,6 +1158,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     permitValuation: rawPermit.permit_valuation || model.permitValuation || null,
     lotSfSource:  rawPermit.lot_sf_source || null,
     isEd1:        isEd1Project(s, rawPermit),
+    ed1Affordability: model.ed1Affordability || resolveEd1Affordability({ ...s, raw_permit_data: rawPermit }),
     stories:      rawPermit.stories || rawPermit.of_stories || rawPermit.number_of_stories || permitDetail.stories || null,
     exitValueSource: rawPermit.exit_value_source || model.exitValueSource || null,
     exitValueMetric: rawPermit.exit_value_metric || model.exitValueMetric || null,

@@ -238,6 +238,8 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     const salesComps = tableRows(p.salesComps || [], 50);
     const rentComps = tableRows(p.rentComps || [], 50);
     const isHouse = text(site.type).toLowerCase() === 'new house' || appraisal.isHouse === true;
+    const ed1Profile = assumptions.ed1Affordability || site.ed1Affordability || null;
+    const isEd1 = !isHouse && (site.isEd1 === true || !!ed1Profile);
 
     const wb = new ExcelJS.Workbook();
     wb.creator = 'ParceLLA';
@@ -299,6 +301,11 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       A.exitCap = ref('Assumptions', exitCapRow.number, 2);
       addAssumption('otherIncomeUnit', 'Other income / unit / year', money(assumptions.otherIncomePerUnit || (num(site.units) ? num(income.otherIncome) / num(site.units) : 600)), FMT.money, 'Parking, laundry, storage, fees, and other ancillary income.');
       addAssumption('rentPremium', 'Plan rent premium / haircut', rentPremiumValue, FMT.pct, text(assumptions.planLabel || costs.planLabel || 'Selected plan'));
+      if (isEd1) {
+        addAssumption('ed1Ami', 'ED1 gross-rent limit AMI', num(ed1Profile?.amiPct, 80) / 100, FMT.pct, `${text(ed1Profile?.scheduleYear || 2026)} ${text(ed1Profile?.schedule || 'CTCAC Schedule IX')}`);
+        writeRow(assumptionsWs, ['ED1 rent-limit source', text(ed1Profile?.source), text(ed1Profile?.sourceUrl)]);
+        writeRow(assumptionsWs, ['ED1 underwriting disclosure', text(assumptions.rentRestrictionNote || ed1Profile?.caveat), 'Final LAHD covenant, lower AMI tiers, and the project-specific utility allowance control.']);
+      }
     }
 
     const ownerWs = wb.addWorksheet('Owner & Sale');
@@ -385,8 +392,9 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       writeRow(houseInputWs, ['Method', 'Sales comparison approach', 'Completed building SF x comp-derived resale $/SF.']);
     } else {
       const rentWs = wb.addWorksheet('Rent Roll');
-      setupSheet(rentWs, [22, 12, 16, 16, 16, 18]);
-      writeRow(rentWs, ['Rent Roll', siteName], 'title');
+      setupSheet(rentWs, [22, 12, 16, 16, 16, 58]);
+      writeRow(rentWs, [isEd1 ? 'ED1 Restricted Rent Roll' : 'Rent Roll', siteName], 'title');
+      if (isEd1) writeRow(rentWs, ['Restriction basis', `${num(ed1Profile?.amiPct, 80)}% AMI gross-rent ceiling`, text(assumptions.rentRestrictionNote || ed1Profile?.caveat)], 'section');
       writeRow(rentWs, ['Unit type', 'Units', 'Rent / month', 'Monthly rent', 'Annual rent', 'Source'], 'header');
       const rentStart = rentWs.rowCount + 1;
       let rentAnnualSubtotal = 0;
@@ -724,6 +732,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     writeRow(summaryWs, ['Address', siteName, text(site.addressNote || '')]);
     writeRow(summaryWs, ['Neighborhood', text(site.hood || site.neighborhood), '']);
     writeRow(summaryWs, ['Project type', text(site.type), '']);
+    if (isEd1) writeRow(summaryWs, ['Program', `ED1 - ${num(ed1Profile?.amiPct, 80)}% AMI gross-rent limits`, text(assumptions.rentRestrictionNote || ed1Profile?.caveat)]);
     writeRow(summaryWs, [isHouse ? 'Homes' : 'Units', formula(`${A.units}`, num(site.units, 0), FMT.whole), 'Assumptions tab']);
     writeRow(summaryWs, ['Owner', owner.ownerName, 'Owner & Sale tab']);
     writeRow(summaryWs, ['Date sold', owner.lastSaleDate, 'Owner & Sale tab']);

@@ -221,9 +221,48 @@ function typeMatchesSelected(s, selectedTypes) {
 }
 
 function isEd1Site(s) {
-  if (s?.isEd1 === true) return true;
+  if (s?.isEd1 === true || s?.ed1Affordability || s?._m?.ed1Affordability) return true;
   const text = [s?.workDescription, s?.program, s?.permitProgram].filter(Boolean).join(' ');
   return /(^|[^a-z0-9])ed[- ]?1([^a-z0-9]|$)|executive directive\s*1/i.test(text);
+}
+
+const ED1_RENT_PROFILE_2026 = Object.freeze({
+  program: 'ED1',
+  scheduleYear: 2026,
+  effectiveDate: '2026-05-01',
+  amiPct: 80,
+  schedule: 'CTCAC Schedule IX',
+  source: '2026 CTCAC Maximum Multi-Family Tax Subsidy Rents - Los Angeles County',
+  sourceUrl: 'https://www.treasurer.ca.gov/sites/default/files/ctcac/2026%20Rent%20Limits%205-1-26%2B%20-%20ADA_0.pdf',
+  monthlyRents: Object.freeze({ studio: 2332, one: 2499, two: 2998, three: 3465 }),
+  grossRentLimits: true,
+  utilityAllowanceDeducted: false,
+  assumption: 'Underwritten at the 80% AMI gross-rent ceiling for every unit; optional moderate-income units are not assumed.',
+  caveat: 'The final LAHD covenant and entitlement control. Lower AMI tiers and the project-specific utility allowance can reduce tenant-paid rent.',
+});
+
+function ed1AffordabilityForSite(s = {}) {
+  if (!isEd1Site(s)) return null;
+  const saved = s.ed1Affordability || s._m?.ed1Affordability || {};
+  const rents = saved.monthlyRents || saved.monthly_rents || {};
+  const monthlyRents = ['studio', 'one', 'two', 'three'].every(key => Number(rents[key]) > 0)
+    ? Object.fromEntries(['studio', 'one', 'two', 'three'].map(key => [key, Number(rents[key])]))
+    : { ...ED1_RENT_PROFILE_2026.monthlyRents };
+  return { ...ED1_RENT_PROFILE_2026, ...saved, monthlyRents };
+}
+
+function appliedRentPremiumForSite(s, value) {
+  const premium = Number(value) || 0;
+  return isEd1Site(s) ? Math.min(0, premium) : premium;
+}
+
+function ed1RentDisclosure(s = {}) {
+  const profile = ed1AffordabilityForSite(s);
+  if (!profile) return '';
+  const utilityText = profile.utilityAllowanceDeducted
+    ? 'Project utility allowance is reflected.'
+    : 'Gross limits shown before the project-specific utility allowance.';
+  return `${profile.scheduleYear} ${profile.schedule} at ${profile.amiPct}% AMI. ${profile.assumption} ${utilityText} ${profile.caveat}`;
 }
 
 function siteMetaLine(s) {
@@ -2488,13 +2527,14 @@ function closeDetail() {
 function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan()) {
   const metrics = currentUserMetrics();
   const planScenario = plan.key !== 'auto';
-  const recastIncome = planScenario || !!costs || metricsCustomized();
+  const recastIncome = planScenario || !!costs || metricsCustomized() || isEd1Site(s);
   const storedNoi = Math.round(s.noi || 0);
   const opexRatio = metricRate('expenseRatioPct') || 0.35;
   const vacancyRate = metricRate('vacancyPct') || 0.05;
   const unitMixGrossRent = grossPotentialRentFromUnitMix(s);
   const baseGrossPotentialRent = Math.round(unitMixGrossRent || s.grossPotentialRent || (storedNoi ? storedNoi / Math.max(0.01, (1 - opexRatio) * (1 - vacancyRate)) : 0));
-  const grossPotentialRent = Math.round(baseGrossPotentialRent * (1 + (plan.rentPremium || 0)));
+  const rentPremium = appliedRentPremiumForSite(s, plan.rentPremium);
+  const grossPotentialRent = Math.round(baseGrossPotentialRent * (1 + rentPremium));
   const vacancyLoss = Math.round(recastIncome ? grossPotentialRent * vacancyRate : (s.vacancyLoss ?? grossPotentialRent * vacancyRate));
   const otherIncome = Math.round(s.otherIncome ?? (s.units || 0) * 600);
   const effectiveGrossIncome = Math.round(recastIncome ? grossPotentialRent - vacancyLoss + otherIncome : (s.effectiveGrossIncome || (grossPotentialRent - vacancyLoss + otherIncome)));
@@ -2530,6 +2570,8 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
 }
 
 function rentsForSite(s = {}, submarket = null) {
+  const ed1 = ed1AffordabilityForSite(s);
+  if (ed1) return { ...ed1.monthlyRents };
   const apiRents = submarket?.rents || {};
   const localRents = FRONTEND_RENTS[siteNeighborhood(s)] || FRONTEND_RENTS.Koreatown || {};
   return {
@@ -2603,6 +2645,7 @@ function unitMixDisplayRows(s = {}, submarket = null) {
   const info = normalizedUnitMixForSite(s);
   const counts = unitMixCountsForSite(s);
   const rents = rentsForSite(s, submarket);
+  const ed1 = ed1AffordabilityForSite(s);
   return [
     ['studio', 'Studio'],
     ['one', '1 Bedroom'],
@@ -2619,6 +2662,7 @@ function unitMixDisplayRows(s = {}, submarket = null) {
       rent,
       monthly: Math.round(unitCount * rent),
       annual: Math.round(unitCount * rent * 12),
+      source: ed1 ? `${ed1.scheduleYear} ${ed1.schedule} - ${ed1.amiPct}% AMI gross limit` : info.source,
     };
   });
 }
@@ -2626,6 +2670,8 @@ function unitMixDisplayRows(s = {}, submarket = null) {
 function unitMixSourceText(s = {}) {
   const info = normalizedUnitMixForSite(s);
   const parsed = info.parsedTotal ? `; parsed ${info.parsedTotal} referenced units` : '';
+  const ed1 = ed1AffordabilityForSite(s);
+  if (ed1) return `${info.source}${parsed}; rents: ${ed1.scheduleYear} ${ed1.schedule}, ${ed1.amiPct}% AMI gross limits`;
   return `${info.source}${parsed}`;
 }
 
@@ -2636,6 +2682,7 @@ function unitMixRowsHTML(s = {}) {
       <tr><td>Source</td><td>${escapeText(unitMixSourceText(s))}</td></tr>
       ${rows.map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}% | ${fmtN(row.units)} units | ${fmtD(row.rent)}/mo | ${fmtD(row.annual)}/yr</td></tr>`).join('')}
       <tr class="tot"><td>Gross potential rent</td><td>${fmtD(grossPotentialRentFromUnitMix(s))}</td></tr>
+      ${isEd1Site(s) ? `<tr><td>ED1 rent limitation</td><td>${escapeText(ed1RentDisclosure(s))}</td></tr>` : ''}
     </table>`;
 }
 
@@ -2727,7 +2774,8 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
     loanToCost: ltc,
     interestRate,
     months: plan.months || 18,
-    rentPremium: plan.rentPremium || 0,
+    requestedRentPremium: plan.rentPremium || 0,
+    rentPremium: appliedRentPremiumForSite(s, plan.rentPremium || 0),
     storedHardPsf,
     recast: !!shouldRecastCarry,
     source: override ? 'custom hard cost' : plan.key !== 'auto' ? plan.label : savedMetricsCustomized() ? 'user settings' : currentInterestRateOverride() ? 'interest override' : shouldRecastCosts ? 'current base assumption' : 'stored model',
@@ -2894,7 +2942,7 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">Listing status</div><div class="icv">${listingStatus}</div></div>
       <div class="ic"><div class="icl">Development status</div><div class="icv">${devStatus}</div></div>
       <div class="ic"><div class="icl">${s.type === 'New House' ? 'Lot / Home size' : 'Units / Avg SF'}</div><div class="icv">${s.type === 'New House' ? escapeText(siteLotText(s) + ' / ' + siteProjectSfText(s)) : escapeText(siteUnitsText(s)) + ' / ' + siteAvgUnitSfText(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${s.type === 'New House' ? 'Permit/source measurements; TBD means the city did not publish that field.' : siteUnitSourceNote(s)}</span></div></div>
-      ${isEd1Site(s)?'<div class="ic"><div class="icl">Program</div><div class="icv">ED1 <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">Detected from permit/project language.</span></div></div>':''}
+      ${isEd1Site(s)?`<div class="ic"><div class="icl">Program</div><div class="icv">ED1 - restricted rents <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${escapeText(ed1AffordabilityForSite(s).scheduleYear + ' ' + ed1AffordabilityForSite(s).schedule + ' at ' + ed1AffordabilityForSite(s).amiPct + '% AMI.')}</span></div></div>`:''}
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${landDisplay} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
@@ -2929,7 +2977,7 @@ function renderDetail(s) {
       <tr><td>Soft costs / hard costs</td><td>${softPctHard}%</td></tr>
       <tr><td>Loan / interest assumptions</td><td>${Math.round((costs.loanToCost || 0) * 1000) / 10}% LTC @ ${Math.round((costs.interestRate || 0) * 1000) / 10}%</td></tr>
       <tr><td>Construction period</td><td>${costs.months} months</td></tr>
-      ${house ? '' : `<tr><td>Rent impact</td><td>${signedPlanPct(costs.rentPremium)}</td></tr>`}
+      ${house ? '' : `<tr><td>Rent impact</td><td>${signedPlanPct(costs.rentPremium)}${isEd1Site(s) && costs.requestedRentPremium > 0 ? ' <span style="color:#b98b2f;font-size:9px">positive premium capped by ED1 rent limit</span>' : ''}</td></tr>`}
       <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/${house ? 'home' : 'unit'}</td></tr>
     </table>
     <div style="font-size:9px;color:#6f7b8c;line-height:1.35;margin:5px 0 8px">${costs.planNote} ${hardCostRead}${costs.recast && costs.storedHardPsf ? ' Stored hard cost was about ' + fmtD(costs.storedHardPsf) + '/SF, so this view is recast to ' + fmtD(costs.hardPerSf) + '/SF.' : ''} The Excel Construction Costs tab includes detailed hard and soft cost line items.</div>
@@ -3516,11 +3564,18 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
   const weightedCapRate = weightedValue(sales, c => c.capRateNorm, c => c.compScore);
   const weightedPpu = weightedValue(sales, c => c.usablePricePerUnit, c => c.compScore) || numberOrNull(comps?.pricePerUnit?.median) || numberOrNull(comps?.pricePerUnit?.avg);
   const weightedPsf = weightedValue(sales, c => c.usablePricePerSf, c => c.compScore) || numberOrNull(comps?.pricePerSf?.median) || numberOrNull(comps?.pricePerSf?.avg);
-  const weightedMonthlyRent = weightedValue(rents, c => c.usableMonthlyRent, c => c.compScore);
-  const weightedRentPerSf = weightedValue(rents, c => c.usableRentPerSf, c => c.compScore);
+  const marketWeightedMonthlyRent = weightedValue(rents, c => c.usableMonthlyRent, c => c.compScore);
+  const marketWeightedRentPerSf = weightedValue(rents, c => c.usableRentPerSf, c => c.compScore);
 
   const units = numberOrNull(site.units) || 0;
   const totalSF = costs?.totalSF || units * (numberOrNull(site.usf) || 800);
+  const ed1Profile = ed1AffordabilityForSite(site);
+  const weightedMonthlyRent = ed1Profile && units
+    ? grossPotentialRentFromUnitMix(site) / units / 12
+    : marketWeightedMonthlyRent;
+  const weightedRentPerSf = ed1Profile && numberOrNull(site.usf)
+    ? weightedMonthlyRent / numberOrNull(site.usf)
+    : marketWeightedRentPerSf;
   const salesPpuValue = weightedPpu && units ? weightedPpu * units : null;
   const salesPsfValue = weightedPsf && totalSF ? weightedPsf * totalSF : null;
   const salesComparisonValue = salesPpuValue && salesPsfValue
@@ -3540,7 +3595,7 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
   let rentCompNoi = null;
   let rentCompValue = null;
   if (weightedMonthlyRent && units) {
-    const grossPotentialRent = Math.round(weightedMonthlyRent * units * 12 * (1 + (costs?.rentPremium || 0)));
+    const grossPotentialRent = Math.round(weightedMonthlyRent * units * 12 * (1 + appliedRentPremiumForSite(site, costs?.rentPremium)));
     const vacancyLoss = Math.round(grossPotentialRent * ((Number(metrics.vacancyPct) || 0) / 100));
     const effectiveGrossIncome = grossPotentialRent - vacancyLoss + (numberOrNull(income.otherIncome) || 0);
     const operatingExpenses = Math.round(effectiveGrossIncome * ((Number(metrics.expenseRatioPct) || 0) / 100));
@@ -3551,7 +3606,7 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
 
   const reconciliationInputs = [
     { label: 'Income approach - current pro forma', value: incomeApproach, baseWeight: 45, note: 'Year-5 NOI capitalized at comp-driven exit cap' },
-    { label: 'Income approach - rent comp adjusted', value: rentCompValue, baseWeight: rents.length ? 20 : 0, note: 'Nearby rent comps recast through vacancy and expense assumptions' },
+    { label: ed1Profile ? 'Income approach - ED1 restricted rent schedule' : 'Income approach - rent comp adjusted', value: rentCompValue, baseWeight: ed1Profile ? 20 : (rents.length ? 20 : 0), note: ed1Profile ? `${ed1Profile.scheduleYear} ${ed1Profile.schedule} at ${ed1Profile.amiPct}% AMI` : 'Nearby rent comps recast through vacancy and expense assumptions' },
     { label: 'Sales comparison - price per unit', value: salesPpuValue, baseWeight: weightedPpu ? 25 : 0, note: 'Weighted sold comps applied to subject unit count' },
     { label: 'Sales comparison - price per SF', value: salesPsfValue, baseWeight: weightedPsf ? 10 : 0, note: 'Weighted sold comps applied to subject building area' },
   ].filter(row => Number.isFinite(Number(row.value)) && Number(row.value) > 0 && row.baseWeight > 0);
@@ -3571,7 +3626,7 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
     sales,
     rents,
     source: comps?.matchLabel || 'saved comparable sales database',
-    rentSource: rentComps?.matchLabel || rentComps?.source || 'rent comp database',
+    rentSource: ed1Profile ? `${ed1Profile.source}; project covenant controls` : (rentComps?.matchLabel || rentComps?.source || 'rent comp database'),
     confidence,
     entryCap: compEntryCap,
     exitCap,
@@ -4300,6 +4355,8 @@ async function exportExcel(id) {
       neighborhood: siteNeighborhood(s),
       zone: s.zone,
       type: s.type,
+      isEd1: isEd1Site(s),
+      ed1Affordability: ed1AffordabilityForSite(s),
       units: s.units || 0,
       avgUnitSf: isHouse
         ? (siteBuildingSf(s) ? siteBuildingSf(s) / Math.max(1, Number(s.units || 1)) : Number(s.usf || 0))
@@ -4345,7 +4402,9 @@ async function exportExcel(id) {
         resalePricePerSfSource: exportAppraisal.valuationSource || compValuation.exitValueSource || '',
       } : {
         unitMixSource: unitMixSourceText(s),
-        rentPremiumPct: costs.rentPremium || 0,
+        rentPremiumPct: appliedRentPremiumForSite(s, costs.rentPremium),
+        ed1Affordability: ed1AffordabilityForSite(s),
+        rentRestrictionNote: ed1RentDisclosure(s),
         vacancyPct: metrics.vacancyPct,
         expenseRatioPct: metrics.expenseRatioPct,
         rentGrowthPct: metrics.rentGrowthPct,
@@ -4396,14 +4455,14 @@ async function exportExcel(id) {
       netProfit: row.valuation.netProfit,
       note: row.plan.note || '',
       ...(isHouse ? {} : {
-        rentPremiumPct: row.costs.rentPremium || 0,
+        rentPremiumPct: appliedRentPremiumForSite(s, row.costs.rentPremium),
         costPerUnit: row.costs.totalPerUnit,
         noi: row.income.noi,
         capOnCost: row.valuation.capOnCost,
       }),
     })),
     salesComps: exportAppraisal.sales || comps?.recentComps || [],
-    rentComps: isHouse ? [] : (exportAppraisal.rents || rentComps?.recentComps || []),
+    rentComps: isHouse || isEd1Site(s) ? [] : (exportAppraisal.rents || rentComps?.recentComps || []),
   };
 
   try {
@@ -4480,7 +4539,8 @@ async function exportPDF(id) {
   const pdfEquity = Math.round(tc - pdfLoan);
   const pdfDebtService = Math.round(pdfLoan * (metrics.interestRatePct / 100));
   const pdfRentGrowth = metrics.rentGrowthPct / 100;
-  const pdfRentImpact = signedPlanPct(costs.rentPremium);
+  const pdfEd1 = ed1AffordabilityForSite(s);
+  const pdfRentImpact = signedPlanPct(appliedRentPremiumForSite(s, costs.rentPremium));
   const pdfContractorLine = [s.contractorName, [s.contractorAddress, s.contractorCity, s.contractorState].filter(Boolean).join(', ')].filter(Boolean).join(' - ');
   const pdfApplicantLine = [s.applicantName, s.applicantBusinessName].filter(Boolean).join(' - ');
 
@@ -4614,7 +4674,7 @@ async function exportPDF(id) {
       <tr><td>City / County</td><td>Los Angeles, CA / LA County</td></tr>
       <tr><td>Lot Size</td><td>${escapeText(siteLotText(s))}</td></tr>
       <tr><td>Project Type</td><td>${s.type || 'Multifamily'}</td></tr>
-      ${house ? '' : `<tr><td>Program</td><td>${isEd1Site(s) ? 'ED1' : 'Not identified as ED1'}</td></tr>`}
+      ${house ? '' : `<tr><td>Program</td><td>${pdfEd1 ? `ED1 - restricted rents (${pdfEd1.amiPct}% AMI)` : 'Not identified as ED1'}</td></tr>`}
       <tr><td>${house ? 'Homes' : 'Proposed Units'}</td><td>${escapeText(siteUnitsText(s))}</td></tr>
       <tr><td>${house ? 'Completed Home Size' : 'Avg Unit Size'}</td><td>${house ? escapeText(siteProjectSfText(s)) : siteAvgUnitSfText(s)}</td></tr>
       <tr><td>Total Building SF</td><td>${(siteBuildingSf(s) || ((s.units||12)*(s.usf||800))).toLocaleString()} SF</td></tr>
@@ -4647,6 +4707,7 @@ async function exportPDF(id) {
     <table>
       <tr><th>Type</th><th>Mix</th><th>Units</th><th>Rent/mo</th></tr>
       ${unitMixPDFRows(s)}
+      ${pdfEd1 ? `<tr><td colspan="4" style="text-align:left"><strong>ED1 limit:</strong> ${escapeText(ed1RentDisclosure(s))}</td></tr>` : ''}
     </table>`}
 
     <h3>Location Research</h3>
@@ -4683,15 +4744,12 @@ ${house ? `<div class="two-col">
   <div>
     <h3>Rental Market Overview</h3>
     <div class="note" style="margin-bottom:10px">
-      ${siteNeighborhood(s)} is an established Los Angeles multifamily submarket characterized by strong renter demand, 
-      constrained new supply, and consistent rent growth averaging 3-5% annually. 
-      The submarket benefits from proximity to employment centers, transit access, and lifestyle amenities 
-      that attract high-income renters.
+      ${pdfEd1 ? `<strong>ED1 restricted-rent underwriting:</strong> ${escapeText(ed1RentDisclosure(s))}` : `${siteNeighborhood(s)} is an established Los Angeles multifamily submarket. The rent roll uses current submarket assumptions and should be confirmed against property-level leasing evidence.`}
     </div>
     <table>
       <tr><th>Metric</th><th>Submarket</th><th>LA Overall</th></tr>
       <tr><td>Vacancy Rate</td><td>4.2%</td><td>5.1%</td></tr>
-      <tr><td>Avg Asking Rent (1BR)</td><td>$3,200/mo</td><td>$2,800/mo</td></tr>
+      <tr><td>${pdfEd1 ? `${pdfEd1.amiPct}% AMI Gross Rent Limit (1BR)` : 'Avg Asking Rent (1BR)'}</td><td>${fmtD(rentsForSite(s).one)}/mo</td><td>${pdfEd1 ? 'Utility allowance not deducted' : '$2,800/mo'}</td></tr>
       <tr><td>Rent Growth (YoY)</td><td>3.8%</td><td>3.2%</td></tr>
       <tr><td>Absorption (12-mo)</td><td>94%</td><td>88%</td></tr>
       <tr><td>Renter Household %</td><td>67%</td><td>61%</td></tr>
@@ -4708,9 +4766,7 @@ ${house ? `<div class="two-col">
       <tr><td>New House</td><td>${((entryCap+0.0075)*100).toFixed(2)}%</td><td>${((exitCap+0.0075)*100).toFixed(2)}%</td></tr>
     </table>
     <div class="note">
-      <strong>Source:</strong> CoStar Q3 2024, CBRE LA Multifamily Market Report Q3 2024, 
-      Marcus & Millichap Investment Research. Cap rates reflect stabilized assets 
-      transacting in the ${siteNeighborhood(s)} submarket over the trailing 24 months.
+      <strong>Source:</strong> ${pdfEd1 ? `<a href="${pdfEd1.sourceUrl}" target="_blank">${escapeText(pdfEd1.source)}</a>. Final LAHD covenant and utility allowance control.` : `Scored recent property-level sales comps when available; fallback cap assumptions are labeled in the appraisal section.`}
     </div>
   </div>
 </div>`}
@@ -4798,6 +4854,7 @@ ${house ? `<div class="two-col">
       ${unitMixRentRollPDFRows(s)}
       <tr class="tot"><td colspan="3">Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>`}
     </table>
+    ${pdfEd1 ? `<div class="note"><strong>Restricted-rent basis:</strong> ${escapeText(ed1RentDisclosure(s))} <a href="${pdfEd1.sourceUrl}" target="_blank">Official rent schedule</a>.</div>` : ''}
 
     <h3>${house ? 'Development Profitability' : 'Operating Statement'}</h3>
     <table>
