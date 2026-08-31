@@ -16,8 +16,42 @@ let regridAuthRejected = false;
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 function clean(value) {
+  if (value !== null && typeof value === 'object') return '';
   const text = String(value ?? '').trim();
   return text && text !== '0' && text.toLowerCase() !== 'null' ? text : '';
+}
+
+function ownerNameParts(value) {
+  if (Array.isArray(value)) return value.flatMap(ownerNameParts);
+  if (value === null || value === undefined) return [];
+  if (typeof value !== 'object') {
+    const text = clean(value);
+    return text && text !== '[object Object]' ? [text] : [];
+  }
+
+  const named = [
+    value.fullName,
+    value.name,
+    value.ownerName,
+    value.companyName,
+    value.organizationName,
+    value.entityName,
+  ].map(clean).filter(Boolean);
+  if (named.length) return named;
+
+  const person = [value.firstName, value.middleName, value.lastName]
+    .map(clean)
+    .filter(Boolean)
+    .join(' ');
+  return person ? [person] : [];
+}
+
+function latestRentCastSale(record) {
+  const history = record?.history;
+  if (!history || typeof history !== 'object' || Array.isArray(history)) return null;
+  return Object.values(history)
+    .filter(row => row && typeof row === 'object' && (!row.event || /sale/i.test(row.event)))
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0] || null;
 }
 
 function first(...values) {
@@ -129,12 +163,14 @@ function normalizeRegrid(feature) {
 }
 
 function normalizeRentCast(record) {
-  const names = Array.isArray(record?.owner?.names)
-    ? [...new Set(record.owner.names.map(clean).filter(Boolean))]
-    : [];
+  const names = [...new Set([
+    ...ownerNameParts(record?.owner?.names),
+    ...ownerNameParts(record?.ownerName),
+    ...ownerNameParts(record?.ownerNames),
+  ])];
+  const latestSale = latestRentCastSale(record);
   const ownerName = first(
     names.join(' / '),
-    record?.ownerName,
     typeof record?.owner === 'string' ? record.owner : null,
     record?.owner1,
     record?.owner_name
@@ -144,14 +180,16 @@ function normalizeRentCast(record) {
     record?.lastSoldDate,
     record?.saleDate,
     record?.saleHistory?.[0]?.date,
-    record?.saleHistory?.[0]?.saleDate
+    record?.saleHistory?.[0]?.saleDate,
+    latestSale?.date
   ));
   const saleAmount = money(first(
     record?.lastSalePrice,
     record?.lastSoldPrice,
     record?.salePrice,
     record?.saleHistory?.[0]?.price,
-    record?.saleHistory?.[0]?.salePrice
+    record?.saleHistory?.[0]?.salePrice,
+    latestSale?.price
   ));
   return ownerName || saleDate || saleAmount ? {
     owner_name: ownerName || null,
@@ -254,12 +292,21 @@ async function main() {
   }
   console.log(`[owners] Providers: Regrid ${REGRID_TOKEN ? 'configured' : 'not configured'}; RentCast ${RENTCAST_KEY ? 'configured' : 'not configured'}.`);
 
-  const sites = await requestJson(
+  const corrupted = await requestJson(
     'GET',
-    `${SB_URL}/rest/v1/sites?select=id,address,lat,lng,apn,owner_enriched_at&order=owner_enriched_at.asc.nullsfirst,updated_at.desc&limit=300`,
+    `${SB_URL}/rest/v1/sites?select=id,address,lat,lng,apn,owner_enriched_at&owner_name=eq.${encodeURIComponent('[object Object]')}&order=updated_at.desc&limit=300`,
     null,
     sbHeaders()
   );
+  const remaining = Math.max(0, 300 - (Array.isArray(corrupted) ? corrupted.length : 0));
+  const pendingFilter = encodeURIComponent('(owner_name.is.null,owner_name.neq.[object Object])');
+  const pending = remaining ? await requestJson(
+    'GET',
+    `${SB_URL}/rest/v1/sites?select=id,address,lat,lng,apn,owner_enriched_at&or=${pendingFilter}&order=owner_enriched_at.asc.nullsfirst,updated_at.desc&limit=${remaining}`,
+    null,
+    sbHeaders()
+  ) : [];
+  const sites = [...(Array.isArray(corrupted) ? corrupted : []), ...(Array.isArray(pending) ? pending : [])];
   if (!Array.isArray(sites) || !sites.length) {
     console.log('[owners] No sites returned for enrichment.');
     return;
@@ -314,4 +361,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { normalizeRegrid, normalizeRentCast };
+module.exports = { normalizeRegrid, normalizeRentCast, ownerNameParts, latestRentCastSale };

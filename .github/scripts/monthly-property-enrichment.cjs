@@ -53,8 +53,42 @@ function sleep(ms) {
 }
 
 function clean(value) {
+  if (value !== null && typeof value === 'object') return '';
   const text = String(value ?? '').trim();
   return text && text !== '0' && text.toLowerCase() !== 'null' ? text : '';
+}
+
+function ownerNameParts(value) {
+  if (Array.isArray(value)) return value.flatMap(ownerNameParts);
+  if (value === null || value === undefined) return [];
+  if (typeof value !== 'object') {
+    const text = clean(value);
+    return text && text !== '[object Object]' ? [text] : [];
+  }
+
+  const named = [
+    value.fullName,
+    value.name,
+    value.ownerName,
+    value.companyName,
+    value.organizationName,
+    value.entityName,
+  ].map(clean).filter(Boolean);
+  if (named.length) return named;
+
+  const person = [value.firstName, value.middleName, value.lastName]
+    .map(clean)
+    .filter(Boolean)
+    .join(' ');
+  return person ? [person] : [];
+}
+
+function latestRentCastSale(record) {
+  const history = record?.history;
+  if (!history || typeof history !== 'object' || Array.isArray(history)) return null;
+  return Object.values(history)
+    .filter(row => row && typeof row === 'object' && (!row.event || /sale/i.test(row.event)))
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0] || null;
 }
 
 function asNumber(value) {
@@ -142,16 +176,16 @@ function compactRentListing(r) {
 function compactPropertyRecord(r) {
   const lat = r.latitude ?? r.lat;
   const lng = r.longitude ?? r.lng;
-  const rentcastOwnerNames = Array.isArray(r.owner?.names)
-    ? r.owner.names.map(clean).filter(Boolean)
-    : [];
+  const rentcastOwnerNames = [...new Set([
+    ...ownerNameParts(r.owner?.names),
+    ...ownerNameParts(r.ownerName),
+    ...ownerNameParts(r.ownerNames),
+  ])];
   const ownerName = first(
-    rentcastOwnerNames.length ? [...new Set(rentcastOwnerNames)].join(' / ') : null,
-    r.ownerName,
+    rentcastOwnerNames.length ? rentcastOwnerNames.join(' / ') : null,
     typeof r.owner === 'string' ? r.owner : null,
     r.owner1,
     r.owner_name,
-    r.ownerNames?.[0],
     r.taxAssessments?.[0]?.ownerName
   );
   const ownerMailingAddress = first(
@@ -159,21 +193,24 @@ function compactPropertyRecord(r) {
     r.ownerMailingAddress,
     r.owner_mailing_address
   );
-  const salePrice = money(
+  const latestSale = latestRentCastSale(r);
+  const salePrice = money(first(
     r.lastSalePrice,
     r.lastSoldPrice,
     r.salePrice,
     r.price,
     r.saleHistory?.[0]?.price,
-    r.saleHistory?.[0]?.salePrice
-  );
-  const saleDate = cleanDate(
+    r.saleHistory?.[0]?.salePrice,
+    latestSale?.price
+  ));
+  const saleDate = cleanDate(first(
     r.lastSaleDate,
     r.lastSoldDate,
     r.saleDate,
     r.saleHistory?.[0]?.date,
-    r.saleHistory?.[0]?.saleDate
-  );
+    r.saleHistory?.[0]?.saleDate,
+    latestSale?.date
+  ));
   const units = asNumber(r.units ?? r.numberOfUnits ?? r.propertyUnits ?? r.unitCount);
   const sf = asNumber(r.squareFootage ?? r.livingArea ?? r.buildingArea);
   return {
@@ -618,4 +655,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { compactPropertyRecord };
+module.exports = { compactPropertyRecord, ownerNameParts, latestRentCastSale };
