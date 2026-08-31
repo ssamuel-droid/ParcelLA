@@ -86,33 +86,33 @@ function regridFeature(data) {
 
 function normalizeRegrid(feature) {
   const p = feature?.properties || {};
-  const enhanced = p.enhanced_ownership || p.enhancedOwnership || {};
-  const ownerName = first(
-    p.owner,
-    p.owner1,
-    p.owner_1,
-    p.owner_name,
-    p.ownername,
-    enhanced.owner,
-    enhanced.owner_name,
-    enhanced.ownerName,
-    enhanced.owner_1
-  );
+  const fields = p.fields && typeof p.fields === 'object' ? p.fields : p;
+  const enhancedRows = Array.isArray(p.enhanced_ownership)
+    ? p.enhanced_ownership
+    : (p.enhanced_ownership || p.enhancedOwnership ? [p.enhanced_ownership || p.enhancedOwnership] : []);
+  const ownerName = [...new Set([
+    fields.owner,
+    fields.owner1,
+    fields.owner_1,
+    fields.owner_name,
+    fields.ownername,
+    ...enhancedRows.flatMap(row => [row.eo_owner, row.eo_owner2, row.eo_owner3, row.eo_owner4]),
+  ].map(clean).filter(Boolean))].join(' / ');
   const saleDate = cleanDate(first(
-    p.saledate,
-    p.sale_date,
-    p.last_sale_date,
-    p.lastsaledate,
-    p.recordingdate,
-    p.recording_date
+    fields.saledate,
+    fields.sale_date,
+    fields.last_sale_date,
+    fields.lastsaledate,
+    fields.recordingdate,
+    fields.recording_date
   ));
   const saleAmount = money(first(
-    p.saleprice,
-    p.sale_price,
-    p.last_sale_price,
-    p.lastsaleprice,
-    p.last_sale_amount,
-    p.saleamt
+    fields.saleprice,
+    fields.sale_price,
+    fields.last_sale_price,
+    fields.lastsaleprice,
+    fields.last_sale_amount,
+    fields.saleamt
   ));
   return ownerName || saleDate || saleAmount ? {
     owner_name: ownerName || null,
@@ -134,7 +134,7 @@ async function lookupOwner(site) {
     u.searchParams.set('radius', '150');
     u.searchParams.set('limit', '1');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('return_enhanced_ownership', 'true');
+    u.searchParams.set('enhanced_ownership', 'true');
     u.searchParams.set('token', REGRID_TOKEN);
     attempts.push(u.toString());
   }
@@ -144,7 +144,17 @@ async function lookupOwner(site) {
     u.searchParams.set('path', REGRID_LA_PATH);
     u.searchParams.set('limit', '1');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('return_enhanced_ownership', 'true');
+    u.searchParams.set('enhanced_ownership', 'true');
+    u.searchParams.set('token', REGRID_TOKEN);
+    attempts.push(u.toString());
+  }
+  if (clean(site.apn)) {
+    const u = new URL(`${REGRID_BASE}/query`);
+    u.searchParams.set('fields[parcelnumb][eq]', clean(site.apn));
+    u.searchParams.set('fields[path][ilike]', REGRID_LA_PATH);
+    u.searchParams.set('limit', '1');
+    u.searchParams.set('return_custom', 'true');
+    u.searchParams.set('enhanced_ownership', 'true');
     u.searchParams.set('token', REGRID_TOKEN);
     attempts.push(u.toString());
   }
@@ -170,7 +180,7 @@ async function main() {
 
   const sites = await requestJson(
     'GET',
-    `${SB_URL}/rest/v1/sites?select=id,address,lat,lng,apn&order=updated_at.desc&limit=200`,
+    `${SB_URL}/rest/v1/sites?select=id,address,lat,lng,apn,owner_enriched_at&order=owner_enriched_at.asc.nullsfirst,updated_at.desc&limit=300`,
     null,
     sbHeaders()
   );
@@ -186,6 +196,16 @@ async function main() {
     const owner = await lookupOwner(site);
     if (!owner) {
       misses++;
+      try {
+        await requestJson(
+          'PATCH',
+          `${SB_URL}/rest/v1/sites?id=eq.${encodeURIComponent(site.id)}`,
+          { owner_enriched_at: new Date().toISOString() },
+          sbHeaders('return=minimal')
+        );
+      } catch (e) {
+        console.warn(`[owners] Could not record no-match check for ${site.address}: ${e.message}`);
+      }
       await sleep(120);
       continue;
     }

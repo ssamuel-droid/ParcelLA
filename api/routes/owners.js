@@ -238,45 +238,58 @@ function regridFeature(data) {
 
 function normalizeRegridFeature(feature) {
   const p = feature?.properties || {};
-  const enhanced = p.enhanced_ownership || p.enhancedOwnership || {};
-  const ownerName = first(
-    p.owner,
-    p.owner1,
-    p.owner_1,
-    p.owner_name,
-    p.ownername,
-    enhanced.owner,
-    enhanced.owner_name,
-    enhanced.ownerName,
-    enhanced.owner_1
-  );
+  const fields = p.fields && typeof p.fields === 'object' ? p.fields : p;
+  const enhancedRows = Array.isArray(p.enhanced_ownership)
+    ? p.enhanced_ownership
+    : (p.enhanced_ownership || p.enhancedOwnership ? [p.enhanced_ownership || p.enhancedOwnership] : []);
+  const enhanced = enhancedRows[0] || {};
+  const ownerName = unique(compact([
+    fields.owner,
+    fields.owner1,
+    fields.owner_1,
+    fields.owner_name,
+    fields.ownername,
+    ...enhancedRows.flatMap(row => [
+      row.eo_owner,
+      row.eo_owner2,
+      row.eo_owner3,
+      row.eo_owner4,
+    ]),
+  ])).join(' / ');
   const saleDate = cleanDate(first(
-    p.saledate,
-    p.sale_date,
-    p.last_sale_date,
-    p.lastsaledate,
-    p.recordingdate,
-    p.recording_date
+    fields.saledate,
+    fields.sale_date,
+    fields.last_sale_date,
+    fields.lastsaledate,
+    fields.recordingdate,
+    fields.recording_date
   ));
   const saleAmount = cleanMoney(first(
-    p.saleprice,
-    p.sale_price,
-    p.last_sale_price,
-    p.lastsaleprice,
-    p.last_sale_amount,
-    p.saleamt
+    fields.saleprice,
+    fields.sale_price,
+    fields.last_sale_price,
+    fields.lastsaleprice,
+    fields.last_sale_amount,
+    fields.saleamt
   ));
   const situsAddress = first(
-    p.address,
-    p.situs_address,
-    p.situsaddress,
-    [p.saddno, p.saddstr, p.scity, p.state2, p.szip].filter(Boolean).join(' ')
+    p.headline,
+    fields.address,
+    fields.situs_address,
+    fields.situsaddress,
+    [fields.saddno, fields.saddstr, fields.scity, fields.state2, fields.szip].filter(Boolean).join(' ')
   );
   const mailingAddress = first(
-    p.mailadd,
-    p.mail_address,
-    p.mailing_address,
-    p.owner_address
+    enhanced.eo_mail_address && [
+      enhanced.eo_mail_address,
+      enhanced.eo_mail_city,
+      enhanced.eo_mail_state2,
+      enhanced.eo_mail_zip,
+    ].filter(Boolean).join(', '),
+    fields.mailadd,
+    fields.mail_address,
+    fields.mailing_address,
+    fields.owner_address
   );
 
   return {
@@ -284,7 +297,7 @@ function normalizeRegridFeature(feature) {
     ownerName: ownerName || null,
     mailingAddress: mailingAddress || null,
     situsAddress: situsAddress || null,
-    apn: first(p.parcelnumb, p.parcel_number, p.apn, p.ain, p.alt_parcelnumb1) || null,
+    apn: first(fields.parcelnumb, fields.parcel_number, fields.apn, fields.ain, fields.alt_parcelnumb1) || null,
     lastSaleDate: saleDate,
     recordingDate: saleDate,
     lastSaleAmount: saleAmount,
@@ -306,7 +319,7 @@ async function queryRegrid(params) {
     u.searchParams.set('radius', '150');
     u.searchParams.set('limit', '1');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('return_enhanced_ownership', 'true');
+    u.searchParams.set('enhanced_ownership', 'true');
     u.searchParams.set('token', token);
     attempts.push(u);
   }
@@ -317,7 +330,7 @@ async function queryRegrid(params) {
     u.searchParams.set('path', REGRID_LA_PATH);
     u.searchParams.set('limit', '1');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('return_enhanced_ownership', 'true');
+    u.searchParams.set('enhanced_ownership', 'true');
     u.searchParams.set('token', token);
     attempts.push(u);
   }
@@ -328,7 +341,7 @@ async function queryRegrid(params) {
     u.searchParams.set('fields[path][ilike]', REGRID_LA_PATH);
     u.searchParams.set('limit', '1');
     u.searchParams.set('return_custom', 'true');
-    u.searchParams.set('return_enhanced_ownership', 'true');
+    u.searchParams.set('enhanced_ownership', 'true');
     u.searchParams.set('token', token);
     attempts.push(u);
   }
@@ -446,4 +459,5 @@ router.get('/', optionalAuth, async (req, res, next) => {
   }
 });
 
+export { normalizeRegridFeature };
 export default router;

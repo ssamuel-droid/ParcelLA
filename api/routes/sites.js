@@ -9,6 +9,7 @@
  */
 
 import { Router } from 'express';
+import { createClient } from '@supabase/supabase-js';
 import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel, runScenarios } from '../../src/model/financialModel.js';
 import { RENTS } from '../../src/data/submarkets.js';
@@ -27,6 +28,11 @@ import {
 const { resolveEd1Affordability, rentsForSite: underwritingRentsForSite } = affordableRents;
 
 const router = Router();
+const planningDb = process.env.SUPABASE_SERVICE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  : supabase;
 
 // Cache computed model results (refreshed every 5 min)
 let _siteCache = null;
@@ -950,6 +956,10 @@ const PLANNING_CASE_REPORTS_URL = 'https://planning.lacity.gov/resources/case-re
 const ZIMAS_URL = 'https://planning.lacity.gov/zoning/zoning-search';
 const LADBS_RECORDS_URL = 'https://dbs.lacity.gov/services/search-online-building-records';
 const LADBS_RECORDS_REQUEST_URL = 'https://www.ladbs.org/docs/default-source/forms/administrative/research-request-form-ad-form-01.pdf';
+const PDIS_BASE_URL = 'https://planning.lacity.gov/pdiscaseinfo';
+const PDIS_ON_DEMAND_TIMEOUT_MS = 7000;
+const PDIS_PROFILE_STALE_MS = 30 * 24 * 60 * 60 * 1000;
+const PDIS_ON_DEMAND_CASE_LIMIT = 8;
 
 function planningCaseUrl(caseNumber) {
   return `https://planning.lacity.gov/pdiscaseinfo/search/casenumber/${encodeURIComponent(caseNumber)}`;
@@ -999,8 +1009,174 @@ function planningDocumentFromRow(document) {
   };
 }
 
+function decodePlanningText(value) {
+  return String(value || '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, number) => String.fromCodePoint(Number(number)))
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function pdisProfileValue(html, label) {
+  const safeLabel = String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = String(html || '').match(new RegExp(
+    `<div[^>]*class=["'][^"']*title[^"']*["'][^>]*>\\s*${safeLabel}:?\\s*</div>\\s*<div[^>]*class=["'][^"']*data[^"']*["'][^>]*>([\\s\\S]*?)</div>`,
+    'i'
+  ));
+  return decodePlanningText(match?.[1]);
+}
+
+function parsePdisProfile(html) {
+  const caseId = Number(String(html || '').match(/window\.caseIdentifier\s*=\s*(\d+)/i)?.[1]) || null;
+  return {
+    caseId,
+    projectDescription: pdisProfileValue(html, 'Project Description') || null,
+    requestedEntitlement: pdisProfileValue(html, 'Requested Entitlement') || null,
+    applicant: pdisProfileValue(html, 'Applicant') || null,
+    representative: pdisProfileValue(html, 'Representative') || null,
+  };
+}
+
+function planningDocumentType(record) {
+  const text = [record?.DocType, record?.DocumentCategory, record?.OriginalZaCardNumber, record?.Comments]
+    .filter(Boolean).join(' ').toLowerCase();
+  if (/determination|decision|letter of determination|findings/.test(text)) return 'determination';
+  if (/cover sheet|title sheet|cover page/.test(text)) return 'cover_sheet';
+  if (/floor plan/.test(text)) return 'floor_plan';
+  if (/elevation/.test(text)) return 'elevation';
+  if (/site plan/.test(text)) return 'site_plan';
+  if (/architectural|project plan|approved plan|plan set|parcel map|plot plan/.test(text)) return 'project_plans';
+  if (/application/.test(text)) return 'application';
+  return 'other';
+}
+
+function planningDocumentDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function pdisDocumentRow(record, section, fallbackCaseNumber) {
+  const providerId = String(record?.Id || record?.TpId || record?.EncodedId || '').trim();
+  const caseNumber = String(record?.CaseNumber || record?.MeetingId || fallbackCaseNumber || '').trim().toUpperCase();
+  const url = String(record?.ExternalUrl || '').trim();
+  if (!providerId || !caseNumber || !/^https:\/\//i.test(url)) return null;
+  const comments = decodePlanningText(record?.Comments);
+  const baseTitle = decodePlanningText(record?.DocType || record?.OriginalZaCardNumber || record?.DocumentCategory) || 'Planning document';
+  return {
+    case_number: caseNumber,
+    provider_document_id: providerId,
+    title: comments && comments.length <= 120 ? `${baseTitle}: ${comments}` : baseTitle,
+    document_type: planningDocumentType(record),
+    document_category: decodePlanningText(record?.DocumentCategory) || null,
+    section,
+    document_date: planningDocumentDate(record?.ScanDate || record?.DateModified),
+    url,
+    comments: comments || null,
+    is_approved_plan: record?.IsApprovedPlan ? /^yes$/i.test(String(record.IsApprovedPlan).trim()) : null,
+    source_record: record,
+    synced_at: new Date().toISOString(),
+  };
+}
+
+async function fetchPdis(url, responseType = 'json') {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PDIS_ON_DEMAND_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: responseType === 'json' ? 'application/json' : 'text/html,application/xhtml+xml',
+        'User-Agent': 'ParcelLA/3.0 planning document lookup',
+      },
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`PDIS HTTP ${response.status}`);
+    return responseType === 'json' ? (text ? JSON.parse(text) : null) : text;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function planningArray(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.results)) return value.results;
+  return [];
+}
+
+async function refreshPlanningCaseFromPdis(planningCase) {
+  const caseNumber = planningCase.case_number;
+  const pageUrl = planningCase.pdis_url || planningCaseUrl(caseNumber);
+  const approvedUrl = `${PDIS_BASE_URL}/api/Service/GetPddData?caseNumbers=${encodeURIComponent(caseNumber)}`;
+  const [pageResult, approvedResult] = await Promise.allSettled([
+    fetchPdis(pageUrl, 'html'),
+    fetchPdis(approvedUrl),
+  ]);
+  if (pageResult.status === 'rejected' && approvedResult.status === 'rejected') {
+    throw new Error(`PDIS profile and document requests failed for ${caseNumber}`);
+  }
+  const profile = pageResult.status === 'fulfilled' ? parsePdisProfile(pageResult.value) : {};
+  const caseId = planningCase.case_id || profile.caseId || null;
+  const additional = caseId ? await Promise.allSettled([
+    fetchPdis(`${PDIS_BASE_URL}/api/Service/GetEsubmitData/${encodeURIComponent(caseId)}`),
+    fetchPdis(`${PDIS_BASE_URL}/api/Service/relatedcases/${encodeURIComponent(caseId)}`),
+    fetchPdis(`${PDIS_BASE_URL}/api/Service/addresses/${encodeURIComponent(caseId)}`),
+  ]) : [];
+  const initial = additional[0]?.status === 'fulfilled' ? planningArray(additional[0].value) : [];
+  const related = additional[1]?.status === 'fulfilled' ? planningArray(additional[1].value) : [];
+  const addresses = additional[2]?.status === 'fulfilled' ? planningArray(additional[2].value) : [];
+  const documents = [
+    ...planningArray(approvedResult.status === 'fulfilled' ? approvedResult.value : []).map(row => pdisDocumentRow(row, 'approved', caseNumber)),
+    ...initial.map(row => pdisDocumentRow(row, 'initial_submittal', caseNumber)),
+  ].filter(Boolean);
+  const relatedCaseNumbers = [...new Set(related
+    .map(row => String(row?.caseNumber || row?.CaseNumber || '').trim().toUpperCase())
+    .filter(Boolean))];
+  const zimasPin = String(addresses.find(row => row?.pin)?.pin || planningCase.zimas_pin || '').trim() || null;
+  const checkedAt = new Date().toISOString();
+  const sourceRecord = {
+    ...(planningCase.source_record || {}),
+    pdis: {
+      applicant: profile.applicant || null,
+      representative: profile.representative || null,
+      projectDescription: profile.projectDescription || null,
+      requestedEntitlement: profile.requestedEntitlement || null,
+      checkedAt,
+    },
+  };
+  const caseUpdate = {
+    case_id: caseId,
+    project_description: profile.projectDescription || planningCase.project_description,
+    request_type: profile.requestedEntitlement || planningCase.request_type,
+    documents_checked_at: checkedAt,
+    related_case_numbers: relatedCaseNumbers.length ? relatedCaseNumbers : (planningCase.related_case_numbers || []),
+    case_addresses: addresses.length ? addresses : (planningCase.case_addresses || []),
+    zimas_pin: zimasPin,
+    zimas_url: zimasPin ? `https://zimas.lacity.org?pin=${encodeURIComponent(zimasPin)}` : planningCase.zimas_url,
+    source_record: sourceRecord,
+  };
+
+  if (documents.length) {
+    const { error } = await planningDb.from('planning_documents').upsert(documents, {
+      onConflict: 'case_number,provider_document_id,section',
+    });
+    if (error) console.warn(`[planning] Could not cache PDIS documents for ${caseNumber}: ${error.message}`);
+  }
+  const { error: caseError } = await planningDb.from('planning_cases').update(caseUpdate).eq('case_number', caseNumber);
+  if (caseError) console.warn(`[planning] Could not cache PDIS profile for ${caseNumber}: ${caseError.message}`);
+  return { planningCase: { ...planningCase, ...caseUpdate }, documents };
+}
+
 function planningCaseFromRow(planningCase, match, documents) {
   const caseDocuments = documents.filter(document => document.case_number === planningCase.case_number);
+  const pdisProfile = planningCase.source_record?.pdis || {};
   return {
     caseNumber: planningCase.case_number,
     caseId: planningCase.case_id,
@@ -1011,6 +1187,8 @@ function planningCaseFromRow(planningCase, match, documents) {
     councilDistrict: planningCase.council_district,
     projectDescription: planningCase.project_description,
     requestType: planningCase.request_type,
+    applicant: pdisProfile.applicant || null,
+    representative: pdisProfile.representative || null,
     applicationDate: planningCase.application_date,
     completionDate: planningCase.completion_date,
     status: planningCase.case_status,
@@ -1060,8 +1238,25 @@ function planningAddressKeys(value) {
   if (range) {
     keys.add(`${range[1]} ${range[3]}`);
     keys.add(`${range[2]} ${range[3]}`);
+    const start = Number(range[1]);
+    const end = Number(range[2]);
+    if (end >= start && end - start <= 500) {
+      for (let number = start; number <= end; number += 1) keys.add(`${number} ${range[3]}`);
+    }
   }
   return [...keys];
+}
+
+function planningAddressSpan(value) {
+  const normalized = normalizePlanningAddress(value);
+  const range = normalized.match(/^(\d+)\s*-\s*(\d+)\s+(.+)$/);
+  if (range) return { start: Number(range[1]), end: Number(range[2]), street: range[3] };
+  const single = normalized.match(/^(\d+)\s+(.+)$/);
+  return single ? { start: Number(single[1]), end: Number(single[1]), street: single[2] } : null;
+}
+
+function planningAddressSpansOverlap(left, right) {
+  return !!left && !!right && left.street === right.street && left.start <= right.end && right.start <= left.end;
 }
 
 function planningApn(value) {
@@ -1076,12 +1271,25 @@ async function recoverPlanningMatches(site, siteId) {
     site?.address,
     ...(Array.isArray(site?.addressAliases) ? site.addressAliases : []),
   ].flatMap(planningAddressKeys).filter(Boolean))];
+  const siteAddressSpans = [...new Map([
+    site?.addr,
+    site?.address,
+    ...(Array.isArray(site?.addressAliases) ? site.addressAliases : []),
+  ].map(planningAddressSpan).filter(Boolean).map(span => [`${span.start}|${span.end}|${span.street}`, span])).values()];
   const queries = [];
   if (apn) {
-    queries.push(supabase.from('planning_cases').select('*').eq('apn', apn).then(result => ({ ...result, method: 'apn', confidence: 1 })));
+    queries.push(planningDb.from('planning_cases').select('*').eq('apn', apn).then(result => ({ ...result, method: 'apn', confidence: 1 })));
   }
   if (addressKeys.length) {
-    queries.push(supabase.from('planning_cases').select('*').in('address_normalized', addressKeys).then(result => ({ ...result, method: 'address_alias', confidence: 0.98 })));
+    queries.push(planningDb.from('planning_cases').select('*').in('address_normalized', addressKeys).then(result => ({ ...result, method: 'address_alias', confidence: 0.98 })));
+  }
+  for (const street of [...new Set(siteAddressSpans.map(span => span.street))]) {
+    queries.push(planningDb.from('planning_cases').select('*').ilike('address_normalized', `%${street}%`).limit(250).then(result => ({
+      ...result,
+      data: (result.data || []).filter(row => siteAddressSpans.some(siteSpan => planningAddressSpansOverlap(siteSpan, planningAddressSpan(row.address_normalized || row.address)))),
+      method: 'address_range',
+      confidence: 0.96,
+    })));
   }
   if (!queries.length) return { matches: [], cases: [] };
 
@@ -1111,7 +1319,7 @@ async function recoverPlanningMatches(site, siteId) {
     matches.sort((left, right) => String(rowsByCase.get(right.case_number)?.completion_date || rowsByCase.get(right.case_number)?.application_date || '')
       .localeCompare(String(rowsByCase.get(left.case_number)?.completion_date || rowsByCase.get(left.case_number)?.application_date || '')));
     matches[0].is_primary = true;
-    const { error } = await supabase.from('site_planning_cases').upsert(matches, { onConflict: 'site_id,case_number' });
+    const { error } = await planningDb.from('site_planning_cases').upsert(matches, { onConflict: 'site_id,case_number' });
     if (error) console.warn(`[planning] Could not persist recovered matches for site ${siteId}: ${error.message}`);
   }
   return { matches, cases: [...rowsByCase.values()] };
@@ -1122,9 +1330,9 @@ async function attachPlanningDiscovery(site, siteId) {
   const manualCaseNumbers = [...new Set(manualDocuments.map(document => document.caseNumber).filter(Boolean))];
   try {
     const [{ data: syncState, error: stateError }, { data: storedMatches, error: matchError }, { data: indexProbe, error: indexError }] = await Promise.all([
-      supabase.from('planning_sync_state').select('*').eq('id', 1).maybeSingle(),
-      supabase.from('site_planning_cases').select('*').eq('site_id', siteId),
-      supabase.from('planning_cases').select('case_number').limit(1),
+      planningDb.from('planning_sync_state').select('*').eq('id', 1).maybeSingle(),
+      planningDb.from('site_planning_cases').select('*').eq('site_id', siteId),
+      planningDb.from('planning_cases').select('case_number').limit(1),
     ]);
     if (stateError) throw stateError;
     if (matchError) throw matchError;
@@ -1143,14 +1351,42 @@ async function attachPlanningDiscovery(site, siteId) {
     let documentRows = [];
     if (caseNumbers.length) {
       const [{ data: cases, error: casesError }, { data: documents, error: documentsError }] = await Promise.all([
-        supabase.from('planning_cases').select('*').in('case_number', caseNumbers),
-        supabase.from('planning_documents').select('*').in('case_number', caseNumbers).order('document_date', { ascending: false }),
+        planningDb.from('planning_cases').select('*').in('case_number', caseNumbers),
+        planningDb.from('planning_documents').select('*').in('case_number', caseNumbers).order('document_date', { ascending: false }),
       ]);
       if (casesError) throw casesError;
       if (documentsError) throw documentsError;
       const fetchedCases = cases || [];
       caseRows = [...new Map([...recoveredCaseRows, ...fetchedCases].map(row => [row.case_number, row])).values()];
       documentRows = documents || [];
+
+      const documentCaseNumbers = new Set(documentRows.map(document => document.case_number));
+      const staleBefore = Date.now() - PDIS_PROFILE_STALE_MS;
+      const refreshCandidates = caseRows.filter(row => {
+        const profileCheckedAt = row.source_record?.pdis?.checkedAt;
+        const profileIsStale = !profileCheckedAt || new Date(profileCheckedAt).getTime() < staleBefore;
+        return !documentCaseNumbers.has(row.case_number) || profileIsStale;
+      }).slice(0, PDIS_ON_DEMAND_CASE_LIMIT);
+      if (refreshCandidates.length) {
+        const refreshResults = await Promise.allSettled(refreshCandidates.map(refreshPlanningCaseFromPdis));
+        const caseMap = new Map(caseRows.map(row => [row.case_number, row]));
+        const documentMap = new Map(documentRows.map(row => [
+          `${row.case_number}|${row.provider_document_id}|${row.section}`,
+          row,
+        ]));
+        for (const result of refreshResults) {
+          if (result.status !== 'fulfilled') {
+            console.warn(`[planning] On-demand PDIS refresh failed for site ${siteId}: ${result.reason?.message || result.reason}`);
+            continue;
+          }
+          caseMap.set(result.value.planningCase.case_number, result.value.planningCase);
+          for (const document of result.value.documents) {
+            documentMap.set(`${document.case_number}|${document.provider_document_id}|${document.section}`, document);
+          }
+        }
+        caseRows = [...caseMap.values()];
+        documentRows = [...documentMap.values()].sort((left, right) => String(right.document_date || '').localeCompare(String(left.document_date || '')));
+      }
     }
 
     const matchesByCase = new Map((matches || []).map(match => [match.case_number, match]));
@@ -2910,4 +3146,5 @@ router.delete('/:id/save', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+export { parsePdisProfile, pdisDocumentRow };
 export default router;

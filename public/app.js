@@ -2460,6 +2460,8 @@ function planningDocumentsHTML(site) {
           ${planningCase.isPrimary ? '<span class="bdg ok">Primary match</span>' : ''}
         </div>
         ${planningCase.projectDescription ? `<span><b>Project:</b> ${escapeText(planningCase.projectDescription)}</span>` : ''}
+        ${planningCase.applicant ? `<span><b>Applicant:</b> ${escapeText(planningCase.applicant)}</span>` : ''}
+        ${planningCase.representative ? `<span><b>Representative:</b> ${escapeText(planningCase.representative)}</span>` : ''}
         ${(applicationDate || completionDate) ? `<span>${applicationDate ? `Filed ${escapeText(applicationDate)}` : ''}${applicationDate && completionDate ? ' | ' : ''}${completionDate ? `Completed ${escapeText(completionDate)}` : ''}</span>` : ''}
         ${planningCase.apn ? `<span>APN ${escapeText(planningCase.apn)}${planningCase.matchMethod ? ` | Matched by ${escapeText(String(planningCase.matchMethod).replace('_', ' '))}` : ''}</span>` : ''}
         ${directDocuments.length ? `<div style="display:grid;gap:5px">${directDocuments.join('')}</div>` : '<span><b>No verified planning PDF is available for this case yet.</b></span>'}
@@ -2527,6 +2529,8 @@ function planningExportData(site) {
     apn: planningCase.apn || '',
     address: planningCase.address || '',
     projectDescription: planningCase.projectDescription || '',
+    applicant: planningCase.applicant || '',
+    representative: planningCase.representative || '',
     applicationDate: planningCase.applicationDate || '',
     completionDate: planningCase.completionDate || '',
     matchMethod: planningCase.matchMethod || '',
@@ -2567,6 +2571,8 @@ function planningPDFHTML(site) {
       <tr><td>Status / request</td><td>${escapeText([planningCase.status, planningCase.requestType].filter(Boolean).join(' | '))}</td></tr>
       ${planningCase.apn ? `<tr><td>APN</td><td>${escapeText(planningCase.apn)}</td></tr>` : ''}
       ${planningCase.projectDescription ? `<tr><td>Project description</td><td>${escapeText(planningCase.projectDescription)}</td></tr>` : ''}
+      ${planningCase.applicant ? `<tr><td>Applicant</td><td>${escapeText(planningCase.applicant)}</td></tr>` : ''}
+      ${planningCase.representative ? `<tr><td>Representative</td><td>${escapeText(planningCase.representative)}</td></tr>` : ''}
       ${planningCase.applicationDate ? `<tr><td>Application date</td><td>${escapeText(planningCase.applicationDate)}</td></tr>` : ''}
       ${planningCase.completionDate ? `<tr><td>Completion date</td><td>${escapeText(planningCase.completionDate)}</td></tr>` : ''}
       ${planningCase.documents.filter(isDirectPdf).map(document => `<tr><td>${escapeText(document.documentType || 'Document')}</td><td><a href="${escapeText(document.url)}" target="_blank">Open PDF: ${escapeText(document.title || 'Planning document')}</a>${document.documentDate ? ` | ${escapeText(document.documentDate)}` : ''}</td></tr>`).join('') || '<tr><td colspan="2">No verified planning PDF is available for this case yet.</td></tr>'}

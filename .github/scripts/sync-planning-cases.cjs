@@ -2,7 +2,7 @@
 
 const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
-const DOCUMENT_CASE_LIMIT = positiveInt(process.env.PLANNING_DOCUMENT_CASE_LIMIT, 75);
+const DOCUMENT_CASE_LIMIT = positiveInt(process.env.PLANNING_DOCUMENT_CASE_LIMIT, 300);
 const DOCUMENT_STALE_DAYS = positiveInt(process.env.PLANNING_DOCUMENT_STALE_DAYS, 30);
 const DOCUMENT_CONCURRENCY = positiveInt(process.env.PLANNING_DOCUMENT_CONCURRENCY, 4);
 
@@ -80,6 +80,11 @@ function addressKeys(value) {
   if (range) {
     keys.add(`${range[1]} ${range[3]}`);
     keys.add(`${range[2]} ${range[3]}`);
+    const start = Number(range[1]);
+    const end = Number(range[2]);
+    if (end >= start && end - start <= 500) {
+      for (let number = start; number <= end; number += 1) keys.add(`${number} ${range[3]}`);
+    }
   }
   return [...keys];
 }

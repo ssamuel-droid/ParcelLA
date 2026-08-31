@@ -338,11 +338,11 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     writeRow(permitWs, ['Applicant', text([site.applicantName, site.applicantBusinessName].filter(Boolean).join(' - '))]);
 
     const planningWs = wb.addWorksheet('Planning Cases');
-    setupSheet(planningWs, [24, 14, 15, 15, 16, 22, 60]);
+    setupSheet(planningWs, [24, 14, 15, 15, 16, 22, 34, 34, 60]);
     writeRow(planningWs, ['Planning Cases & Documents', siteName, generated], 'title');
     writeRow(planningWs, ['Discovery status', text(planning.status), 'Last checked', text(planning.checkedAt)]);
     writeRow(planningWs, ['Result', text(planning.message)], 'section');
-    writeRow(planningWs, ['Case number', 'Status', 'Filed', 'Completed', 'APN', 'Request type', 'Project description'], 'header');
+    writeRow(planningWs, ['Case number', 'Status', 'Filed', 'Completed', 'APN', 'Request type', 'Applicant', 'Representative', 'Project description'], 'header');
     if (planningCases.length) {
       planningCases.forEach(planningCase => writeRow(planningWs, [
         text(planningCase.caseNumber),
@@ -351,10 +351,12 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
         text(planningCase.completionDate),
         text(planningCase.apn),
         text(planningCase.requestType),
+        text(planningCase.applicant),
+        text(planningCase.representative),
         text(planningCase.projectDescription),
       ]));
     } else {
-      writeRow(planningWs, ['No verified planning PDF is available yet', '', '', '', '', '', text(planning.message)]);
+      writeRow(planningWs, ['No verified planning PDF is available yet', '', '', '', '', '', '', '', text(planning.message)]);
     }
     writeRow(planningWs, []);
     writeRow(planningWs, ['Available PDIS Documents'], 'section');
