@@ -8,7 +8,7 @@ on:
       document_case_limit:
         description: 'Maximum matched cases whose PDIS documents are refreshed'
         required: false
-        default: '300'
+        default: '1000'
   push:
     branches:
       - main
@@ -28,7 +28,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          PLANNING_DOCUMENT_CASE_LIMIT: ${{ github.event.inputs.document_case_limit || '300' }}
+          PLANNING_DOCUMENT_CASE_LIMIT: ${{ github.event.inputs.document_case_limit || '1000' }}
           PLANNING_DOCUMENT_STALE_DAYS: '30'
           PLANNING_DOCUMENT_CONCURRENCY: '4'
         run: node .github/scripts/sync-planning-cases.cjs
