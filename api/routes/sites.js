@@ -1026,16 +1026,117 @@ function planningCaseFromRow(planningCase, match, documents) {
   };
 }
 
+function normalizePlanningAddress(value) {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/\bLOS ANGELES\b|\bCALIFORNIA\b/g, ' ')
+    .replace(/\bCA\b/g, ' ')
+    .replace(/\b9\d{4}(?:-\d{4})?\b/g, ' ')
+    .replace(/\bSTREET\b/g, ' ST ')
+    .replace(/\bAVENUE\b/g, ' AVE ')
+    .replace(/\bBOULEVARD\b/g, ' BLVD ')
+    .replace(/\bDRIVE\b/g, ' DR ')
+    .replace(/\bROAD\b/g, ' RD ')
+    .replace(/\bPLACE\b/g, ' PL ')
+    .replace(/\bLANE\b/g, ' LN ')
+    .replace(/\bCOURT\b/g, ' CT ')
+    .replace(/\bPARKWAY\b/g, ' PKWY ')
+    .replace(/\bHIGHWAY\b/g, ' HWY ')
+    .replace(/\bNORTH\b/g, ' N ')
+    .replace(/\bSOUTH\b/g, ' S ')
+    .replace(/\bEAST\b/g, ' E ')
+    .replace(/\bWEST\b/g, ' W ')
+    .replace(/\b(?:UNIT|STE|SUITE|APT|APARTMENT)\s+[A-Z0-9-]+.*$/g, ' ')
+    .replace(/[^A-Z0-9-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function planningAddressKeys(value) {
+  const normalized = normalizePlanningAddress(value);
+  if (!normalized) return [];
+  const keys = new Set([normalized]);
+  const range = normalized.match(/^(\d+)\s*-\s*(\d+)\s+(.+)$/);
+  if (range) {
+    keys.add(`${range[1]} ${range[3]}`);
+    keys.add(`${range[2]} ${range[3]}`);
+  }
+  return [...keys];
+}
+
+function planningApn(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length >= 8 && digits.length <= 14 ? digits : '';
+}
+
+async function recoverPlanningMatches(site, siteId) {
+  const apn = planningApn(site?.ownerApn || site?.apn || site?.externalPropertyRecord?.apn);
+  const addressKeys = [...new Set([
+    site?.addr,
+    site?.address,
+    ...(Array.isArray(site?.addressAliases) ? site.addressAliases : []),
+  ].flatMap(planningAddressKeys).filter(Boolean))];
+  const queries = [];
+  if (apn) {
+    queries.push(supabase.from('planning_cases').select('*').eq('apn', apn).then(result => ({ ...result, method: 'apn', confidence: 1 })));
+  }
+  if (addressKeys.length) {
+    queries.push(supabase.from('planning_cases').select('*').in('address_normalized', addressKeys).then(result => ({ ...result, method: 'address_alias', confidence: 0.98 })));
+  }
+  if (!queries.length) return { matches: [], cases: [] };
+
+  const results = await Promise.all(queries);
+  const rowsByCase = new Map();
+  const matchByCase = new Map();
+  for (const result of results) {
+    if (result.error) throw result.error;
+    for (const row of result.data || []) {
+      rowsByCase.set(row.case_number, row);
+      const previous = matchByCase.get(row.case_number);
+      if (!previous || result.confidence > previous.match_confidence) {
+        matchByCase.set(row.case_number, {
+          site_id: siteId,
+          case_number: row.case_number,
+          match_method: result.method,
+          match_confidence: result.confidence,
+          is_primary: false,
+          matched_at: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
+  const matches = [...matchByCase.values()];
+  if (matches.length) {
+    matches.sort((left, right) => String(rowsByCase.get(right.case_number)?.completion_date || rowsByCase.get(right.case_number)?.application_date || '')
+      .localeCompare(String(rowsByCase.get(left.case_number)?.completion_date || rowsByCase.get(left.case_number)?.application_date || '')));
+    matches[0].is_primary = true;
+    const { error } = await supabase.from('site_planning_cases').upsert(matches, { onConflict: 'site_id,case_number' });
+    if (error) console.warn(`[planning] Could not persist recovered matches for site ${siteId}: ${error.message}`);
+  }
+  return { matches, cases: [...rowsByCase.values()] };
+}
+
 async function attachPlanningDiscovery(site, siteId) {
   const manualDocuments = planningDocumentsForSite(site);
   const manualCaseNumbers = [...new Set(manualDocuments.map(document => document.caseNumber).filter(Boolean))];
   try {
-    const [{ data: syncState, error: stateError }, { data: matches, error: matchError }] = await Promise.all([
+    const [{ data: syncState, error: stateError }, { data: storedMatches, error: matchError }, { data: indexProbe, error: indexError }] = await Promise.all([
       supabase.from('planning_sync_state').select('*').eq('id', 1).maybeSingle(),
       supabase.from('site_planning_cases').select('*').eq('site_id', siteId),
+      supabase.from('planning_cases').select('case_number').limit(1),
     ]);
     if (stateError) throw stateError;
     if (matchError) throw matchError;
+    if (indexError) throw indexError;
+
+    let matches = storedMatches || [];
+    let recoveredCaseRows = [];
+    if (!matches.length) {
+      const recovered = await recoverPlanningMatches(site, siteId);
+      matches = recovered.matches;
+      recoveredCaseRows = recovered.cases;
+    }
 
     const caseNumbers = [...new Set([...(matches || []).map(match => match.case_number), ...manualCaseNumbers])];
     let caseRows = [];
@@ -1047,7 +1148,8 @@ async function attachPlanningDiscovery(site, siteId) {
       ]);
       if (casesError) throw casesError;
       if (documentsError) throw documentsError;
-      caseRows = cases || [];
+      const fetchedCases = cases || [];
+      caseRows = [...new Map([...recoveredCaseRows, ...fetchedCases].map(row => [row.case_number, row])).values()];
       documentRows = documents || [];
     }
 
@@ -1070,7 +1172,7 @@ async function attachPlanningDiscovery(site, siteId) {
 
     const discoveredDocuments = cases.flatMap(planningCase => planningCase.documents || []);
     const planningDocuments = uniquePlanningDocuments([...discoveredDocuments, ...manualDocuments]);
-    const syncComplete = syncState?.status === 'complete';
+    const syncComplete = syncState?.status === 'complete' || (indexProbe || []).length > 0;
     const status = cases.length
       ? 'cases_found'
       : (syncComplete ? 'no_discretionary_case_found' : 'index_pending');
@@ -1089,7 +1191,7 @@ async function attachPlanningDiscovery(site, siteId) {
         message: cases.length
           ? `${cases.length} related discretionary planning case${cases.length === 1 ? '' : 's'} found.`
           : (syncComplete
-            ? 'No verified planning PDF was found for this property.'
+            ? 'The imported City Planning case reports contain no matching discretionary case or direct PDF for this address/APN.'
             : 'Planning PDF discovery has not completed its first sync.'),
       },
     };

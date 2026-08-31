@@ -2385,6 +2385,7 @@ async function openDetail(id) {
     renderCards();
     return;
   }
+  if (!s.planningDiscovery) s.planningDiscovery = { status: 'loading' };
   renderDetail(s);
   renderCards();
 
@@ -2398,6 +2399,10 @@ async function openDetail(id) {
     renderCards();
   } catch (error) {
     console.warn('[site-detail] Protected details could not be loaded:', error.message);
+    if (openId === id) {
+      s.planningDiscovery = { status: 'lookup_error' };
+      renderDetail(s);
+    }
   }
 }
 
@@ -2471,12 +2476,36 @@ function planningDocumentsHTML(site) {
     </div>`;
   }
 
+  const emptyState = {
+    loading: {
+      title: 'Loading planning records...',
+      message: 'ParcelLA is checking this address and APN against the imported City Planning case index.',
+    },
+    index_pending: {
+      title: 'Planning index sync pending',
+      message: 'The City Planning case index has not completed its first import. The property record is available, but case and PDF matching is not ready yet.',
+    },
+    index_unavailable: {
+      title: 'Planning lookup unavailable',
+      message: 'ParcelLA could not check the City Planning case index right now. This does not mean the property has no planning case.',
+    },
+    lookup_error: {
+      title: 'Planning lookup unavailable',
+      message: 'The property loaded, but its planning-record request failed. Reopen the property to retry.',
+    },
+    no_discretionary_case_found: {
+      title: 'No discretionary planning case found',
+      message: 'The completed City Planning case-report index did not match this address or APN. This property may be permit-only; plans may require an LADBS records request.',
+    },
+  }[discovery.status] || {
+    title: 'No direct planning PDF available',
+    message: 'ParcelLA did not match a verified, direct City-hosted PDF to this address or APN. This does not prove that no documents exist.',
+  };
+
   return `<div class="ownerbox" style="gap:7px">
-    <b>${discovery.status === 'index_pending' || discovery.status === 'index_unavailable' ? 'Planning PDF check pending' : 'No planning PDF available'}</b>
-    <span>${discovery.status === 'index_pending' || discovery.status === 'index_unavailable'
-      ? 'ParcelLA has not completed its City Planning document sync or has not matched this address/APN yet.'
-      : 'ParcelLA did not match a verified, direct City-hosted PDF to this address/APN. This does not prove that no documents exist.'}</span>
-    <span>Planning records identify applicants and project representatives; legal ownership is checked separately against parcel, assessor, deed, and RentCast property records.</span>
+    <b>${emptyState.title}</b>
+    <span>${emptyState.message}</span>
+    <span>Planning records identify applicants and project representatives; legal ownership is checked separately against parcel, assessor, deed, and property records.</span>
   </div>`;
 }
 
