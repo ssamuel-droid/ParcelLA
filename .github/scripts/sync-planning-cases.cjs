@@ -295,6 +295,26 @@ async function fetchAllSupabase(table, select, order = 'id.asc') {
   return rows;
 }
 
+async function fetchAllSupabaseByKey(table, select, key, pageSize = 500) {
+  const rows = [];
+  let lastValue = null;
+  for (;;) {
+    const after = lastValue === null
+      ? ''
+      : `&${encodeURIComponent(key)}=gt.${encodeURIComponent(String(lastValue))}`;
+    const path = `/rest/v1/${table}?select=${encodeURIComponent(select)}&order=${encodeURIComponent(`${key}.asc`)}&limit=${pageSize}${after}`;
+    const page = array(await supabase('GET', path, null, 'count=none'));
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    const nextValue = page[page.length - 1]?.[key];
+    if (nextValue === undefined || nextValue === null || nextValue === lastValue) {
+      throw new Error(`Could not advance ${table} pagination on ${key}`);
+    }
+    lastValue = nextValue;
+  }
+  return rows;
+}
+
 async function upsertChunks(table, conflict, rows, size = 250) {
   for (let index = 0; index < rows.length; index += size) {
     const chunk = rows.slice(index, index + size);
@@ -317,6 +337,7 @@ function siteApns(site) {
   const raw = site.raw_permit_data || {};
   const external = site.external_property_record || {};
   const candidates = [
+    site.apn,
     firstNested(raw, ['apn', 'ain', 'parcel_number', 'parcelNumber', 'assessor_parcel_number']),
     firstNested(external, ['apn', 'ain', 'parcelNumber', 'assessorParcelNumber']),
     firstNested(raw.raw_data, ['apn', 'ain', 'parcel_number', 'parcelNumber']),
@@ -515,10 +536,11 @@ async function main() {
     console.log(`[planning] ${cases.length} unique cases ready to store`);
     await upsertChunks('planning_cases', 'case_number', cases, 200);
 
-    const sites = await fetchAllSupabase(
+    const sites = await fetchAllSupabaseByKey(
       'sites',
-      'id,address,lat,lng,permit_source_id,raw_permit_data,external_property_record',
-      'id.asc'
+      'id,address,apn,raw_permit_data',
+      'id',
+      500
     );
     console.log(`[planning] matching ${cases.length} cases against ${sites.length} ParcelLA properties`);
     const matches = buildMatches(cases, sites);
@@ -527,10 +549,11 @@ async function main() {
     console.log(`[planning] stored ${matches.length} APN/address matches`);
 
     const matchedNumbers = new Set(matches.map(row => row.case_number));
-    const existingCases = await fetchAllSupabase(
+    const existingCases = await fetchAllSupabaseByKey(
       'planning_cases',
       'case_number,case_id,documents_checked_at',
-      'case_number.asc'
+      'case_number',
+      500
     );
     const existingDocuments = await fetchAllSupabase(
       'planning_documents',
