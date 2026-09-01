@@ -192,12 +192,35 @@ async function fetchJson(url, timeoutMs = 9000, headers = {}) {
       const detail = clean(data?.error || data?.message || data?.detail || text.slice(0, 160));
       const error = new Error(`HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
       error.status = res.status;
+      const retryAfter = Number.parseFloat(res.headers.get('retry-after') || '');
+      error.retryAfterMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.ceil(retryAfter * 1000)
+        : null;
       throw error;
     }
     return data;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchJsonWithRetry(url, timeoutMs, headers, options = {}) {
+  const attempts = Math.max(1, Number.parseInt(options.attempts, 10) || 3);
+  const baseDelayMs = Math.max(1, Number.parseInt(options.baseDelayMs, 10) || 1100);
+  const retryStatuses = new Set(options.retryStatuses || [429, 500, 504]);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchJson(url, timeoutMs, headers);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !retryStatuses.has(Number(error.status))) throw error;
+      const delayMs = Math.max(error.retryAfterMs || 0, baseDelayMs * (2 ** (attempt - 1)));
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
 }
 
 function saleHistoryFromRecord(record) {
@@ -532,7 +555,7 @@ async function queryRentCast(params) {
   const key = rentcastKey();
   const url = rentCastPropertyUrl(params);
   if (!key || !url) return null;
-  const data = await fetchJson(url.toString(), 10000, { 'X-Api-Key': key });
+  const data = await fetchJsonWithRetry(url.toString(), 10000, { 'X-Api-Key': key });
   const records = Array.isArray(data) ? data : data?.properties || data?.data || [];
   const record = nearestRentCastRecord(records, params);
   if (!record) return null;
@@ -1045,6 +1068,7 @@ router.get('/provider-health', async (req, res) => {
 
 export {
   enhancedOwnershipRows,
+  fetchJsonWithRetry,
   normalizeAttomRecord,
   normalizeMortgageRecord,
   normalizeRegridFeature,

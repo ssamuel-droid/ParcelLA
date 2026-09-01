@@ -4,11 +4,37 @@ process.env.SUPABASE_URL ||= 'http://localhost:54321';
 process.env.SUPABASE_SERVICE_KEY ||= 'owner-route-test-key';
 
 const {
+  fetchJsonWithRetry,
   normalizeAttomRecord,
   normalizeRentCastRecord,
   rentCastPropertyUrl,
   saleHistoryFromRecord,
 } = await import('../api/routes/owners.js');
+
+const originalFetch = globalThis.fetch;
+let retryCalls = 0;
+globalThis.fetch = async () => {
+  retryCalls += 1;
+  if (retryCalls === 1) {
+    return new Response('Rate exceeded.', { status: 429 });
+  }
+  return Response.json([{ formattedAddress: '267 N Toyopa Dr, Pacific Palisades, CA 90272' }]);
+};
+const retriedPayload = await fetchJsonWithRetry('https://example.test/properties', 1000, {}, { baseDelayMs: 1 });
+assert.equal(retryCalls, 2);
+assert.equal(retriedPayload[0].formattedAddress, '267 N Toyopa Dr, Pacific Palisades, CA 90272');
+
+retryCalls = 0;
+globalThis.fetch = async () => {
+  retryCalls += 1;
+  return new Response('Unauthorized', { status: 401 });
+};
+await assert.rejects(
+  fetchJsonWithRetry('https://example.test/properties', 1000, {}, { baseDelayMs: 1 }),
+  /HTTP 401/
+);
+assert.equal(retryCalls, 1);
+globalThis.fetch = originalFetch;
 
 const exactUrl = rentCastPropertyUrl({ address: '267 N Toyopa Dr' });
 assert.equal(exactUrl.searchParams.get('address'), '267 N Toyopa Dr, Los Angeles, CA');
