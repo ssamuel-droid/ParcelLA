@@ -13,6 +13,7 @@ import { createClient } from '@supabase/supabase-js';
 import { requireAuth, optionalAuth }  from '../middleware/auth.js';
 import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel }    from '../../src/model/financialModel.js';
+import { findPermitBackedHouseSite } from './sites.js';
 
 function sb() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
@@ -86,7 +87,11 @@ async function findNarrativeSite(siteId) {
     .eq('id', siteId)
     .maybeSingle();
   if (error) throw error;
-  if (!data) return { site: null, model: null };
+  if (!data) {
+    const permitSite = await findPermitBackedHouseSite(siteId);
+    if (!permitSite) return { site: null, model: null };
+    return { site: permitSite, model: permitSite._m || runModel(normalizeSite(permitSite)) };
+  }
 
   const site = mapSupabaseSite(data);
   return { site, model: site._m || modelFromSupabaseSite(data) };
@@ -105,11 +110,54 @@ function narrativeFallback(site, model, reason = '') {
     : `The current model shows a ${fmtM(Math.abs(profit))} value gap against the all-in basis.`;
   const reasonText = reason ? ` AI provider note: ${reason}` : '';
 
+  if (site.type === 'New House') {
+    const buildingSf = Number(site.buildingSf || model.buildingSf || 0);
+    const lotSf = Number(site.lot || 0);
+    const totalCost = Number(model.totalCost || 0);
+    const exitValue = Number(model.exitValue || 0);
+    const returnOnCost = totalCost ? profit / totalCost : 0;
+    const resalePsf = Number(model.exitValueMetricValue || (buildingSf ? exitValue / buildingSf : 0));
+    const sizeText = buildingSf ? `${Math.round(buildingSf).toLocaleString()} SF` : 'size pending verification';
+    const lotText = lotSf ? ` on a ${Math.round(lotSf).toLocaleString()} SF lot` : '';
+
+    return `${site.addr} is a ground-up ${sizeText} single-family residence${lotText}. The current underwriting shows ${fmtM(exitValue)} of completed-home value against ${fmtM(totalCost)} of all-in cost, producing ${fmtM(profit)} of development profit and a ${(returnOnCost * 100).toFixed(1)}% return on cost. The resale assumption is ${resalePsf ? '$' + Math.round(resalePsf).toLocaleString() + ' per building SF' : 'still subject to comparable-sale support'}.${reasonText}
+
+The primary risk is the completed-home valuation. A change in achievable resale price per square foot, construction scope, or site conditions moves the profit directly, so local closed-home sales and a contractor-backed budget should be verified before relying on the indicated return.
+
+The land basis should be treated as an underwriting estimate when the property is not actively listed. Permit valuation is evidence of proposed construction scope, not market land value, and should not replace a supported lot-value conclusion.`;
+  }
+
   return `${site.addr} is a ${units} ${site.type || 'development'} deal in ${site.hood || 'Los Angeles'}. ${profitRead} The key inputs are ${fmtM(model.totalCost || 0)} of total cost, ${fmtM(model.noi || 0)} of stabilized NOI, and an exit cap of ${(exitCap * 100).toFixed(2)}%. On those numbers, the deal is mainly driven by the spread between stabilized NOI and construction/acquisition basis.${reasonText}
 
 The main underwriting risk is that the cost and rent assumptions need to be verified before relying on the return. Hard costs, unit mix, entitlement status, and achievable rents can move the result quickly, so the next diligence step is to compare the construction budget and rent roll to recent local comps.
 
 The non-obvious point is that the land basis matters differently depending on listing status. If the site is not for sale, the imputed land value is only a negotiation screen, not a transaction price. If it is listed, the asking price should be stressed against both the cap-rate valuation and the per-unit/per-SF comp evidence.`;
+}
+
+function validatedNumber(value, min = 0, max = 1e12) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max ? number : null;
+}
+
+function applyHouseAnalysisSnapshot(site, model, snapshot) {
+  if (site.type !== 'New House' || !snapshot || typeof snapshot !== 'object') return model;
+  const fields = {
+    landCost: validatedNumber(snapshot.landCost),
+    totalCost: validatedNumber(snapshot.totalCost),
+    hardCosts: validatedNumber(snapshot.hardCosts),
+    softCosts: validatedNumber(snapshot.softCosts),
+    carryCost: validatedNumber(snapshot.carryCost),
+    exitValue: validatedNumber(snapshot.exitValue),
+    netProfit: validatedNumber(snapshot.netProfit, -1e12, 1e12),
+    leveragedIRR: validatedNumber(snapshot.leveragedIRR, -1000, 1000),
+    exitValueMetricValue: validatedNumber(snapshot.resalePsf, 0, 100000),
+    buildingSf: validatedNumber(snapshot.buildingSf, 300, 5e6),
+  };
+  return Object.fromEntries([
+    ...Object.entries(model || {}),
+    ...Object.entries(fields).filter(([, value]) => value !== null),
+  ]);
 }
 
 // ── NARRATIVE ─────────────────────────────────────────────────────────────────
@@ -118,13 +166,16 @@ export const narrativeRouter = Router();
 narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
   try {
     const siteId = +req.params.siteId;
-    const { overrides = {} } = req.body;
+    const { overrides = {}, analysisSnapshot = null } = req.body;
     const { site, model: baseModel } = await findNarrativeSite(siteId);
     if (!site) return res.status(404).json({ error: 'Site not found' });
+    const cacheableSiteId = site.isPermitBacked ? null : siteId;
+    const activityMetadata = site.isPermitBacked ? { permitSiteId: siteId } : {};
 
-    const model = Object.keys(overrides).length
+    let model = Object.keys(overrides).length
       ? runModel(normalizeSite(site), overrides)
       : baseModel;
+    model = applyHouseAnalysisSnapshot(site, model, analysisSnapshot);
 
     // Hash model assumptions for cache key
     const hash = `${model.price}|${model.hardCosts}|${model.marketCapRate}|${overrides.sc ?? 18}`;
@@ -132,17 +183,19 @@ narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
 
     // Check cache (graceful fallback if table doesn't exist)
     let cached = null;
-    try {
-      const { data } = await sb()
-        .from('narratives').select('narrative')
-        .match({ site_id: siteId, model_hash: hashKey }).maybeSingle();
-      cached = data;
-    } catch (e) {
-      console.warn('[narrative] Cache read failed (table may not exist):', e.message);
+    if (cacheableSiteId) {
+      try {
+        const { data } = await sb()
+          .from('narratives').select('narrative')
+          .match({ site_id: cacheableSiteId, model_hash: hashKey }).maybeSingle();
+        cached = data;
+      } catch (e) {
+        console.warn('[narrative] Cache read failed (table may not exist):', e.message);
+      }
     }
 
     if (cached) {
-      await logActivity(req.user?.id, 'view_narrative', siteId);
+      await logActivity(req.user?.id, 'view_narrative', cacheableSiteId, activityMetadata);
       return res.json({ narrative: cached.narrative, cached: true });
     }
 
@@ -152,7 +205,7 @@ narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
                     : '$' + Math.round(n);
 
     // Map model fields correctly
-    const landCost    = model.price ?? 0;
+    const landCost    = model.landCost ?? model.price ?? 0;
     const totalCost   = model.totalCost ?? 0;
     const hardCosts   = model.hardCosts ?? 0;
     const softCosts   = model.softCosts ?? 0;
@@ -166,9 +219,29 @@ narrativeRouter.post('/:siteId', optionalAuth, async (req, res, next) => {
     const capOnCost   = model.capRateOnCost ?? 0;
     const devSpreadPct = model.devSpreadPct ?? 0;
     const eqMult      = model.equityMultiple ?? 0;
-    const hcpsf       = model.hardCosts && model.totalSF ? Math.round(model.hardCosts / model.totalSF) : 285;
+    const buildingSf  = Number(site.buildingSf || model.buildingSf || (site.units * site.usf) || 0);
+    const lotSf       = Number(site.lot || 0);
+    const hcpsf       = model.hardCosts && buildingSf ? Math.round(model.hardCosts / buildingSf) : 285;
+    const returnOnCost = totalCost ? netProfit / totalCost : 0;
+    const resalePsf   = Number(model.exitValueMetricValue || (buildingSf ? exitValue / buildingSf : 0));
 
-    const prompt = `You are a senior real estate development analyst at a top-tier LA investment firm. Write a concise, plain-English deal assessment.
+    const prompt = site.type === 'New House'
+      ? `You are a senior Los Angeles single-family development analyst. Write a concise, plain-English deal assessment.
+
+PROJECT: ${site.addr}, ${site.hood} · ground-up single-family residence · ${buildingSf ? Math.round(buildingSf).toLocaleString() + ' building SF' : 'building SF TBD'} · ${lotSf ? Math.round(lotSf).toLocaleString() + ' lot SF' : 'lot SF TBD'}
+LAND BASIS: ${fmtM(landCost)}${site.isComp || site.status === 'off-market' ? ' (underwriting estimate; not an asking price)' : ''}
+ALL-IN COST: ${fmtM(totalCost)} · HARD COSTS: ${fmtM(hardCosts)} ($${hcpsf}/building SF) · SOFT: ${fmtM(softCosts)} · CARRY: ${fmtM(carryCost)}
+COMPLETED-HOME VALUE: ${fmtM(exitValue)}${resalePsf ? ` at $${Math.round(resalePsf).toLocaleString()}/building SF` : ''}
+NET PROFIT: ${fmtM(netProfit)} · RETURN ON COST: ${(returnOnCost * 100).toFixed(1)}% · IRR: ${Math.round(irrV * 10) / 10}%
+PERMIT VALUATION: ${site.permitValuation ? fmtM(site.permitValuation) : 'not provided'}
+
+Write exactly 3 complete paragraphs, max 260 words total:
+1. Why the house development does or does not pencil, using completed-home value versus all-in cost
+2. The most important construction or resale risk a lender or equity partner would raise
+3. One non-obvious point about the land basis, permit valuation, lot, or comparable-sale evidence
+
+Do not discuss NOI, rent, cap rates, occupancy, or income-property metrics. Be direct and specific with numbers. Finish every paragraph completely. No bullets or preamble.`
+      : `You are a senior real estate development analyst at a top-tier LA investment firm. Write a concise, plain-English deal assessment.
 
 SITE: ${site.addr}, ${site.hood} · ${site.type} · ${site.units} units · ${site.rti ? 'RTI Approved' : site.isComp ? 'Off-market comp' : 'For sale'}
 LAND: ${fmtM(landCost)}${site.isComp ? ' (imputed)' : ''} · ALL-IN: ${fmtM(totalCost)} (${fmtM(Math.round(totalCost/site.units))}/unit)
@@ -186,7 +259,7 @@ Be direct, specific with numbers, opinionated. Finish every paragraph completely
 
     if (!process.env.ANTHROPIC_API_KEY) {
       const narrative = narrativeFallback(site, model, 'Anthropic API key is not configured, so this is a deterministic model summary.');
-      await logActivity(req.user?.id, 'generate_narrative_fallback', siteId);
+      await logActivity(req.user?.id, 'generate_narrative_fallback', cacheableSiteId, activityMetadata);
       return res.json({ narrative, cached: false, fallback: true });
     }
 
@@ -209,7 +282,7 @@ Be direct, specific with numbers, opinionated. Finish every paragraph completely
       const message = err.error?.message ?? `Claude API ${r.status}`;
       const narrative = narrativeFallback(site, model, message);
       console.warn('[narrative] Claude fallback:', message);
-      await logActivity(req.user?.id, 'generate_narrative_fallback', siteId, { reason: message });
+      await logActivity(req.user?.id, 'generate_narrative_fallback', cacheableSiteId, { ...activityMetadata, reason: message });
       return res.json({ narrative, cached: false, fallback: true, error: message });
     }
 
@@ -218,15 +291,17 @@ Be direct, specific with numbers, opinionated. Finish every paragraph completely
     const tokens    = data.usage?.input_tokens + data.usage?.output_tokens;
 
     // Cache it (graceful fallback if table doesn't exist)
-    try {
-      await sb().from('narratives').upsert({
-        site_id: siteId, model_hash: hashKey, narrative, tokens_used: tokens,
-      });
-    } catch (e) {
-      console.warn('[narrative] Cache write failed (table may not exist):', e.message);
+    if (cacheableSiteId) {
+      try {
+        await sb().from('narratives').upsert({
+          site_id: cacheableSiteId, model_hash: hashKey, narrative, tokens_used: tokens,
+        });
+      } catch (e) {
+        console.warn('[narrative] Cache write failed (table may not exist):', e.message);
+      }
     }
 
-    await logActivity(req.user?.id, 'generate_narrative', siteId, { tokens });
+    await logActivity(req.user?.id, 'generate_narrative', cacheableSiteId, { ...activityMetadata, tokens });
     res.json({ narrative, cached: false, tokens });
   } catch (err) { next(err); }
 });

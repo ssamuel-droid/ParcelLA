@@ -2071,6 +2071,28 @@ function permitRowAsHouseSite(p = {}) {
   };
 }
 
+export async function findPermitBackedHouseSite(siteId, { includePlanning = false } = {}) {
+  const id = Number(siteId);
+  if (!process.env.SUPABASE_URL || !Number.isFinite(id)) return null;
+
+  const { data: permit, error } = await supabase
+    .from('permits')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!permit) return null;
+
+  const permitSite = permitRowAsHouseSite(permit);
+  const workDescription = permitSite.raw_permit_data?.work_description || '';
+  if (!isNewHouseSite(permitSite) || !isPrimaryNewHouseWorkDescription(workDescription)) return null;
+
+  let site = mapSupabaseSite(permitSite);
+  site.isPermitBacked = true;
+  if (includePlanning) site = await attachPlanningDiscovery(site, null);
+  return site;
+}
+
 function sortPermitHouseSites(sites, sort = 'profit') {
   const num = value => {
     const n = Number(value);
@@ -3084,20 +3106,10 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
     }
 
     if (!site && process.env.SUPABASE_URL) {
-      const { data: permit, error: permitError } = await supabase
-        .from('permits')
-        .select('*')
-        .eq('id', id)
-        .maybeSingle();
-      if (permitError) throw permitError;
-      if (permit) {
-        const permitSite = permitRowAsHouseSite(permit);
-        if (isNewHouseSite(permitSite) && isPrimaryNewHouseWorkDescription(permitSite.raw_permit_data?.work_description || '')) {
-          site = mapSupabaseSite(permitSite);
-          site = await attachPlanningDiscovery(site, null);
-          model = runModel(normalizeSite(site), overrides);
-          scenarios = runScenarios(normalizeSite(site), overrides);
-        }
+      site = await findPermitBackedHouseSite(id, { includePlanning: true });
+      if (site) {
+        model = runModel(normalizeSite(site), overrides);
+        scenarios = runScenarios(normalizeSite(site), overrides);
       }
     }
 

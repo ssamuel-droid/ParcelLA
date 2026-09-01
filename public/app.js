@@ -3120,11 +3120,26 @@ async function generateNarrative(id) {
   if (!el) return;
   el.innerHTML = '<div style="font-size:11px;color:#aaa;padding:6px">Generating analysis...</div>';
   try {
-    const r = await fetch(API+'/api/narrative/'+id, {
-      method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body:JSON.stringify({overrides:{}})
-    });
-    if (!r.ok) throw new Error('API '+r.status);
-    const data = await r.json();
+    const site = allSites.find(item => String(item.id) === String(id));
+    let analysisSnapshot = null;
+    if (site && isHouseSite(site)) {
+      const snapshot = await getUnderwritingSnapshot(site);
+      analysisSnapshot = {
+        landCost: snapshot.costs.land,
+        totalCost: snapshot.costs.totalCost,
+        hardCosts: snapshot.costs.hardCosts,
+        softCosts: snapshot.costs.softCosts,
+        carryCost: snapshot.costs.carryCost,
+        exitValue: snapshot.valuation.exitValue,
+        netProfit: snapshot.valuation.netProfit,
+        leveragedIRR: snapshot.valuation.leveragedIRR,
+        resalePsf: snapshot.valuation.exitValueMetricValue,
+        buildingSf: siteBuildingSf(site),
+      };
+    }
+    const data = await fetchJSONWithTimeout(API+'/api/narrative/'+id, {
+      method:'POST', headers:{'Content-Type':'application/json', ...authHeaders()}, body:JSON.stringify({overrides:{}, analysisSnapshot})
+    }, 45000);
     el.innerHTML = '<div class="nb">'+data.narrative+'</div>';
   } catch(e) {
     el.innerHTML = '<div style="font-size:11px;color:#e24b4a">Could not generate — '+e.message+'</div>';
