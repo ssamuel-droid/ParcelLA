@@ -10,11 +10,18 @@ const REGRID_SOURCE = 'Regrid Parcel API';
 const REGRID_BASE = 'https://app.regrid.com/api/v2/parcels';
 const REGRID_LA_PATH = '/us/ca/los-angeles';
 const RENTCAST_SOURCE = 'RentCast property records';
+const ATTOM_SOURCE = 'ATTOM owner and mortgage records';
 const MONTHLY_CACHE_SOURCE = 'Monthly property records cache';
 const RENTCAST_BASE = 'https://api.rentcast.io/v1/properties';
-const RENTCAST_LIVE_OWNER_ENABLED = /^(1|true|yes)$/i.test(process.env.RENTCAST_LIVE_OWNER_LOOKUPS_ENABLED || '');
+const ATTOM_BASE = 'https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailmortgageowner';
+const EXTERNAL_CACHE_DAYS = positiveInt(process.env.OWNER_DATA_CACHE_DAYS, 30);
+const RENTCAST_DAILY_LIMIT = positiveInt(process.env.RENTCAST_OWNER_DAILY_LIMIT, 25);
+const ATTOM_DAILY_LIMIT = positiveInt(process.env.ATTOM_MORTGAGE_DAILY_LIMIT, 10);
+const RENTCAST_LIVE_OWNER_ENABLED = envEnabled('RENTCAST_LIVE_OWNER_LOOKUPS_ENABLED', true);
+const ATTOM_LIVE_MORTGAGE_ENABLED = envEnabled('ATTOM_LIVE_MORTGAGE_LOOKUPS_ENABLED', true);
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const ownerCache = new Map();
+const providerUsage = new Map();
 let ownerDb = null;
 let regridProbeCache = null;
 
@@ -53,6 +60,17 @@ const OWNER_FIELDS = [
 function clean(value) {
   const text = String(value ?? '').trim();
   return text && text !== '0' && text.toLowerCase() !== 'null' ? text : '';
+}
+
+function positiveInt(value, fallback) {
+  const number = Number.parseInt(value, 10);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function envEnabled(name, fallback) {
+  const value = clean(process.env[name]);
+  if (!value) return fallback;
+  return !/^(0|false|no|off)$/i.test(value);
 }
 
 function compact(values) {
@@ -250,6 +268,10 @@ function rentcastKey() {
   return clean(process.env.RENTCAST_API_KEY);
 }
 
+function attomKey() {
+  return clean(process.env.ATTOM_API_KEY);
+}
+
 function normalizeRentCastRecord(record) {
   const names = unique([
     ...ownerNameParts(record?.owner?.names),
@@ -263,21 +285,57 @@ function normalizeRentCastRecord(record) {
   return {
     found: !!ownerName,
     ownerName: ownerName || null,
-    ownerType: clean(record?.owner?.type) || null,
+    ownerType: clean(record?.owner?.type || record?.ownerType) || null,
     ownerOccupied: typeof record?.ownerOccupied === 'boolean' ? record.ownerOccupied : null,
-    mailingAddress: clean(mailing.formattedAddress) || formatAddress(
+    mailingAddress: clean(record?.mailingAddress) || clean(mailing.formattedAddress) || formatAddress(
       [mailing.addressLine1, mailing.addressLine2],
       compact([mailing.city, mailing.state]).join(', '),
       mailing.zipCode
     ) || null,
-    situsAddress: clean(record?.formattedAddress) || null,
+    situsAddress: clean(record?.formattedAddress || record?.situsAddress) || null,
     apn: clean(record?.assessorID || record?.assessorId || record?.apn) || null,
     lastSaleDate: cleanDate(record?.lastSaleDate) || latestSale?.date || null,
     recordingDate: cleanDate(record?.lastSaleDate) || latestSale?.date || null,
     lastSaleAmount: cleanMoney(record?.lastSalePrice) || latestSale?.price || null,
     saleHistory,
     originalMortgage: normalizeMortgageRecord(record?.originalMortgage, record?.originalMortgage?.source),
-    source: RENTCAST_SOURCE,
+    source: clean(record?.source) || RENTCAST_SOURCE,
+  };
+}
+
+function normalizeAttomRecord(payload) {
+  const property = Array.isArray(payload?.property)
+    ? payload.property[0]
+    : Array.isArray(payload?.data?.property)
+      ? payload.data.property[0]
+      : payload?.property || payload?.data?.property || null;
+  if (!property || typeof property !== 'object') return null;
+  const owner = property.owner || {};
+  const names = unique(['owner1', 'owner2', 'owner3', 'owner4'].flatMap(key => {
+    const value = owner[key] || {};
+    return ownerNameParts({
+      firstName: value.firstnameandmi || value.firstName,
+      lastName: value.lastname || value.lastName,
+      companyName: value.companyName,
+    });
+  }));
+  const mortgage = normalizeMortgageRecord(property.mortgage, ATTOM_SOURCE);
+  const ownerName = names.join(' / ');
+  if (!ownerName && !mortgage) return null;
+  return {
+    found: !!ownerName,
+    ownerName: ownerName || null,
+    ownerType: first(owner.ownerrelationshiprightscode, owner.ownerrelationshiptype, owner.corporateindicator),
+    ownerOccupied: /owner occupied/i.test(clean(property.summary?.absenteeInd))
+      ? true
+      : /absentee/i.test(clean(property.summary?.absenteeInd))
+        ? false
+        : null,
+    mailingAddress: first(owner.mailingaddressoneline, owner.mailingAddressOneLine),
+    situsAddress: first(property.address?.oneLine, property.address?.oneline),
+    apn: first(property.identifier?.apn, property.identifier?.apnOrig),
+    originalMortgage: mortgage,
+    source: ATTOM_SOURCE,
   };
 }
 
@@ -313,7 +371,7 @@ async function queryMonthlyPropertyCache(params) {
       .limit(12),
     db
       .from('property_enrichment_cache')
-      .select('address,provider,purpose,status,fetched_at,normalized')
+      .select('address,provider,purpose,status,fetched_at,expires_at,normalized')
       .in('purpose', ['property_record', 'mortgage_record'])
       .ilike('address', `${safePrefix}%`)
       .order('fetched_at', { ascending: false })
@@ -328,12 +386,18 @@ async function queryMonthlyPropertyCache(params) {
   const cacheRows = (cacheResult.data || []).filter(row => row.status === 'ok' && matchesAddress(row));
   if (!compRows.length && !cacheRows.length) return null;
 
-  const propertyCache = cacheRows.find(row => row.purpose === 'property_record' && row.normalized?.record);
-  const rawProperty = propertyCache?.normalized?.record || compRows[0]?.raw_record || {};
-  const primary = normalizeRentCastRecord(rawProperty);
+  const propertyCaches = cacheRows.filter(row => row.purpose === 'property_record' && row.normalized?.record);
+  const propertyCache = propertyCaches[0] || null;
+  const rentcastPropertyCache = propertyCaches.find(row => /^rentcast/i.test(clean(row.provider)));
+  const rawProperties = propertyCaches.map(row => row.normalized.record);
+  const rawProperty = rawProperties[0] || compRows[0]?.raw_record || {};
+  const primary = rawProperties.length
+    ? rawProperties.map(normalizeRentCastRecord).reduce(mergeOwnerResults, null)
+    : normalizeRentCastRecord(rawProperty);
   const saleHistory = saleHistoryFromRecord({
     saleHistory: [
-      ...(Array.isArray(rawProperty.saleHistory) ? rawProperty.saleHistory : []),
+      ...rawProperties.flatMap(record => Array.isArray(record.saleHistory) ? record.saleHistory : []),
+      ...(!rawProperties.length && Array.isArray(rawProperty.saleHistory) ? rawProperty.saleHistory : []),
       ...compRows.flatMap(row => [
       ...(Array.isArray(row.raw_record?.saleHistory) ? row.raw_record.saleHistory : []),
       { date: row.sale_date, price: row.sale_price, event: 'Sale', source: row.source || MONTHLY_CACHE_SOURCE },
@@ -342,8 +406,8 @@ async function queryMonthlyPropertyCache(params) {
   });
   const mortgageCache = cacheRows.find(row => row.purpose === 'mortgage_record' && row.normalized?.originalMortgage);
   const originalMortgage = normalizeMortgageRecord(
-    mortgageCache?.normalized?.originalMortgage || rawProperty.originalMortgage,
-    mortgageCache?.provider === 'attom' ? 'ATTOM monthly mortgage records' : MONTHLY_CACHE_SOURCE
+    mortgageCache?.normalized?.originalMortgage || primary.originalMortgage || rawProperty.originalMortgage,
+    /^attom/i.test(clean(mortgageCache?.provider)) ? 'ATTOM monthly mortgage records' : MONTHLY_CACHE_SOURCE
   );
   const latestSale = saleHistory[0] || null;
   const source = unique([
@@ -361,8 +425,68 @@ async function queryMonthlyPropertyCache(params) {
     saleHistory,
     originalMortgage: originalMortgage || primary.originalMortgage || null,
     historyRefreshedAt: cacheRows[0]?.fetched_at || null,
+    cacheStale: !rentcastPropertyCache || !rentcastPropertyCache.expires_at || new Date(rentcastPropertyCache.expires_at).getTime() <= Date.now(),
+    mortgageCacheStale: !mortgageCache || !mortgageCache.expires_at || new Date(mortgageCache.expires_at).getTime() <= Date.now(),
     source,
   };
+}
+
+function lookupCacheKey(params) {
+  return addressLine(params.address) || clean(params.apn).replace(/\D/g, '') || compact([params.lat, params.lng]).join(',');
+}
+
+function cacheExpiresAt() {
+  return new Date(Date.now() + EXTERNAL_CACHE_DAYS * 86400000).toISOString();
+}
+
+async function dailyProviderCount(provider, purpose) {
+  const date = new Date().toISOString().slice(0, 10);
+  const memoryKey = `${date}|${provider}|${purpose}`;
+  const memoryCount = providerUsage.get(memoryKey) || 0;
+  const db = monthlyDatabase();
+  if (!db) return { count: memoryCount, memoryKey };
+  const result = await db
+    .from('property_enrichment_cache')
+    .select('id', { count: 'exact', head: true })
+    .eq('provider', provider)
+    .eq('purpose', purpose)
+    .gte('fetched_at', `${date}T00:00:00.000Z`);
+  if (result.error) {
+    console.warn(`[owners] Could not read ${provider} daily usage: ${clean(result.error.message) || 'database error'}`);
+    return { count: memoryCount, memoryKey };
+  }
+  return { count: Math.max(memoryCount, result.count || 0), memoryKey };
+}
+
+async function claimProviderLookup(provider, purpose, limit) {
+  if (!limit) return false;
+  const usage = await dailyProviderCount(provider, purpose);
+  if (usage.count >= limit) return false;
+  providerUsage.set(usage.memoryKey, usage.count + 1);
+  return true;
+}
+
+async function persistProviderRecord(provider, purpose, params, normalized, status = 'ok') {
+  const db = monthlyDatabase();
+  const cacheKey = lookupCacheKey(params);
+  if (!db || !cacheKey) return;
+  const result = await db.from('property_enrichment_cache').upsert({
+    provider,
+    purpose,
+    cache_key: `owner:${cacheKey}`,
+    address: clean(params.address) || normalized?.situsAddress || null,
+    lat: Number.isFinite(Number(params.lat)) ? Number(params.lat) : null,
+    lng: Number.isFinite(Number(params.lng)) ? Number(params.lng) : null,
+    status,
+    fetched_at: new Date().toISOString(),
+    expires_at: cacheExpiresAt(),
+    request_meta: { detailView: true },
+    payload: {},
+    normalized: purpose === 'mortgage_record'
+      ? { originalMortgage: normalized?.originalMortgage || null }
+      : { record: normalized || null },
+  }, { onConflict: 'provider,purpose,cache_key' });
+  if (result.error) throw result.error;
 }
 
 async function queryRentCast(params) {
@@ -382,6 +506,51 @@ async function queryRentCast(params) {
   return normalized.ownerName || normalized.lastSaleDate || normalized.lastSaleAmount || normalized.originalMortgage
     ? normalized
     : null;
+}
+
+async function queryRentCastOnDemand(params) {
+  if (!await claimProviderLookup('rentcast_live', 'property_record', RENTCAST_DAILY_LIMIT)) {
+    const error = new Error('Daily RentCast owner lookup limit reached');
+    error.status = 429;
+    throw error;
+  }
+  const normalized = await queryRentCast(params);
+  await persistProviderRecord('rentcast_live', 'property_record', params, normalized, normalized ? 'ok' : 'miss').catch(error => {
+    console.warn(`[owners] Could not cache RentCast record: ${clean(error.message) || 'database error'}`);
+  });
+  return normalized;
+}
+
+function attomAddressParts(address) {
+  const parts = clean(address).split(',').map(clean).filter(Boolean);
+  const locality = parts.slice(1).join(', ') || 'Los Angeles';
+  return {
+    address1: parts[0] || clean(address),
+    address2: /\bCA\b|CALIFORNIA/i.test(locality) ? locality : `${locality}, CA`,
+  };
+}
+
+async function queryAttomOnDemand(params) {
+  const key = attomKey();
+  const { address1, address2 } = attomAddressParts(params.address);
+  if (!key || !address1) return null;
+  if (!await claimProviderLookup('attom_live', 'mortgage_record', ATTOM_DAILY_LIMIT)) {
+    const error = new Error('Daily ATTOM mortgage lookup limit reached');
+    error.status = 429;
+    throw error;
+  }
+  const url = new URL(ATTOM_BASE);
+  url.searchParams.set('address1', address1);
+  url.searchParams.set('address2', address2);
+  const data = await fetchJson(url.toString(), 10000, { apikey: key });
+  const normalized = normalizeAttomRecord(data);
+  await Promise.all([
+    persistProviderRecord('attom_live', 'mortgage_record', params, normalized, normalized?.originalMortgage ? 'ok' : 'miss'),
+    persistProviderRecord('attom_live', 'property_record', params, normalized, normalized ? 'ok' : 'miss'),
+  ]).catch(error => {
+    console.warn(`[owners] Could not cache ATTOM record: ${clean(error.message) || 'database error'}`);
+  });
+  return normalized;
 }
 
 function mergeOwnerResults(current, candidate) {
@@ -652,6 +821,7 @@ async function lookupOwner({ address, lat, lng, apn }) {
   if (cached && Date.now() - cached.time < CACHE_TTL) return cached.value;
 
   let owner = null;
+  let rentcastAttempted = false;
   const diagnostics = [];
   const runProvider = async (provider, configured, lookup, note = '') => {
     if (!configured) {
@@ -687,7 +857,8 @@ async function lookupOwner({ address, lat, lng, apn }) {
 
   if (!owner?.ownerName) {
     if (RENTCAST_LIVE_OWNER_ENABLED) {
-      const rentcastOwner = await runProvider(RENTCAST_SOURCE, !!rentcastKey(), () => queryRentCast({ address, lat, lng, apn }));
+      rentcastAttempted = true;
+      const rentcastOwner = await runProvider(RENTCAST_SOURCE, !!rentcastKey(), () => queryRentCastOnDemand({ address, lat, lng, apn }));
       owner = mergeOwnerResults(owner, rentcastOwner);
     } else {
       diagnostics.push({
@@ -696,6 +867,17 @@ async function lookupOwner({ address, lat, lng, apn }) {
         note: 'Live per-property RentCast calls are disabled. ParcelLA uses the capped monthly cache instead.',
       });
     }
+  }
+
+  const saleCount = Array.isArray(owner?.saleHistory) ? owner.saleHistory.length : 0;
+  if (!rentcastAttempted && RENTCAST_LIVE_OWNER_ENABLED && rentcastKey() && (owner?.cacheStale || saleCount < 2)) {
+    const rentcastOwner = await runProvider(RENTCAST_SOURCE, true, () => queryRentCastOnDemand({ address, lat, lng, apn }));
+    owner = mergeOwnerResults(owner, rentcastOwner);
+  }
+
+  if (ATTOM_LIVE_MORTGAGE_ENABLED && (!owner?.originalMortgage || owner?.mortgageCacheStale)) {
+    const attomOwner = await runProvider(ATTOM_SOURCE, !!attomKey(), () => queryAttomOnDemand({ address, lat, lng, apn }));
+    owner = mergeOwnerResults(owner, attomOwner);
   }
 
   const ain = clean(apn).replace(/\D/g, '');
@@ -780,7 +962,16 @@ router.get('/provider-health', async (req, res) => {
     return res.json(regridProbeCache.value);
   }
   if (!regridToken()) {
-    return res.json({ provider: REGRID_SOURCE, configured: false, credentialAccepted: false, ownerMapped: false });
+    return res.json({
+      provider: REGRID_SOURCE,
+      configured: false,
+      credentialAccepted: false,
+      ownerMapped: false,
+      fallbacks: {
+        rentcast: { configured: !!rentcastKey(), enabled: RENTCAST_LIVE_OWNER_ENABLED, dailyLimit: RENTCAST_DAILY_LIMIT },
+        attom: { configured: !!attomKey(), enabled: ATTOM_LIVE_MORTGAGE_ENABLED, dailyLimit: ATTOM_DAILY_LIMIT },
+      },
+    });
   }
   try {
     const result = await queryRegrid({ address: '12500 Riverside Dr, Valley Village, CA 91607' });
@@ -791,6 +982,10 @@ router.get('/provider-health', async (req, res) => {
       ownerMapped: !!result?.ownerName,
       mailingAddressMapped: !!result?.mailingAddress,
       apnMapped: !!result?.apn,
+      fallbacks: {
+        rentcast: { configured: !!rentcastKey(), enabled: RENTCAST_LIVE_OWNER_ENABLED, dailyLimit: RENTCAST_DAILY_LIMIT },
+        attom: { configured: !!attomKey(), enabled: ATTOM_LIVE_MORTGAGE_ENABLED, dailyLimit: ATTOM_DAILY_LIMIT },
+      },
       checkedAt: new Date().toISOString(),
     };
     regridProbeCache = { time: now, value };
@@ -803,6 +998,10 @@ router.get('/provider-health', async (req, res) => {
       credentialAccepted: ![401, 403].includes(status),
       ownerMapped: false,
       error: status ? `HTTP ${status}` : clean(error.message).slice(0, 120),
+      fallbacks: {
+        rentcast: { configured: !!rentcastKey(), enabled: RENTCAST_LIVE_OWNER_ENABLED, dailyLimit: RENTCAST_DAILY_LIMIT },
+        attom: { configured: !!attomKey(), enabled: ATTOM_LIVE_MORTGAGE_ENABLED, dailyLimit: ATTOM_DAILY_LIMIT },
+      },
       checkedAt: new Date().toISOString(),
     };
     regridProbeCache = { time: now, value };
@@ -812,6 +1011,7 @@ router.get('/provider-health', async (req, res) => {
 
 export {
   enhancedOwnershipRows,
+  normalizeAttomRecord,
   normalizeMortgageRecord,
   normalizeRegridFeature,
   normalizeRentCastRecord,

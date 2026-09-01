@@ -139,7 +139,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status:    'ok',
     version:   '3.0.0',
-    release:   '2026-09-01-clean-owner-empty-state',
+    release:   '2026-09-01-cached-owner-sale-mortgage-lookups',
     timestamp: new Date().toISOString(),
     env:       process.env.NODE_ENV ?? 'development',
     services: {
@@ -156,6 +156,7 @@ app.get('/api/health', (req, res) => {
     ownerData: {
       regridConfigured: !!(process.env.REGRID_API_KEY || process.env.REGRID_TOKEN),
       rentcastConfigured: !!process.env.RENTCAST_API_KEY,
+      attomConfigured: !!process.env.ATTOM_API_KEY,
       note: 'Configured means a credential exists; each owner lookup reports whether the provider accepted it.',
     },
   });

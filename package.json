@@ -8,6 +8,7 @@
     "start": "NODE_ENV=production node api/server.js",
     "dev": "NODE_ENV=development node --watch api/server.js",
     "sync": "node api/jobs/sync.js --run-now",
+    "test:owners": "node .github/scripts/test-owner-normalization.cjs && node scripts/test-owner-route.mjs",
     "test-apis": "python scripts/test_apis.py",
       "audit:filters": "node scripts/audit-site-filters.mjs",
       "audit:narrative": "node scripts/audit-narrative.mjs",
