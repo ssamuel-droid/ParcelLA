@@ -3177,10 +3177,10 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
     <button class="ab as" onclick="toggleWatch(${s.id}, event)">${isWatched(s.id)?'Remove from watchlist':'Save to watchlist'}</button>
-    <div class="sh">Planning cases & documents</div>
-    ${planningDocuments}
     <div class="sh">Owner information</div>
     <div id="owner-${s.id}">${ownerInfoHTML(siteOwnerInfo(s), s)}</div>
+    <div class="sh">Planning cases & documents</div>
+    ${planningDocuments}
     <div class="sh">Map options</div>
     ${renderMapPanel(s)}
     <div class="sh">Returns</div>

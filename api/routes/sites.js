@@ -1404,11 +1404,17 @@ async function attachPlanningDiscovery(site, siteId) {
 
       const documentCaseNumbers = new Set(documentRows.map(document => document.case_number));
       const staleBefore = Date.now() - PDIS_PROFILE_STALE_MS;
+      const primaryCaseNumber = matches.find(match => match.is_primary)?.case_number || null;
       const refreshCandidates = caseRows.filter(row => {
         const profileCheckedAt = row.source_record?.pdis?.checkedAt;
         const profileIsStale = !profileCheckedAt || new Date(profileCheckedAt).getTime() < staleBefore;
         const ownersMissing = !(row.source_record?.pdis?.documentParties?.owners || []).length;
         return !documentCaseNumbers.has(row.case_number) || profileIsStale || ownersMissing;
+      }).sort((left, right) => {
+        const primaryDifference = Number(right.case_number === primaryCaseNumber) - Number(left.case_number === primaryCaseNumber);
+        if (primaryDifference) return primaryDifference;
+        return String(right.application_date || right.completion_date || '')
+          .localeCompare(String(left.application_date || left.completion_date || ''));
       }).slice(0, PDIS_ON_DEMAND_CASE_LIMIT);
       if (refreshCandidates.length) {
         const refreshResults = await Promise.allSettled(refreshCandidates.map((planningCase, index) =>
