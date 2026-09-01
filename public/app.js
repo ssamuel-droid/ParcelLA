@@ -1836,11 +1836,20 @@ function mergeOwnerInfo(localOwner, providerOwner, s = {}) {
   if (!localOwner) return providerOwner;
   if (!providerOwner) return localOwner;
   const sources = [...new Set([localOwner.source, providerOwner.source].filter(Boolean))];
+  const planningFallback = localOwner.ownerAuthority === 'planning_document';
+  const providerHasOwner = !!providerOwner.ownerName;
   const merged = {
     ...providerOwner,
     ...localOwner,
-    ownerName: localOwner.ownerName || providerOwner.ownerName || null,
-    ownerType: localOwner.ownerType || providerOwner.ownerType || null,
+    ownerName: planningFallback && providerHasOwner
+      ? providerOwner.ownerName
+      : localOwner.ownerName || providerOwner.ownerName || null,
+    ownerType: planningFallback && providerHasOwner
+      ? providerOwner.ownerType || null
+      : localOwner.ownerType || providerOwner.ownerType || null,
+    ownerAuthority: planningFallback && providerHasOwner
+      ? (providerOwner.ownerAuthority || 'property_record')
+      : localOwner.ownerAuthority || providerOwner.ownerAuthority || null,
     situsAddress: localOwner.situsAddress || providerOwner.situsAddress || s.addr || null,
     apn: localOwner.apn || providerOwner.apn || s.apn || null,
     originalMortgage: localOwner.originalMortgage || providerOwner.originalMortgage || null,
@@ -1857,29 +1866,54 @@ function mergeOwnerInfo(localOwner, providerOwner, s = {}) {
   return merged;
 }
 
+function planningDocumentOwnerInfo(s = {}) {
+  const cases = Array.isArray(s.planningCases) ? s.planningCases : [];
+  const owners = [...new Set(cases.flatMap(planningCase =>
+    Array.isArray(planningCase.documentOwners) ? planningCase.documentOwners : []
+  ).map(value => String(value || '').trim()).filter(Boolean))];
+  if (!owners.length) return null;
+  const checkedAt = cases.find(planningCase => planningCase.documentPartiesCheckedAt)?.documentPartiesCheckedAt || '';
+  return {
+    found: true,
+    ownerName: owners.join(' / '),
+    ownerType: 'Named owner in planning filing',
+    ownerAuthority: 'planning_document',
+    situsAddress: s.addr || null,
+    apn: s.ownerApn || s.apn || null,
+    source: 'Los Angeles City Planning document (not recorder-verified)',
+    historyRefreshedAt: checkedAt,
+    saleHistory: [],
+    originalMortgage: null,
+  };
+}
+
 function siteOwnerInfo(s = {}) {
   const external = s.externalPropertyRecord || {};
+  const planningOwner = planningDocumentOwnerInfo(s);
   const saleHistory = ownerSaleHistory({
     saleHistory: external.saleHistory,
     lastSaleDate: s.ownerLastSaleDate || external.lastSaleDate,
     lastSaleAmount: s.ownerLastSaleAmount || external.lastSalePrice,
   }, s);
   const originalMortgage = ownerMortgageInfo({ originalMortgage: external.originalMortgage }, s);
-  if (!s.ownerName && !saleHistory.length && !originalMortgage) return null;
+  if (!s.ownerName && !external.ownerName && !saleHistory.length && !originalMortgage && !planningOwner) return null;
+  const recordedOwnerName = s.ownerName || external.ownerName || null;
   return {
     found: true,
-    ownerName: s.ownerName || external.ownerName || null,
+    ownerName: recordedOwnerName || planningOwner?.ownerName || null,
+    ownerType: recordedOwnerName ? (external.ownerType || null) : planningOwner?.ownerType || null,
+    ownerAuthority: recordedOwnerName ? 'property_record' : planningOwner?.ownerAuthority || null,
     situsAddress: s.ownerSitusAddress || s.addr || null,
     apn: s.ownerApn || s.apn || null,
-    source: s.ownerSource || (originalMortgage?.source || (external.ownerName || saleHistory.length
+    source: s.ownerSource || (recordedOwnerName || saleHistory.length
       ? 'Monthly property records cache'
-      : 'Permit/source record')),
+      : (originalMortgage?.source || planningOwner?.source || 'Permit/source record')),
     lastSaleDate: saleHistory[0]?.date || null,
     recordingDate: saleHistory[0]?.date || null,
     lastSaleAmount: saleHistory[0]?.price || null,
     saleHistory,
     originalMortgage,
-    historyRefreshedAt: s.externalEnrichedAt || null,
+    historyRefreshedAt: s.externalEnrichedAt || planningOwner?.historyRefreshedAt || null,
   };
 }
 
@@ -1916,8 +1950,9 @@ function ownerInfoHTML(owner, s = {}) {
     </div>`;
   }
   return `<table class="ct ownerct">
-    ${ownerLine('Owner', owner.ownerName || 'Not returned')}
+    ${ownerLine(owner.ownerAuthority === 'planning_document' ? 'Planning document owner' : 'Owner', owner.ownerName || 'Not returned')}
     ${ownerLine('Owner type', owner.ownerType)}
+    ${owner.ownerAuthority === 'planning_document' ? ownerLine('Ownership status', 'Named in a City Planning filing; not recorder-verified') : ''}
     ${ownerMoneyLine('Original recorded mortgage', mortgage?.amount)}
     ${ownerLine('Mortgage date', mortgage?.date)}
     ${ownerLine('Mortgage lender', mortgage?.lender)}
@@ -1938,8 +1973,9 @@ function ownerPDFRows(owner, s = {}) {
   const sales = ownerSaleHistory(owner || {}, s).slice(0, 2);
   const mortgage = ownerMortgageInfo(owner || {}, s);
   const rows = [
-    ['Owner', owner?.ownerName || 'Not returned'],
+    [owner?.ownerAuthority === 'planning_document' ? 'Planning Document Owner' : 'Owner', owner?.ownerName || 'Not returned'],
     ['Owner Type', owner?.ownerType || ''],
+    ['Ownership Status', owner?.ownerAuthority === 'planning_document' ? 'Named in a City Planning filing; not recorder-verified' : ''],
     ['Original Recorded Mortgage', mortgage?.amount ? fmtD(mortgage.amount) : 'Not available in monthly property records'],
     ['Mortgage Date', mortgage?.date || ''],
     ['Mortgage Lender', mortgage?.lender || ''],
@@ -2561,7 +2597,9 @@ function planningDocumentsHTML(site) {
           ${planningCase.isPrimary ? '<span class="bdg ok">Primary match</span>' : ''}
         </div>
         ${planningCase.projectDescription ? `<span><b>Project:</b> ${escapeText(planningCase.projectDescription)}</span>` : ''}
+        ${Array.isArray(planningCase.documentOwners) && planningCase.documentOwners.length ? `<span><b>Owner named in filing:</b> ${planningCase.documentOwners.map(escapeText).join(' / ')}</span>` : ''}
         ${planningCase.applicant ? `<span><b>Applicant:</b> ${escapeText(planningCase.applicant)}</span>` : ''}
+        ${Array.isArray(planningCase.documentApplicants) && planningCase.documentApplicants.length ? `<span><b>Applicant named in filing:</b> ${planningCase.documentApplicants.map(escapeText).join(' / ')}</span>` : ''}
         ${planningCase.representative ? `<span><b>Representative:</b> ${escapeText(planningCase.representative)}</span>` : ''}
         ${(applicationDate || completionDate) ? `<span>${applicationDate ? `Filed ${escapeText(applicationDate)}` : ''}${applicationDate && completionDate ? ' | ' : ''}${completionDate ? `Completed ${escapeText(completionDate)}` : ''}</span>` : ''}
         ${planningCase.apn ? `<span>APN ${escapeText(planningCase.apn)}${planningCase.matchMethod ? ` | Matched by ${escapeText(String(planningCase.matchMethod).replace('_', ' '))}` : ''}</span>` : ''}
@@ -2632,6 +2670,9 @@ function planningExportData(site) {
     projectDescription: planningCase.projectDescription || '',
     applicant: planningCase.applicant || '',
     representative: planningCase.representative || '',
+    documentOwners: Array.isArray(planningCase.documentOwners) ? planningCase.documentOwners : [],
+    documentApplicants: Array.isArray(planningCase.documentApplicants) ? planningCase.documentApplicants : [],
+    documentPartySources: Array.isArray(planningCase.documentPartySources) ? planningCase.documentPartySources : [],
     applicationDate: planningCase.applicationDate || '',
     completionDate: planningCase.completionDate || '',
     matchMethod: planningCase.matchMethod || '',
@@ -2672,7 +2713,9 @@ function planningPDFHTML(site) {
       <tr><td>Status / request</td><td>${escapeText([planningCase.status, planningCase.requestType].filter(Boolean).join(' | '))}</td></tr>
       ${planningCase.apn ? `<tr><td>APN</td><td>${escapeText(planningCase.apn)}</td></tr>` : ''}
       ${planningCase.projectDescription ? `<tr><td>Project description</td><td>${escapeText(planningCase.projectDescription)}</td></tr>` : ''}
+      ${planningCase.documentOwners.length ? `<tr><td>Owner named in filing</td><td>${planningCase.documentOwners.map(escapeText).join(' / ')}</td></tr>` : ''}
       ${planningCase.applicant ? `<tr><td>Applicant</td><td>${escapeText(planningCase.applicant)}</td></tr>` : ''}
+      ${planningCase.documentApplicants.length ? `<tr><td>Applicant named in filing</td><td>${planningCase.documentApplicants.map(escapeText).join(' / ')}</td></tr>` : ''}
       ${planningCase.representative ? `<tr><td>Representative</td><td>${escapeText(planningCase.representative)}</td></tr>` : ''}
       ${planningCase.applicationDate ? `<tr><td>Application date</td><td>${escapeText(planningCase.applicationDate)}</td></tr>` : ''}
       ${planningCase.completionDate ? `<tr><td>Completion date</td><td>${escapeText(planningCase.completionDate)}</td></tr>` : ''}
@@ -4579,6 +4622,7 @@ async function exportExcel(id) {
     owner: {
       ownerName: ownerInfo?.ownerName || '',
       ownerType: ownerInfo?.ownerType || '',
+      ownerAuthority: ownerInfo?.ownerAuthority || '',
       lastSaleDate: ownerInfo?.lastSaleDate || ownerInfo?.recordingDate || ownerInfo?.saleDate || '',
       lastSaleAmount: ownerInfo?.lastSaleAmount || ownerInfo?.salePrice || 0,
       saleHistory: ownerSaleHistory(ownerInfo || {}, s),

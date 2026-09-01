@@ -8,10 +8,10 @@
     "start": "NODE_ENV=production node api/server.js",
     "dev": "NODE_ENV=development node --watch api/server.js",
     "sync": "node api/jobs/sync.js --run-now",
-    "test:owners": "node .github/scripts/test-owner-normalization.cjs && node scripts/test-owner-route.mjs",
+    "test:owners": "node .github/scripts/test-owner-normalization.cjs && node scripts/test-owner-route.mjs && node scripts/test-planning-parties.mjs",
     "test-apis": "python scripts/test_apis.py",
-      "audit:filters": "node scripts/audit-site-filters.mjs",
-      "audit:narrative": "node scripts/audit-narrative.mjs",
+    "audit:filters": "node scripts/audit-site-filters.mjs",
+    "audit:narrative": "node scripts/audit-narrative.mjs",
     "db:migrate": "echo 'Paste supabase/schema.sql into Supabase SQL editor and click Run'",
     "excel": "python scripts/generate_excel.py",
     "build": "vite build",
@@ -21,6 +21,7 @@
     "import:county-comps": "node scripts/import-county-comps.js"
   },
   "dependencies": {
+    "@googlemaps/js-api-loader": "^1.16.6",
     "@supabase/supabase-js": "^2.39.0",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
@@ -30,10 +31,10 @@
     "express-rate-limit": "^7.2.0",
     "helmet": "^7.1.0",
     "node-cron": "^3.0.3",
+    "pdfjs-dist": "^4.10.38",
     "puppeteer": "^21.11.0",
     "resend": "^2.1.0",
-    "stripe": "^14.21.0",
-    "@googlemaps/js-api-loader": "^1.16.6"
+    "stripe": "^14.21.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",

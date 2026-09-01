@@ -24,6 +24,7 @@ import {
   buildLandCompBenchmarks,
   estimateLandBasisFromComps,
 } from '../../src/data/landValue.js';
+import { extractPlanningPartiesFromDocuments } from '../lib/planning-parties.js';
 
 const { resolveEd1Affordability, rentsForSite: underwritingRentsForSite } = affordableRents;
 
@@ -1124,7 +1125,7 @@ function planningArray(value) {
   return [];
 }
 
-async function refreshPlanningCaseFromPdis(planningCase) {
+async function refreshPlanningCaseFromPdis(planningCase, options = {}) {
   const caseNumber = planningCase.case_number;
   const pageUrl = planningCase.pdis_url || planningCaseUrl(caseNumber);
   const approvedUrl = `${PDIS_BASE_URL}/api/Service/GetPddData?caseNumbers=${encodeURIComponent(caseNumber)}`;
@@ -1149,6 +1150,18 @@ async function refreshPlanningCaseFromPdis(planningCase) {
     ...planningArray(approvedResult.status === 'fulfilled' ? approvedResult.value : []).map(row => pdisDocumentRow(row, 'approved', caseNumber)),
     ...initial.map(row => pdisDocumentRow(row, 'initial_submittal', caseNumber)),
   ].filter(Boolean);
+  const existingPdis = planningCase.source_record?.pdis || {};
+  let documentParties = existingPdis.documentParties || null;
+  if (options.extractParties && documents.length && !(documentParties?.owners || []).length) {
+    documentParties = await extractPlanningPartiesFromDocuments(documents, {
+      maxDocuments: 2,
+      maxPages: 10,
+      timeoutMs: 7000,
+      onWarning: (document, error) => console.warn(
+        `[planning] Could not read parties from ${caseNumber} ${document.title || document.url}: ${error.message}`
+      ),
+    });
+  }
   const relatedCaseNumbers = [...new Set(related
     .map(row => String(row?.caseNumber || row?.CaseNumber || '').trim().toUpperCase())
     .filter(Boolean))];
@@ -1157,10 +1170,12 @@ async function refreshPlanningCaseFromPdis(planningCase) {
   const sourceRecord = {
     ...(planningCase.source_record || {}),
     pdis: {
+      ...existingPdis,
       applicant: profile.applicant || null,
       representative: profile.representative || null,
       projectDescription: profile.projectDescription || null,
       requestedEntitlement: profile.requestedEntitlement || null,
+      documentParties,
       checkedAt,
     },
   };
@@ -1202,6 +1217,10 @@ function planningCaseFromRow(planningCase, match, documents) {
     requestType: planningCase.request_type,
     applicant: pdisProfile.applicant || null,
     representative: pdisProfile.representative || null,
+    documentOwners: Array.isArray(pdisProfile.documentParties?.owners) ? pdisProfile.documentParties.owners : [],
+    documentApplicants: Array.isArray(pdisProfile.documentParties?.applicants) ? pdisProfile.documentParties.applicants : [],
+    documentPartySources: Array.isArray(pdisProfile.documentParties?.sources) ? pdisProfile.documentParties.sources : [],
+    documentPartiesCheckedAt: pdisProfile.documentParties?.checkedAt || null,
     applicationDate: planningCase.application_date,
     completionDate: planningCase.completion_date,
     status: planningCase.case_status,
@@ -1383,10 +1402,13 @@ async function attachPlanningDiscovery(site, siteId) {
       const refreshCandidates = caseRows.filter(row => {
         const profileCheckedAt = row.source_record?.pdis?.checkedAt;
         const profileIsStale = !profileCheckedAt || new Date(profileCheckedAt).getTime() < staleBefore;
-        return !documentCaseNumbers.has(row.case_number) || profileIsStale;
+        const ownersMissing = !(row.source_record?.pdis?.documentParties?.owners || []).length;
+        return !documentCaseNumbers.has(row.case_number) || profileIsStale || ownersMissing;
       }).slice(0, PDIS_ON_DEMAND_CASE_LIMIT);
       if (refreshCandidates.length) {
-        const refreshResults = await Promise.allSettled(refreshCandidates.map(refreshPlanningCaseFromPdis));
+        const refreshResults = await Promise.allSettled(refreshCandidates.map((planningCase, index) =>
+          refreshPlanningCaseFromPdis(planningCase, { extractParties: index < 2 })
+        ));
         const caseMap = new Map(caseRows.map(row => [row.case_number, row]));
         const documentMap = new Map(documentRows.map(row => [
           `${row.case_number}|${row.provider_document_id}|${row.section}`,

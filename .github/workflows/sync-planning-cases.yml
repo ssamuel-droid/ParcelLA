@@ -15,6 +15,9 @@ on:
     paths:
       - '.github/scripts/sync-planning-cases.cjs'
       - '.github/workflows/sync-planning-cases.yml'
+      - 'api/lib/planning-parties.js'
+      - 'package.json'
+      - 'package-lock.json'
 
 jobs:
   sync-planning-cases:
@@ -24,6 +27,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install planning document parser
+        run: npm ci --ignore-scripts
+
       - name: Import cases, match properties, and retrieve PDIS documents
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -31,4 +42,5 @@ jobs:
           PLANNING_DOCUMENT_CASE_LIMIT: ${{ github.event.inputs.document_case_limit || '1000' }}
           PLANNING_DOCUMENT_STALE_DAYS: '30'
           PLANNING_DOCUMENT_CONCURRENCY: '4'
+          PLANNING_PARTY_CASE_LIMIT: '300'
         run: node .github/scripts/sync-planning-cases.cjs

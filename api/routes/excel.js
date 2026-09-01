@@ -342,8 +342,11 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     setupSheet(ownerWs, [28, 20, 20, 42]);
     writeRow(ownerWs, ['Owner & Sale', siteName], 'title');
     writeRow(ownerWs, ['Field', 'Value'], 'header');
-    writeRow(ownerWs, ['Owner', owner.ownerName]);
+    writeRow(ownerWs, [owner.ownerAuthority === 'planning_document' ? 'Planning document owner' : 'Owner', owner.ownerName]);
     writeRow(ownerWs, ['Owner type', owner.ownerType]);
+    if (owner.ownerAuthority === 'planning_document') {
+      writeRow(ownerWs, ['Ownership status', 'Named in a City Planning filing; not recorder-verified']);
+    }
     writeRow(ownerWs, ['Original recorded mortgage', owner.originalMortgage?.amount
       ? cell(owner.originalMortgage.amount, FMT.money)
       : 'Not available in monthly property records']);

@@ -5,6 +5,8 @@ const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const DOCUMENT_CASE_LIMIT = positiveInt(process.env.PLANNING_DOCUMENT_CASE_LIMIT, 300);
 const DOCUMENT_STALE_DAYS = positiveInt(process.env.PLANNING_DOCUMENT_STALE_DAYS, 30);
 const DOCUMENT_CONCURRENCY = positiveInt(process.env.PLANNING_DOCUMENT_CONCURRENCY, 4);
+const PARTY_CASE_LIMIT = positiveInt(process.env.PLANNING_PARTY_CASE_LIMIT, 300);
+let planningPartiesModule = null;
 
 const ARCGIS_BASE = 'https://services1.arcgis.com/tzwalEyxl2rpamKs/arcgis/rest/services';
 const FILINGS_LAYERS = [
@@ -177,6 +179,11 @@ async function supabase(method, path, body = null, prefer = 'return=minimal,reso
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function planningParties() {
+  if (!planningPartiesModule) planningPartiesModule = import('../../api/lib/planning-parties.js');
+  return planningPartiesModule;
 }
 
 async function fetchArcgisFeatures(layer, label) {
@@ -454,7 +461,7 @@ function planningDocument(record, section, requestedCaseNumber = '') {
   };
 }
 
-async function fetchPdisCase(planningCase) {
+async function fetchPdisCase(planningCase, options = {}) {
   const approvedUrl = `${PDIS_BASE}/api/Service/GetPddData?caseNumbers=${encodeURIComponent(planningCase.case_number)}`;
   const initialUrl = planningCase.case_id
     ? `${PDIS_BASE}/api/Service/GetEsubmitData/${encodeURIComponent(planningCase.case_id)}`
@@ -489,8 +496,22 @@ async function fetchPdisCase(planningCase) {
     const key = [document.case_number, document.provider_document_id, document.section].join('|');
     if (!documentsByKey.has(key)) documentsByKey.set(key, document);
   }
+  const documents = [...documentsByKey.values()];
+  let documentParties = planningCase.source_record?.pdis?.documentParties || null;
+  if (options.extractParties && documents.length && !(documentParties?.owners || []).length) {
+    const { extractPlanningPartiesFromDocuments } = await planningParties();
+    documentParties = await extractPlanningPartiesFromDocuments(documents, {
+      maxDocuments: 2,
+      maxPages: 10,
+      timeoutMs: 8000,
+      onWarning: (document, error) => console.warn(
+        `[planning] Could not read parties from ${planningCase.case_number} ${document.title || document.url}: ${error.message}`
+      ),
+    });
+  }
   return {
-    documents: [...documentsByKey.values()],
+    documents,
+    documentParties,
     relatedCaseNumbers: [...new Set(array(related).map(row => clean(row.caseNumber || row.CaseNumber).toUpperCase()).filter(Boolean))],
     addresses,
     zimasPin: zimasPin || null,
@@ -551,7 +572,7 @@ async function main() {
     const matchedNumbers = new Set(matches.map(row => row.case_number));
     const existingCases = await fetchAllSupabaseByKey(
       'planning_cases',
-      'case_number,case_id,documents_checked_at',
+      'case_number,case_id,documents_checked_at,source_record',
       'case_number',
       500
     );
@@ -564,17 +585,23 @@ async function main() {
     const staleBefore = Date.now() - DOCUMENT_STALE_DAYS * 86400000;
     const documentCandidates = existingCases
       .filter(row => matchedNumbers.has(row.case_number))
-      .filter(row => !casesWithDocuments.has(row.case_number)
+      .filter(row => !(row.source_record?.pdis?.documentParties?.owners || []).length
+        || !casesWithDocuments.has(row.case_number)
         || !row.documents_checked_at
         || new Date(row.documents_checked_at).getTime() < staleBefore)
-      .sort((a, b) => String(a.documents_checked_at || '').localeCompare(String(b.documents_checked_at || '')))
+      .sort((a, b) => {
+        const ownerDifference = Number(!!(a.source_record?.pdis?.documentParties?.owners || []).length)
+          - Number(!!(b.source_record?.pdis?.documentParties?.owners || []).length);
+        return ownerDifference || String(a.documents_checked_at || '').localeCompare(String(b.documents_checked_at || ''));
+      })
       .slice(0, DOCUMENT_CASE_LIMIT);
 
     const missingDocumentCases = documentCandidates.filter(row => !casesWithDocuments.has(row.case_number)).length;
     console.log(`[planning] refreshing PDIS documents for ${documentCandidates.length} matched case(s); ${missingDocumentCases} have no cached PDF`);
-    const documentResults = await mapLimit(documentCandidates, DOCUMENT_CONCURRENCY, async planningCase => {
-      const result = await fetchPdisCase(planningCase);
+    const documentResults = await mapLimit(documentCandidates, DOCUMENT_CONCURRENCY, async (planningCase, index) => {
+      const result = await fetchPdisCase(planningCase, { extractParties: index < PARTY_CASE_LIMIT });
       if (result.documents.length) await upsertChunks('planning_documents', 'case_number,provider_document_id,section', result.documents, 100);
+      const existingPdis = planningCase.source_record?.pdis || {};
       await supabase(
         'PATCH',
         `/rest/v1/planning_cases?case_number=eq.${encodeURIComponent(planningCase.case_number)}`,
@@ -584,6 +611,12 @@ async function main() {
           case_addresses: result.addresses,
           zimas_pin: result.zimasPin,
           zimas_url: result.zimasPin ? `https://zimas.lacity.org?pin=${encodeURIComponent(result.zimasPin)}` : null,
+          ...(result.documentParties ? {
+            source_record: {
+              ...(planningCase.source_record || {}),
+              pdis: { ...existingPdis, documentParties: result.documentParties },
+            },
+          } : {}),
         }
       );
       console.log(`[planning] ${planningCase.case_number}: ${result.documents.length} document(s), ${result.relatedCaseNumbers.length} related case(s)`);
@@ -609,6 +642,7 @@ async function main() {
         completed_layers: Object.fromEntries(COMPLETED_LAYERS.map((layer, index) => [layer.label, completedLayers[index].length])),
         sites_checked: sites.length,
         document_cases_checked: documentCandidates.length,
+        party_cases_checked: Math.min(documentCandidates.length, PARTY_CASE_LIMIT),
         document_failures: failures.length,
       },
     });
