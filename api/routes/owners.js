@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { createClient } from '@supabase/supabase-js';
 import { optionalAuth, getUserAccess } from '../middleware/auth.js';
 
 const router = Router();
@@ -9,10 +10,12 @@ const REGRID_SOURCE = 'Regrid Parcel API';
 const REGRID_BASE = 'https://app.regrid.com/api/v2/parcels';
 const REGRID_LA_PATH = '/us/ca/los-angeles';
 const RENTCAST_SOURCE = 'RentCast property records';
+const MONTHLY_CACHE_SOURCE = 'Monthly property records cache';
 const RENTCAST_BASE = 'https://api.rentcast.io/v1/properties';
 const RENTCAST_LIVE_OWNER_ENABLED = /^(1|true|yes)$/i.test(process.env.RENTCAST_LIVE_OWNER_LOOKUPS_ENABLED || '');
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const ownerCache = new Map();
+let ownerDb = null;
 
 const OWNER_FIELDS = [
   'AIN',
@@ -59,6 +62,26 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+function ownerNameParts(value) {
+  if (Array.isArray(value)) return value.flatMap(ownerNameParts);
+  if (value === null || value === undefined) return [];
+  if (typeof value !== 'object') {
+    const name = clean(value);
+    return name && name !== '[object Object]' ? [name] : [];
+  }
+  const named = unique([
+    value.fullName,
+    value.name,
+    value.ownerName,
+    value.companyName,
+    value.organizationName,
+    value.entityName,
+  ].map(clean).filter(Boolean));
+  if (named.length) return named;
+  const person = [value.firstName, value.middleName, value.lastName].map(clean).filter(Boolean).join(' ');
+  return person ? [person] : [];
+}
+
 function formatAddress(parts, cityState, zip) {
   const line1 = compact(parts).join(' ').replace(/\s+/g, ' ').trim();
   const line2 = compact([cityState, zip]).join(' ').replace(/\s+/g, ' ').trim();
@@ -73,7 +96,7 @@ function cleanMoney(value) {
 function cleanDate(value) {
   const text = clean(value);
   if (/^\d{8}$/.test(text)) return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}`;
-  return text || null;
+  return text ? text.slice(0, 10) : null;
 }
 
 function first(...values) {
@@ -105,6 +128,8 @@ function normalizeOwnerFeature(feature) {
     a.Street_Name,
     a.Unit_1,
   ], a.City_State, a.Zip);
+  const lastSaleDate = cleanDate(a.Last_Sale_Date);
+  const lastSaleAmount = cleanMoney(a.Last_Sale_Amount);
 
   return {
     found: !!ownerName,
@@ -114,8 +139,14 @@ function normalizeOwnerFeature(feature) {
     apn: clean(a.AIN) || clean(a.AIN_1) || null,
     specialNameLegend: clean(a.Special_Name_Legend) || null,
     recordingDate: cleanDate(a.Recording_Date),
-    lastSaleDate: cleanDate(a.Last_Sale_Date),
-    lastSaleAmount: cleanMoney(a.Last_Sale_Amount),
+    lastSaleDate,
+    lastSaleAmount,
+    saleHistory: lastSaleDate && lastSaleAmount ? [{
+      date: lastSaleDate,
+      price: lastSaleAmount,
+      event: 'Sale',
+      source: OWNER_SOURCE,
+    }] : [],
     useCode: clean(a.Use_Code) || null,
     useDescription: clean(a.Use_Code_Desc) || null,
     zoning: clean(a.Zoning_Code) || null,
@@ -150,16 +181,84 @@ async function fetchJson(url, timeoutMs = 9000, headers = {}) {
   }
 }
 
+function saleHistoryFromRecord(record) {
+  if (!record || typeof record !== 'object') return [];
+  const candidates = [];
+  if (record.history && typeof record.history === 'object' && !Array.isArray(record.history)) {
+    for (const [date, row] of Object.entries(record.history)) {
+      if (row && typeof row === 'object') candidates.push({ ...row, _dateHint: date });
+    }
+  }
+  if (Array.isArray(record.saleHistory)) candidates.push(...record.saleHistory);
+  if (Array.isArray(record.salesHistory)) candidates.push(...record.salesHistory);
+  if (record.lastSaleDate || record.lastSalePrice) {
+    candidates.push({ date: record.lastSaleDate, price: record.lastSalePrice, event: 'Sale' });
+  }
+
+  const deduped = new Map();
+  for (const row of candidates) {
+    if (!row || typeof row !== 'object' || (row.event && !/sale/i.test(String(row.event)))) continue;
+    const date = cleanDate(row.date || row.saleDate || row.recordingDate || row._dateHint);
+    const price = cleanMoney(row.price || row.salePrice || row.amount || row.saleAmount);
+    if (!date || !price) continue;
+    deduped.set(`${date}|${price}`, {
+      date,
+      price,
+      event: clean(row.event) || 'Sale',
+      documentType: clean(row.documentType || row.deedType || row.transactionType) || null,
+      documentNumber: clean(row.documentNumber || row.documentNo || row.instrumentNumber) || null,
+      buyer: clean(row.buyer || row.buyerName || row.grantee) || null,
+      seller: clean(row.seller || row.sellerName || row.grantor) || null,
+      source: clean(row.source) || RENTCAST_SOURCE,
+    });
+  }
+  return [...deduped.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+}
+
+function normalizeMortgageRecord(value, source = '') {
+  if (!value || typeof value !== 'object') return null;
+  const lender = value.lender && typeof value.lender === 'object' ? value.lender : {};
+  const amount = cleanMoney(
+    value.amount || value.loanAmount || value.originalLoanAmount || value.mortgageAmount || value.originalBalance
+  );
+  const date = cleanDate(
+    value.date || value.mortgageDate || value.loanDate || value.originationDate || value.recordingDate
+  );
+  if (!amount && !date) return null;
+  return {
+    amount,
+    date,
+    lender: first(
+      value.lenderName,
+      typeof value.lender === 'string' ? value.lender : null,
+      lender.companyName,
+      lender.name,
+      [lender.firstname || lender.firstName, lender.lastname || lender.lastName].map(clean).filter(Boolean).join(' ')
+    ),
+    interestRate: Number(value.interestRate ?? value.interestrate) || null,
+    loanType: first(value.loanType, value.loanTypeCode, value.loantypecode),
+    deedType: first(value.deedType, value.deedtype),
+    termMonths: Number(value.termMonths ?? value.term) || null,
+    dueDate: cleanDate(value.dueDate ?? value.duedate),
+    documentNumber: first(value.documentNumber, value.documentNo, value.trustDeedDocumentNumber),
+    source: first(value.source, source),
+  };
+}
+
 function rentcastKey() {
   return clean(process.env.RENTCAST_API_KEY);
 }
 
 function normalizeRentCastRecord(record) {
-  const names = Array.isArray(record?.owner?.names)
-    ? unique(record.owner.names.map(clean).filter(Boolean))
-    : [];
+  const names = unique([
+    ...ownerNameParts(record?.owner?.names),
+    ...ownerNameParts(record?.ownerName),
+    ...ownerNameParts(record?.ownerNames),
+  ]);
   const ownerName = names.join(' / ');
   const mailing = record?.owner?.mailingAddress || {};
+  const saleHistory = saleHistoryFromRecord(record);
+  const latestSale = saleHistory[0] || null;
   return {
     found: !!ownerName,
     ownerName: ownerName || null,
@@ -171,11 +270,97 @@ function normalizeRentCastRecord(record) {
       mailing.zipCode
     ) || null,
     situsAddress: clean(record?.formattedAddress) || null,
-    apn: clean(record?.assessorID) || null,
-    lastSaleDate: cleanDate(record?.lastSaleDate),
-    recordingDate: cleanDate(record?.lastSaleDate),
-    lastSaleAmount: cleanMoney(record?.lastSalePrice),
+    apn: clean(record?.assessorID || record?.assessorId || record?.apn) || null,
+    lastSaleDate: cleanDate(record?.lastSaleDate) || latestSale?.date || null,
+    recordingDate: cleanDate(record?.lastSaleDate) || latestSale?.date || null,
+    lastSaleAmount: cleanMoney(record?.lastSalePrice) || latestSale?.price || null,
+    saleHistory,
+    originalMortgage: normalizeMortgageRecord(record?.originalMortgage, record?.originalMortgage?.source),
     source: RENTCAST_SOURCE,
+  };
+}
+
+function monthlyDatabase() {
+  if (ownerDb) return ownerDb;
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return null;
+  ownerDb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return ownerDb;
+}
+
+function addressLine(value) {
+  return clean(value)
+    .split(',')[0]
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function queryMonthlyPropertyCache(params) {
+  const db = monthlyDatabase();
+  const line = addressLine(params.address);
+  if (!db || !line) return null;
+  const safePrefix = line.replace(/[%_]/g, '');
+  const [compResult, cacheResult] = await Promise.all([
+    db
+      .from('sold_comps')
+      .select('address,sale_date,sale_price,source,raw_record')
+      .ilike('address', `${safePrefix}%`)
+      .order('sale_date', { ascending: false })
+      .limit(12),
+    db
+      .from('property_enrichment_cache')
+      .select('address,provider,purpose,status,fetched_at,normalized')
+      .in('purpose', ['property_record', 'mortgage_record'])
+      .ilike('address', `${safePrefix}%`)
+      .order('fetched_at', { ascending: false })
+      .limit(12),
+  ]);
+  if (compResult.error && cacheResult.error) throw compResult.error;
+  const matchesAddress = row => {
+    const candidate = addressLine(row.address);
+    return candidate === line || candidate.startsWith(`${line} `) || line.startsWith(`${candidate} `);
+  };
+  const compRows = (compResult.data || []).filter(matchesAddress);
+  const cacheRows = (cacheResult.data || []).filter(row => row.status === 'ok' && matchesAddress(row));
+  if (!compRows.length && !cacheRows.length) return null;
+
+  const propertyCache = cacheRows.find(row => row.purpose === 'property_record' && row.normalized?.record);
+  const rawProperty = propertyCache?.normalized?.record || compRows[0]?.raw_record || {};
+  const primary = normalizeRentCastRecord(rawProperty);
+  const saleHistory = saleHistoryFromRecord({
+    saleHistory: [
+      ...(Array.isArray(rawProperty.saleHistory) ? rawProperty.saleHistory : []),
+      ...compRows.flatMap(row => [
+      ...(Array.isArray(row.raw_record?.saleHistory) ? row.raw_record.saleHistory : []),
+      { date: row.sale_date, price: row.sale_price, event: 'Sale', source: row.source || MONTHLY_CACHE_SOURCE },
+      ]),
+    ],
+  });
+  const mortgageCache = cacheRows.find(row => row.purpose === 'mortgage_record' && row.normalized?.originalMortgage);
+  const originalMortgage = normalizeMortgageRecord(
+    mortgageCache?.normalized?.originalMortgage || rawProperty.originalMortgage,
+    mortgageCache?.provider === 'attom' ? 'ATTOM monthly mortgage records' : MONTHLY_CACHE_SOURCE
+  );
+  const latestSale = saleHistory[0] || null;
+  const source = unique([
+    propertyCache ? MONTHLY_CACHE_SOURCE : null,
+    ...compRows.map(row => clean(row.source)),
+    originalMortgage?.source,
+  ].filter(Boolean)).join(' + ') || MONTHLY_CACHE_SOURCE;
+  return {
+    ...primary,
+    found: !!primary.ownerName,
+    situsAddress: primary.situsAddress || cacheRows[0]?.address || compRows[0]?.address || clean(params.address) || null,
+    lastSaleDate: latestSale?.date || primary.lastSaleDate || null,
+    recordingDate: latestSale?.date || primary.recordingDate || null,
+    lastSaleAmount: latestSale?.price || primary.lastSaleAmount || null,
+    saleHistory,
+    originalMortgage: originalMortgage || primary.originalMortgage || null,
+    historyRefreshedAt: cacheRows[0]?.fetched_at || null,
+    source,
   };
 }
 
@@ -193,7 +378,7 @@ async function queryRentCast(params) {
   const record = Array.isArray(data) ? data[0] : data?.properties?.[0] || data?.data?.[0];
   if (!record) return null;
   const normalized = normalizeRentCastRecord(record);
-  return normalized.ownerName || normalized.lastSaleDate || normalized.lastSaleAmount
+  return normalized.ownerName || normalized.lastSaleDate || normalized.lastSaleAmount || normalized.originalMortgage
     ? normalized
     : null;
 }
@@ -215,6 +400,13 @@ function mergeOwnerResults(current, candidate) {
     lastSaleDate: current.lastSaleDate || candidate.lastSaleDate || null,
     recordingDate: current.recordingDate || candidate.recordingDate || null,
     lastSaleAmount: current.lastSaleAmount || candidate.lastSaleAmount || null,
+    saleHistory: saleHistoryFromRecord({
+      saleHistory: [
+        ...(Array.isArray(current.saleHistory) ? current.saleHistory : []),
+        ...(Array.isArray(candidate.saleHistory) ? candidate.saleHistory : []),
+      ],
+    }),
+    originalMortgage: current.originalMortgage || candidate.originalMortgage || null,
     source: sources.join(' + '),
   };
 }
@@ -300,6 +492,13 @@ function normalizeRegridFeature(feature) {
     fields.mailing_address,
     fields.owner_address
   );
+  const originalMortgage = normalizeMortgageRecord({
+    amount: first(fields.mortgage_amount, fields.loan_amount, fields.first_mortgage_amount, fields.mtg1amount),
+    date: first(fields.mortgage_date, fields.loan_date, fields.first_mortgage_date, fields.mtg1date),
+    lenderName: first(fields.lender_name, fields.mortgage_lender, fields.mtg1lender),
+    loanType: first(fields.loan_type, fields.mortgage_type),
+    documentNumber: first(fields.mortgage_document_number, fields.loan_document_number),
+  }, REGRID_SOURCE);
 
   return {
     found: !!ownerName,
@@ -310,6 +509,13 @@ function normalizeRegridFeature(feature) {
     lastSaleDate: saleDate,
     recordingDate: saleDate,
     lastSaleAmount: saleAmount,
+    saleHistory: saleDate && saleAmount ? [{
+      date: saleDate,
+      price: saleAmount,
+      event: 'Sale',
+      source: REGRID_SOURCE,
+    }] : [],
+    originalMortgage,
     source: REGRID_SOURCE,
   };
 }
@@ -366,7 +572,7 @@ async function queryRegrid(params) {
       requestCompleted = true;
       const feature = regridFeature(data);
       const normalized = normalizeRegridFeature(feature);
-      if (normalized?.ownerName || normalized?.lastSaleDate || normalized?.lastSaleAmount) return normalized;
+      if (normalized?.ownerName || normalized?.lastSaleDate || normalized?.lastSaleAmount || normalized?.originalMortgage) return normalized;
     } catch (error) {
       lastError = error;
       if (error.status === 401 || error.status === 403) throw error;
@@ -424,7 +630,17 @@ async function lookupOwner({ address, lat, lng, apn }) {
     }
   };
 
-  owner = await runProvider(REGRID_SOURCE, !!regridToken(), () => queryRegrid({ address, lat, lng, apn }));
+  owner = await runProvider(
+    MONTHLY_CACHE_SOURCE,
+    !!monthlyDatabase(),
+    () => queryMonthlyPropertyCache({ address, lat, lng, apn }),
+    'Cached sale history is refreshed by the monthly property enrichment job.'
+  );
+
+  if (!owner?.ownerName) {
+    const regridOwner = await runProvider(REGRID_SOURCE, !!regridToken(), () => queryRegrid({ address, lat, lng, apn }));
+    owner = mergeOwnerResults(owner, regridOwner);
+  }
 
   if (!owner?.ownerName) {
     if (RENTCAST_LIVE_OWNER_ENABLED) {
@@ -515,5 +731,11 @@ router.get('/', optionalAuth, async (req, res, next) => {
   }
 });
 
-export { normalizeRegridFeature, queryRegrid };
+export {
+  normalizeMortgageRecord,
+  normalizeRegridFeature,
+  normalizeRentCastRecord,
+  queryRegrid,
+  saleHistoryFromRecord,
+};
 export default router;

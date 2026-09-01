@@ -1795,26 +1795,106 @@ function ownerQueryForSite(s = {}) {
   return p.toString();
 }
 
+function ownerSaleHistory(owner = {}, s = {}) {
+  const external = s.externalPropertyRecord || {};
+  const candidates = [
+    ...(Array.isArray(owner.saleHistory) ? owner.saleHistory : []),
+    ...(Array.isArray(external.saleHistory) ? external.saleHistory : []),
+  ];
+  const latestDate = owner.lastSaleDate || owner.recordingDate || owner.saleDate || s.ownerLastSaleDate;
+  const latestPrice = owner.lastSaleAmount || owner.salePrice || s.ownerLastSaleAmount;
+  if (latestDate || Number(latestPrice)) candidates.push({ date: latestDate, price: latestPrice, event: 'Sale' });
+
+  const deduped = new Map();
+  candidates.forEach(row => {
+    const date = String(row?.date || row?.saleDate || row?.recordingDate || '').slice(0, 10);
+    const price = Number(String(row?.price || row?.salePrice || row?.amount || '').replace(/[$,]/g, ''));
+    if (!date || !Number.isFinite(price) || price <= 0) return;
+    deduped.set(`${date}|${Math.round(price)}`, {
+      ...row,
+      date,
+      price: Math.round(price),
+    });
+  });
+  return [...deduped.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+}
+
+function ownerMortgageInfo(owner = {}, s = {}) {
+  const value = owner.originalMortgage || s.externalPropertyRecord?.originalMortgage;
+  if (!value || typeof value !== 'object') return null;
+  const amount = Number(String(value.amount || value.loanAmount || value.originalLoanAmount || '').replace(/[$,]/g, ''));
+  const date = String(value.date || value.mortgageDate || value.loanDate || '').slice(0, 10);
+  if ((!Number.isFinite(amount) || amount <= 0) && !date) return null;
+  return {
+    ...value,
+    amount: Number.isFinite(amount) && amount > 0 ? Math.round(amount) : null,
+    date: date || null,
+  };
+}
+
+function mergeOwnerInfo(localOwner, providerOwner, s = {}) {
+  if (!localOwner) return providerOwner;
+  if (!providerOwner) return localOwner;
+  const sources = [...new Set([localOwner.source, providerOwner.source].filter(Boolean))];
+  const merged = {
+    ...providerOwner,
+    ...localOwner,
+    ownerName: localOwner.ownerName || providerOwner.ownerName || null,
+    ownerType: localOwner.ownerType || providerOwner.ownerType || null,
+    situsAddress: localOwner.situsAddress || providerOwner.situsAddress || s.addr || null,
+    apn: localOwner.apn || providerOwner.apn || s.apn || null,
+    originalMortgage: localOwner.originalMortgage || providerOwner.originalMortgage || null,
+    historyRefreshedAt: localOwner.historyRefreshedAt || providerOwner.historyRefreshedAt || null,
+    source: sources.join(' + '),
+  };
+  merged.saleHistory = ownerSaleHistory({
+    ...merged,
+    saleHistory: [
+      ...(Array.isArray(localOwner.saleHistory) ? localOwner.saleHistory : []),
+      ...(Array.isArray(providerOwner.saleHistory) ? providerOwner.saleHistory : []),
+    ],
+  }, s);
+  return merged;
+}
+
 function siteOwnerInfo(s = {}) {
-  if (!s.ownerName && !s.ownerLastSaleDate && !s.ownerLastSaleAmount) return null;
+  const external = s.externalPropertyRecord || {};
+  const saleHistory = ownerSaleHistory({
+    saleHistory: external.saleHistory,
+    lastSaleDate: s.ownerLastSaleDate || external.lastSaleDate,
+    lastSaleAmount: s.ownerLastSaleAmount || external.lastSalePrice,
+  }, s);
+  const originalMortgage = ownerMortgageInfo({ originalMortgage: external.originalMortgage }, s);
+  if (!s.ownerName && !saleHistory.length && !originalMortgage) return null;
   return {
     found: true,
-    ownerName: s.ownerName || null,
+    ownerName: s.ownerName || external.ownerName || null,
     situsAddress: s.ownerSitusAddress || s.addr || null,
     apn: s.ownerApn || s.apn || null,
-    source: s.ownerSource || 'Permit/source record',
-    lastSaleDate: s.ownerLastSaleDate || null,
-    recordingDate: s.ownerLastSaleDate || null,
-    lastSaleAmount: s.ownerLastSaleAmount || null,
+    source: s.ownerSource || (originalMortgage?.source || (external.ownerName || saleHistory.length
+      ? 'Monthly property records cache'
+      : 'Permit/source record')),
+    lastSaleDate: saleHistory[0]?.date || null,
+    recordingDate: saleHistory[0]?.date || null,
+    lastSaleAmount: saleHistory[0]?.price || null,
+    saleHistory,
+    originalMortgage,
+    historyRefreshedAt: s.externalEnrichedAt || null,
   };
 }
 
 async function fetchOwnerInfo(s = {}) {
   const localOwner = siteOwnerInfo(s);
-  if (localOwner?.ownerName) return localOwner;
+  if (localOwner?.ownerName && localOwner.saleHistory?.length >= 2) return localOwner;
   const query = ownerQueryForSite(s);
-  if (!query) return null;
-  return await fetchJSON('/api/owners?' + query);
+  if (!query) return localOwner;
+  try {
+    const providerOwner = await fetchJSON('/api/owners?' + query);
+    return mergeOwnerInfo(localOwner, providerOwner, s);
+  } catch (error) {
+    if (localOwner) return localOwner;
+    throw error;
+  }
 }
 
 function ownerLine(label, value) {
@@ -1827,9 +1907,9 @@ function ownerMoneyLine(label, value) {
 
 function ownerInfoHTML(owner, s = {}) {
   if (!owner) return '<div class="ownerbox"><b>Owner lookup unavailable</b><span>Owner data could not be loaded for this address.</span></div>';
-  const soldDate = owner.lastSaleDate || owner.recordingDate || owner.saleDate || '';
-  const soldPrice = owner.lastSaleAmount || owner.salePrice || '';
-  if (!owner.ownerName && !soldDate && !soldPrice) {
+  const sales = ownerSaleHistory(owner, s).slice(0, 2);
+  const mortgage = ownerMortgageInfo(owner, s);
+  if (!owner.ownerName && !sales.length && !mortgage) {
     const diagnostics = Array.isArray(owner.diagnostics) ? owner.diagnostics : [];
     const statusText = diagnostics.map(item => {
       const status = item.status === 'not_configured' ? 'not configured' : String(item.status || '').replace('_', ' ');
@@ -1845,20 +1925,37 @@ function ownerInfoHTML(owner, s = {}) {
   return `<table class="ct ownerct">
     ${ownerLine('Owner', owner.ownerName || 'Not returned')}
     ${ownerLine('Owner type', owner.ownerType)}
-    ${ownerLine('Date sold', soldDate)}
-    ${ownerMoneyLine('Sale price', soldPrice)}
+    ${ownerMoneyLine('Original recorded mortgage', mortgage?.amount)}
+    ${ownerLine('Mortgage date', mortgage?.date)}
+    ${ownerLine('Mortgage lender', mortgage?.lender)}
+    ${!mortgage ? ownerLine('Original recorded mortgage', 'Not available in monthly property records') : ''}
+    ${ownerLine('Most recent sale date', sales[0]?.date)}
+    ${ownerMoneyLine('Most recent sale price', sales[0]?.price)}
+    ${ownerLine('Prior sale date', sales[1]?.date)}
+    ${ownerMoneyLine('Prior sale price', sales[1]?.price)}
+    ${!sales.length ? ownerLine('Sale history', 'No recorded sales were returned') : ''}
+    ${sales.length === 1 ? ownerLine('Prior sale', 'No second recorded sale was returned') : ''}
+    ${ownerLine('Refresh schedule', 'Monthly')}
+    ${ownerLine('Record updated', String(owner.historyRefreshedAt || '').slice(0, 10))}
     ${ownerLine('Source', owner.source)}
   </table>`;
 }
 
 function ownerPDFRows(owner, s = {}) {
-  const soldDate = owner?.lastSaleDate || owner?.recordingDate || owner?.saleDate || '';
-  const soldPrice = owner?.lastSaleAmount || owner?.salePrice || '';
+  const sales = ownerSaleHistory(owner || {}, s).slice(0, 2);
+  const mortgage = ownerMortgageInfo(owner || {}, s);
   const rows = [
     ['Owner', owner?.ownerName || 'Not returned'],
     ['Owner Type', owner?.ownerType || ''],
-    ['Date Sold', soldDate],
-    ['Sale Price', soldPrice ? fmtD(soldPrice) : ''],
+    ['Original Recorded Mortgage', mortgage?.amount ? fmtD(mortgage.amount) : 'Not available in monthly property records'],
+    ['Mortgage Date', mortgage?.date || ''],
+    ['Mortgage Lender', mortgage?.lender || ''],
+    ['Most Recent Sale Date', sales[0]?.date || ''],
+    ['Most Recent Sale Price', sales[0]?.price ? fmtD(sales[0].price) : ''],
+    ['Prior Sale Date', sales[1]?.date || ''],
+    ['Prior Sale Price', sales[1]?.price ? fmtD(sales[1].price) : 'No second recorded sale was returned'],
+    ['Refresh Schedule', 'Monthly'],
+    ['Record Updated', String(owner?.historyRefreshedAt || '').slice(0, 10)],
     ['Owner Data Source', owner?.source || ''],
   ].filter(([, value]) => value);
   return rows.map(([label, value]) => `<tr><td>${escapeText(label)}</td><td>${escapeText(value)}</td></tr>`).join('');
@@ -4491,6 +4588,9 @@ async function exportExcel(id) {
       ownerType: ownerInfo?.ownerType || '',
       lastSaleDate: ownerInfo?.lastSaleDate || ownerInfo?.recordingDate || ownerInfo?.saleDate || '',
       lastSaleAmount: ownerInfo?.lastSaleAmount || ownerInfo?.salePrice || 0,
+      saleHistory: ownerSaleHistory(ownerInfo || {}, s),
+      originalMortgage: ownerMortgageInfo(ownerInfo || {}, s),
+      historyRefreshedAt: ownerInfo?.historyRefreshedAt || s.externalEnrichedAt || '',
       source: ownerInfo?.source || '',
     },
     planning: planningExportData(s),

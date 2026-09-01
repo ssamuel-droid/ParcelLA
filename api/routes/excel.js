@@ -158,11 +158,39 @@ function setRightAligned(ws, cols = []) {
 }
 
 function compactOwner(owner = {}) {
+  const saleCandidates = Array.isArray(owner.saleHistory) ? owner.saleHistory : [];
+  const saleHistory = saleCandidates
+    .map(row => ({
+      date: text(row?.date || row?.saleDate || row?.recordingDate).slice(0, 10),
+      price: money(row?.price || row?.salePrice || row?.amount || 0),
+      source: text(row?.source),
+    }))
+    .filter(row => row.date && row.price > 0)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .filter((row, index, rows) => rows.findIndex(other => other.date === row.date && other.price === row.price) === index)
+    .slice(0, 20);
+  const fallbackDate = text(owner.lastSaleDate || owner.recordingDate || owner.saleDate).slice(0, 10);
+  const fallbackPrice = money(owner.lastSaleAmount || owner.salePrice || 0);
+  if (fallbackDate && fallbackPrice && !saleHistory.some(row => row.date === fallbackDate && row.price === fallbackPrice)) {
+    saleHistory.push({ date: fallbackDate, price: fallbackPrice, source: text(owner.source) });
+    saleHistory.sort((a, b) => b.date.localeCompare(a.date));
+  }
+  const mortgage = owner.originalMortgage && typeof owner.originalMortgage === 'object'
+    ? {
+        amount: money(owner.originalMortgage.amount || owner.originalMortgage.loanAmount || 0),
+        date: text(owner.originalMortgage.date || owner.originalMortgage.mortgageDate).slice(0, 10),
+        lender: text(owner.originalMortgage.lender || owner.originalMortgage.lenderName),
+        source: text(owner.originalMortgage.source),
+      }
+    : null;
   return {
     ownerName: text(owner.ownerName) || 'Not returned',
     ownerType: text(owner.ownerType),
-    lastSaleDate: text(owner.lastSaleDate || owner.recordingDate || owner.saleDate),
-    lastSaleAmount: money(owner.lastSaleAmount || owner.salePrice || 0),
+    lastSaleDate: saleHistory[0]?.date || fallbackDate,
+    lastSaleAmount: saleHistory[0]?.price || fallbackPrice,
+    saleHistory,
+    originalMortgage: mortgage?.amount || mortgage?.date ? mortgage : null,
+    historyRefreshedAt: text(owner.historyRefreshedAt).slice(0, 10),
     source: text(owner.source),
   };
 }
@@ -311,14 +339,34 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     }
 
     const ownerWs = wb.addWorksheet('Owner & Sale');
-    setupSheet(ownerWs, [28, 32]);
+    setupSheet(ownerWs, [28, 20, 20, 42]);
     writeRow(ownerWs, ['Owner & Sale', siteName], 'title');
     writeRow(ownerWs, ['Field', 'Value'], 'header');
     writeRow(ownerWs, ['Owner', owner.ownerName]);
     writeRow(ownerWs, ['Owner type', owner.ownerType]);
-    writeRow(ownerWs, ['Date sold', owner.lastSaleDate]);
-    writeRow(ownerWs, ['Sale price', cell(owner.lastSaleAmount, FMT.money)]);
+    writeRow(ownerWs, ['Original recorded mortgage', owner.originalMortgage?.amount
+      ? cell(owner.originalMortgage.amount, FMT.money)
+      : 'Not available in monthly property records']);
+    writeRow(ownerWs, ['Mortgage date', owner.originalMortgage?.date || '']);
+    writeRow(ownerWs, ['Mortgage lender', owner.originalMortgage?.lender || '']);
+    writeRow(ownerWs, ['Refresh schedule', 'Monthly']);
+    writeRow(ownerWs, ['Record updated', owner.historyRefreshedAt]);
     writeRow(ownerWs, ['Source', owner.source]);
+    writeRow(ownerWs, ['']);
+    writeRow(ownerWs, ['Recorded sale history'], 'section');
+    writeRow(ownerWs, ['Order', 'Sale date', 'Sale price', 'Source'], 'header');
+    const ownerSales = owner.saleHistory.slice(0, 2);
+    if (!ownerSales.length) {
+      writeRow(ownerWs, ['No recorded sales returned', '', '', owner.source]);
+    } else {
+      ownerSales.forEach((sale, index) => writeRow(ownerWs, [
+        index === 0 ? 'Most recent' : 'Prior',
+        sale.date,
+        cell(sale.price, FMT.money),
+        sale.source || owner.source,
+      ]));
+      if (ownerSales.length < 2) writeRow(ownerWs, ['Prior', 'No second recorded sale was returned', '', owner.source]);
+    }
 
     const permitWs = wb.addWorksheet('Permit Details');
     setupSheet(permitWs, [28, 72]);
@@ -740,8 +788,11 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     if (isEd1) writeRow(summaryWs, ['Program', `ED1 - ${num(ed1Profile?.amiPct, 80)}% AMI gross-rent limits`, text(assumptions.rentRestrictionNote || ed1Profile?.caveat)]);
     writeRow(summaryWs, [isHouse ? 'Homes' : 'Units', formula(`${A.units}`, num(site.units, 0), FMT.whole), 'Assumptions tab']);
     writeRow(summaryWs, ['Owner', owner.ownerName, 'Owner & Sale tab']);
-    writeRow(summaryWs, ['Date sold', owner.lastSaleDate, 'Owner & Sale tab']);
-    writeRow(summaryWs, ['Sale price', cell(owner.lastSaleAmount, FMT.money), 'Owner & Sale tab']);
+    writeRow(summaryWs, ['Most recent sale date', owner.lastSaleDate, 'Owner & Sale tab']);
+    writeRow(summaryWs, ['Most recent sale price', cell(owner.lastSaleAmount, FMT.money), 'Owner & Sale tab']);
+    writeRow(summaryWs, ['Original recorded mortgage', owner.originalMortgage?.amount
+      ? cell(owner.originalMortgage.amount, FMT.money)
+      : 'Not available', 'Owner & Sale tab']);
     writeRow(summaryWs, ['Total project cost', formula(`${V.totalCost}`, money(costs.totalCost), FMT.money), 'Construction Budget tab']);
     if (isHouse) {
       writeRow(summaryWs, ['Completed home building SF', formula(`${V.homeSf}`, totalSfValue, FMT.whole), 'Permit/source building area']);

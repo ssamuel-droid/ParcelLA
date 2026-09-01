@@ -8,6 +8,7 @@
 const SB_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const RENTCAST_KEY = process.env.RENTCAST_API_KEY;
+const ATTOM_KEY = process.env.ATTOM_API_KEY;
 
 const SITE_LIMIT = intEnv('PROPERTY_ENRICH_SITE_LIMIT', 5);
 const MARKET_LIMIT = intEnv('PROPERTY_ENRICH_MARKET_LIMIT', 500);
@@ -15,9 +16,12 @@ const STALE_DAYS = intEnv('PROPERTY_ENRICH_STALE_DAYS', 30);
 const SALE_RECENCY_DAYS = intEnv('PROPERTY_ENRICH_SALE_RECENCY_DAYS', 1095);
 const REQUEST_DELAY_MS = intEnv('PROPERTY_ENRICH_DELAY_MS', 250);
 const MAX_RENTCAST_CALLS = intEnv('PROPERTY_ENRICH_MAX_RENTCAST_CALLS', 50);
+const MAX_ATTOM_CALLS = intEnv('PROPERTY_ENRICH_MAX_ATTOM_CALLS', 5);
 const INCLUDE_SITE_AVM = /^(1|true|yes)$/i.test(process.env.PROPERTY_ENRICH_AVM || '');
 const RENTCAST_SALE_SOURCE = 'RentCast monthly property records';
+const ATTOM_MORTGAGE_SOURCE = 'ATTOM monthly mortgage records';
 let rentcastCallCount = 0;
+let attomCallCount = 0;
 
 const HOOD_ZIPS = {
   'Silver Lake': '90026',
@@ -86,11 +90,7 @@ function ownerNameParts(value) {
 }
 
 function latestRentCastSale(record) {
-  const history = record?.history;
-  if (!history || typeof history !== 'object' || Array.isArray(history)) return null;
-  return Object.values(history)
-    .filter(row => row && typeof row === 'object' && (!row.event || /sale/i.test(row.event)))
-    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0] || null;
+  return rentCastSaleHistory(record)[0] || null;
 }
 
 function asNumber(value) {
@@ -108,6 +108,86 @@ function cleanDate(value) {
   if (!text) return null;
   if (/^\d{8}$/.test(text)) return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)}`;
   return text.slice(0, 10);
+}
+
+function rentCastSaleHistory(record) {
+  if (!record || typeof record !== 'object') return [];
+  const candidates = [];
+  const history = record.history;
+  if (history && typeof history === 'object' && !Array.isArray(history)) {
+    for (const [date, row] of Object.entries(history)) {
+      if (row && typeof row === 'object') candidates.push({ ...row, _dateHint: date });
+    }
+  }
+  if (Array.isArray(record.saleHistory)) candidates.push(...record.saleHistory);
+  if (Array.isArray(record.salesHistory)) candidates.push(...record.salesHistory);
+  if (record.lastSaleDate || record.lastSalePrice || record.lastSoldDate || record.lastSoldPrice) {
+    candidates.push({
+      event: 'Sale',
+      date: record.lastSaleDate || record.lastSoldDate,
+      price: record.lastSalePrice || record.lastSoldPrice,
+    });
+  }
+
+  const deduped = new Map();
+  for (const row of candidates) {
+    if (!row || typeof row !== 'object' || (row.event && !/sale/i.test(String(row.event)))) continue;
+    const date = cleanDate(first(row.date, row.saleDate, row.recordingDate, row._dateHint));
+    const price = money(first(row.price, row.salePrice, row.amount, row.saleAmount));
+    if (!date || !price) continue;
+    const normalized = {
+      date,
+      price,
+      event: first(row.event, 'Sale'),
+      documentType: first(row.documentType, row.deedType, row.transactionType),
+      documentNumber: first(row.documentNumber, row.documentNo, row.instrumentNumber),
+      buyer: first(row.buyer, row.buyerName, row.grantee),
+      seller: first(row.seller, row.sellerName, row.grantor),
+      source: first(row.source, RENTCAST_SALE_SOURCE),
+    };
+    deduped.set(`${date}|${price}`, normalized);
+  }
+  return [...deduped.values()]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 20);
+}
+
+function compactMortgageRecord(value, source = '') {
+  if (!value || typeof value !== 'object') return null;
+  const lender = value.lender && typeof value.lender === 'object' ? value.lender : {};
+  const amount = money(first(
+    value.amount,
+    value.loanAmount,
+    value.originalLoanAmount,
+    value.mortgageAmount,
+    value.originalBalance
+  ));
+  const date = cleanDate(first(
+    value.date,
+    value.mortgageDate,
+    value.loanDate,
+    value.originationDate,
+    value.recordingDate
+  ));
+  if (!amount && !date) return null;
+  return {
+    amount,
+    date,
+    lender: first(
+      value.lenderName,
+      value.lender,
+      lender.companyName,
+      lender.name,
+      [lender.firstname || lender.firstName, lender.lastname || lender.lastName].map(clean).filter(Boolean).join(' ')
+    ),
+    interestRate: asNumber(value.interestRate ?? value.interestrate),
+    loanType: first(value.loanType, value.loanTypeCode, value.loantypecode),
+    deedType: first(value.deedType, value.deedtype),
+    termMonths: asNumber(value.termMonths ?? value.term),
+    dueDate: cleanDate(value.dueDate ?? value.duedate),
+    documentNumber: first(value.documentNumber, value.documentNo, value.trustDeedDocumentNumber),
+    source: first(value.source, source),
+  };
 }
 
 function normalizeAddress(address) {
@@ -195,23 +275,24 @@ function compactPropertyRecord(r) {
     r.ownerMailingAddress,
     r.owner_mailing_address
   );
-  const latestSale = latestRentCastSale(r);
+  const saleHistory = rentCastSaleHistory(r);
+  const latestSale = saleHistory[0] || latestRentCastSale(r);
   const salePrice = money(first(
+    latestSale?.price,
     r.lastSalePrice,
     r.lastSoldPrice,
     r.salePrice,
     r.price,
     r.saleHistory?.[0]?.price,
-    r.saleHistory?.[0]?.salePrice,
-    latestSale?.price
+    r.saleHistory?.[0]?.salePrice
   ));
   const saleDate = cleanDate(first(
+    latestSale?.date,
     r.lastSaleDate,
     r.lastSoldDate,
     r.saleDate,
     r.saleHistory?.[0]?.date,
-    r.saleHistory?.[0]?.saleDate,
-    latestSale?.date
+    r.saleHistory?.[0]?.saleDate
   ));
   const units = asNumber(r.units ?? r.numberOfUnits ?? r.propertyUnits ?? r.unitCount);
   const sf = asNumber(r.squareFootage ?? r.livingArea ?? r.buildingArea);
@@ -239,6 +320,8 @@ function compactPropertyRecord(r) {
     legalDescription: first(r.legalDescription),
     lastSaleDate: saleDate,
     lastSalePrice: salePrice,
+    saleHistory,
+    originalMortgage: compactMortgageRecord(r.originalMortgage, first(r.originalMortgage?.source, RENTCAST_SALE_SOURCE)),
     pricePerUnit: salePrice && units ? Math.round(salePrice / units) : null,
     pricePerSf: salePrice && sf ? Math.round(salePrice / sf) : null,
     taxAssessment: r.taxAssessment || r.assessment || null,
@@ -345,6 +428,15 @@ async function requestRentcast(url) {
   return requestJson(url, { 'X-Api-Key': RENTCAST_KEY });
 }
 
+async function requestAttom(url) {
+  if (!ATTOM_KEY) return null;
+  if (attomCallCount >= MAX_ATTOM_CALLS) {
+    throw new Error(`ATTOM call budget exhausted (${MAX_ATTOM_CALLS} calls per run)`);
+  }
+  attomCallCount += 1;
+  return requestJson(url, { apikey: ATTOM_KEY });
+}
+
 async function sbRequest(method, path, body = null, prefer = '') {
   const url = `${SB_URL}${path}`;
   const res = await fetch(url, {
@@ -420,15 +512,45 @@ async function fetchSitesForPropertyRecords() {
     'owner_enriched_at',
   ].join(',');
   const candidateLimit = Math.min(Math.max(SITE_LIMIT * 10, 100), 1000);
-  const rows = await sbRequest(
+  const siteRows = await sbRequest(
     'GET',
     `/rest/v1/sites?select=${columns}&address=not.is.null&order=id.desc&limit=${candidateLimit}`
   );
-  return (rows || [])
+  const permitRows = await sbRequest(
+    'GET',
+    `/rest/v1/permits?select=id,address,lat,lng,units,building_sf&address=not.is.null&permit_type=eq.Bldg-New&project_detail_complete=eq.true&order=id.desc&limit=${candidateLimit}`
+  ).catch(() => []);
+  const cacheRows = await sbRequest(
+    'GET',
+    `/rest/v1/property_enrichment_cache?select=cache_key,fetched_at&purpose=eq.property_record&order=fetched_at.desc&limit=${Math.min(candidateLimit * 2, 2000)}`
+  ).catch(() => []);
+  const cacheTimes = new Map((cacheRows || []).map(row => [
+    clean(row.cache_key),
+    row.fetched_at ? new Date(row.fetched_at).getTime() : 0,
+  ]));
+  const candidates = [
+    ...(siteRows || []).map(row => ({ ...row, recordKind: 'site', cacheKey: `site:${row.id}` })),
+    ...(permitRows || []).map(row => ({
+      ...row,
+      recordKind: 'permit',
+      cacheKey: `permit:${row.id}`,
+      project_type: 'New House',
+      avg_unit_sf: row.building_sf,
+      neighborhood: null,
+    })),
+  ];
+  const seenAddresses = new Set();
+  return candidates
     .sort((a, b) => {
-      const aTime = a.owner_enriched_at ? new Date(a.owner_enriched_at).getTime() : 0;
-      const bTime = b.owner_enriched_at ? new Date(b.owner_enriched_at).getTime() : 0;
+      const aTime = cacheTimes.get(a.cacheKey) || (a.owner_enriched_at ? new Date(a.owner_enriched_at).getTime() : 0);
+      const bTime = cacheTimes.get(b.cacheKey) || (b.owner_enriched_at ? new Date(b.owner_enriched_at).getTime() : 0);
       return aTime - bTime;
+    })
+    .filter(row => {
+      const key = normalizeAddress(row.address);
+      if (!key || seenAddresses.has(key)) return false;
+      seenAddresses.add(key);
+      return true;
     })
     .slice(0, SITE_LIMIT);
 }
@@ -499,10 +621,10 @@ async function pullRentcastPropertyRecord(site) {
   const rows = arrayFromPayload(json).map(compactPropertyRecord).filter(r => r.formattedAddress);
   const record = rows[0] || null;
   await upsertCache({
-    site_id: site.id,
+    site_id: site.recordKind === 'site' ? site.id : null,
     provider: 'rentcast',
     purpose: 'property_record',
-    cache_key: `site:${site.id}`,
+    cache_key: site.cacheKey || `site:${site.id}`,
     address: site.address,
     lat: asNumber(site.lat),
     lng: asNumber(site.lng),
@@ -514,6 +636,57 @@ async function pullRentcastPropertyRecord(site) {
     normalized: { record },
   });
   return record;
+}
+
+function attomAddressParts(address) {
+  const parts = clean(address).split(',').map(part => clean(part)).filter(Boolean);
+  return {
+    address1: parts[0] || clean(address),
+    address2: parts.slice(1).join(', ') || 'Los Angeles, CA',
+  };
+}
+
+function compactAttomMortgage(payload) {
+  const property = Array.isArray(payload?.property)
+    ? payload.property[0]
+    : Array.isArray(payload?.data?.property)
+      ? payload.data.property[0]
+      : payload?.property || payload?.data?.property || null;
+  if (!property || typeof property !== 'object') return null;
+  const mortgage = compactMortgageRecord(property.mortgage, ATTOM_MORTGAGE_SOURCE);
+  if (!mortgage) return null;
+  return {
+    ...mortgage,
+    source: ATTOM_MORTGAGE_SOURCE,
+    attomId: first(property.identifier?.attomId, property.identifier?.Id),
+  };
+}
+
+async function pullAttomMortgage(site) {
+  if (!ATTOM_KEY || !MAX_ATTOM_CALLS) return null;
+  const { address1, address2 } = attomAddressParts(site.address);
+  if (!address1) return null;
+  const params = new URLSearchParams({ address1, address2 });
+  const result = await requestAttom(
+    `https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailmortgageowner?${params}`
+  );
+  const mortgage = compactAttomMortgage(result?.json);
+  await upsertCache({
+    site_id: site.recordKind === 'site' ? site.id : null,
+    provider: 'attom',
+    purpose: 'mortgage_record',
+    cache_key: site.cacheKey || `site:${site.id}`,
+    address: site.address,
+    lat: asNumber(site.lat),
+    lng: asNumber(site.lng),
+    status: mortgage ? 'ok' : 'miss',
+    fetched_at: new Date().toISOString(),
+    expires_at: cacheExpiry(),
+    request_meta: { endpoint: '/property/detailmortgageowner', address1, address2 },
+    payload: { hasMortgage: !!mortgage },
+    normalized: { originalMortgage: mortgage },
+  });
+  return mortgage;
 }
 
 async function pullRentcastAvm(site, endpoint, purpose) {
@@ -552,16 +725,36 @@ async function pullRentcastAvm(site, endpoint, purpose) {
 async function enrichSite(site) {
   const now = new Date().toISOString();
   const propertyRecord = await pullRentcastPropertyRecord(site);
+  await sleep(REQUEST_DELAY_MS);
+  const originalMortgage = await pullAttomMortgage(site).catch(err => {
+    console.warn(`[monthly-enrich] Mortgage record failed for ${site.address}: ${err.message}`);
+    return null;
+  });
+  const mergedRecord = propertyRecord || originalMortgage
+    ? {
+        ...(propertyRecord || { formattedAddress: site.address, saleHistory: [] }),
+        originalMortgage: originalMortgage || propertyRecord?.originalMortgage || null,
+      }
+    : null;
+  const externalSources = [
+    propertyRecord ? RENTCAST_SALE_SOURCE : null,
+    originalMortgage ? ATTOM_MORTGAGE_SOURCE : null,
+  ].filter(Boolean);
   const patch = {
     external_enriched_at: now,
     rentcast_enriched_at: now,
-    external_data_sources: ['RentCast monthly property records'],
+    external_data_sources: externalSources,
     data_quality: {
       rentcast: propertyRecord ? 'property_record_cached' : 'no_property_record_match',
+      mortgage: originalMortgage
+        ? 'recorded_mortgage_cached'
+        : ATTOM_KEY
+          ? 'no_recorded_mortgage_match'
+          : 'mortgage_provider_not_configured',
       rentcastEnrichedAt: now,
       monthlyCache: true,
     },
-    external_property_record: propertyRecord,
+    external_property_record: mergedRecord,
   };
 
   if (propertyRecord?.ownerName) {
@@ -588,8 +781,8 @@ async function enrichSite(site) {
     patch.external_sale_comps = valueAvm?.comparables || [];
   }
 
-  await patchSite(site.id, patch);
-  return propertyRecord ? 'updated' : 'miss';
+  if (site.recordKind !== 'permit') await patchSite(site.id, patch);
+  return mergedRecord ? 'updated' : 'miss';
 }
 
 async function main() {
@@ -598,7 +791,7 @@ async function main() {
     console.log('[monthly-enrich] RENTCAST_API_KEY not set; nothing to pull. Add it as a GitHub secret before running monthly enrichment.');
     return;
   }
-  console.log(`[monthly-enrich] RentCast guardrail: maximum ${MAX_RENTCAST_CALLS} API call(s); ${SITE_LIMIT} individual site record(s); AVM ${INCLUDE_SITE_AVM ? 'enabled' : 'disabled'}.`);
+  console.log(`[monthly-enrich] Guardrails: RentCast max ${MAX_RENTCAST_CALLS} call(s); ATTOM max ${MAX_ATTOM_CALLS} call(s); ${SITE_LIMIT} individual site record(s); AVM ${INCLUDE_SITE_AVM ? 'enabled' : 'disabled'}.`);
 
   let marketRequests = 0;
   let rentalRows = 0;
@@ -652,7 +845,7 @@ async function main() {
     await sleep(REQUEST_DELAY_MS);
   }
 
-  console.log(`[monthly-enrich] Complete. RentCast API calls: ${rentcastCallCount}/${MAX_RENTCAST_CALLS}; successful market calls: ${marketRequests}; cached rentals: ${rentalRows}; cached recent sales: ${saleRows}; site records updated: ${siteUpdated}; site misses: ${siteMiss}.`);
+  console.log(`[monthly-enrich] Complete. RentCast API calls: ${rentcastCallCount}/${MAX_RENTCAST_CALLS}; ATTOM API calls: ${attomCallCount}/${MAX_ATTOM_CALLS}; successful market calls: ${marketRequests}; cached rentals: ${rentalRows}; cached recent sales: ${saleRows}; site records updated: ${siteUpdated}; site misses: ${siteMiss}.`);
 }
 
 if (require.main === module) {
@@ -662,4 +855,11 @@ if (require.main === module) {
   });
 }
 
-module.exports = { compactPropertyRecord, ownerNameParts, latestRentCastSale };
+module.exports = {
+  compactAttomMortgage,
+  compactMortgageRecord,
+  compactPropertyRecord,
+  latestRentCastSale,
+  ownerNameParts,
+  rentCastSaleHistory,
+};
