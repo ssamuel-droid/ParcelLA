@@ -682,6 +682,7 @@ const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
 let detailRenderRevision = 0;
+let ownerHydrationRevision = 0;
 const houseCompBenchmarks = new Map();
 const houseCompBenchmarkPending = new Set();
 const underwritingSnapshots = new Map();
@@ -1786,7 +1787,13 @@ function pencilReadHTML(s, costs, income, valuation) {
 
 function ownerQueryForSite(s = {}) {
   const p = new URLSearchParams();
-  if (s.addr) p.set('address', s.addr);
+  const addresses = [
+    s.addr,
+    ...(Array.isArray(s.addressAliases) ? s.addressAliases : []),
+    ...(Array.isArray(s.planningCases) ? s.planningCases.map(planningCase => planningCase?.address) : []),
+  ].map(value => String(value || '').trim()).filter(Boolean);
+  const exactAddress = addresses.find(address => /^\d+\s+/.test(address) && !/^\d+\s*-\s*\d+\b/.test(address));
+  if (exactAddress || addresses[0]) p.set('address', exactAddress || addresses[0]);
   if (s.lat && s.lng) {
     p.set('lat', s.lat);
     p.set('lng', s.lng);
@@ -1991,6 +1998,7 @@ function ownerPDFRows(owner, s = {}) {
 }
 
 async function hydrateOwnerInfo(s) {
+  const revision = ++ownerHydrationRevision;
   const el = g('owner-' + s.id);
   if (!el) return;
   if (!hasFullAccess()) {
@@ -2000,8 +2008,10 @@ async function hydrateOwnerInfo(s) {
   el.innerHTML = '<div class="ownerbox"><b>Loading owner info...</b><span>Checking configured parcel and property-data providers.</span></div>';
   try {
     const owner = await fetchOwnerInfo(s);
+    if (revision !== ownerHydrationRevision || openId !== s.id || el !== g('owner-' + s.id)) return;
     el.innerHTML = ownerInfoHTML(owner, s);
   } catch (e) {
+    if (revision !== ownerHydrationRevision || openId !== s.id || el !== g('owner-' + s.id)) return;
     el.innerHTML = `<div class="ownerbox"><b>Owner lookup failed</b><span>${escapeText(e.message || 'Could not load owner data.')}</span></div>`;
   }
 }
@@ -2736,6 +2746,7 @@ async function hydrateSitePlanningDetails(site) {
 }
 
 function closeDetail() {
+  ownerHydrationRevision += 1;
   g('detail').classList.remove('open');
   openId = null;
   renderCards();
@@ -3228,7 +3239,7 @@ function renderDetail(s) {
     <button class="ab as" onclick="shareDeal()">⤴ Copy share link</button>
     <button class="ab as" onclick="exportExcel(${s.id})">Download Excel workbook</button>
     <button class="ab ap" onclick="exportPDF(${s.id})">↓ Download PDF deal memo</button>`;
-  hydrateOwnerInfo(s);
+  if (s.planningDiscovery?.status !== 'loading') hydrateOwnerInfo(s);
 }
 
 async function loadComps(siteOrHood) {

@@ -268,6 +268,45 @@ function rentcastKey() {
   return clean(process.env.RENTCAST_API_KEY);
 }
 
+function rentCastPropertyUrl(params = {}) {
+  const address = clean(params.address);
+  const latitude = Number(params.lat);
+  const longitude = Number(params.lng);
+  const ambiguousAddress = /^\d+\s*-\s*\d+\b/.test(address)
+    || /^\d+(?:\s*,\s*\d+)+\b/.test(address);
+  const hasCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
+  const url = new URL(RENTCAST_BASE);
+  if (ambiguousAddress && hasCoordinates) {
+    url.searchParams.set('latitude', String(latitude));
+    url.searchParams.set('longitude', String(longitude));
+    url.searchParams.set('radius', '0.05');
+    url.searchParams.set('limit', '10');
+    return url;
+  }
+  if (!address) return null;
+  url.searchParams.set('address', /\bCA\b|CALIFORNIA/i.test(address)
+    ? address
+    : `${address}, Los Angeles, CA`);
+  url.searchParams.set('limit', '1');
+  return url;
+}
+
+function nearestRentCastRecord(records, params = {}) {
+  const latitude = Number(params.lat);
+  const longitude = Number(params.lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return records[0] || null;
+  const distance = record => {
+    const recordLatitude = Number(record?.latitude ?? record?.lat);
+    const recordLongitude = Number(record?.longitude ?? record?.lng);
+    return Number.isFinite(recordLatitude) && Number.isFinite(recordLongitude)
+      ? Math.hypot(recordLatitude - latitude, recordLongitude - longitude)
+      : Number.POSITIVE_INFINITY;
+  };
+  return [...records].sort((left, right) => {
+    return distance(left) - distance(right);
+  })[0] || null;
+}
+
 function attomKey() {
   return clean(process.env.ATTOM_API_KEY);
 }
@@ -491,16 +530,11 @@ async function persistProviderRecord(provider, purpose, params, normalized, stat
 
 async function queryRentCast(params) {
   const key = rentcastKey();
-  const address = clean(params.address);
-  if (!key || !address) return null;
-
-  const url = new URL(RENTCAST_BASE);
-  url.searchParams.set('address', /\bCA\b|CALIFORNIA/i.test(address)
-    ? address
-    : `${address}, Los Angeles, CA`);
-  url.searchParams.set('limit', '1');
+  const url = rentCastPropertyUrl(params);
+  if (!key || !url) return null;
   const data = await fetchJson(url.toString(), 10000, { 'X-Api-Key': key });
-  const record = Array.isArray(data) ? data[0] : data?.properties?.[0] || data?.data?.[0];
+  const records = Array.isArray(data) ? data : data?.properties || data?.data || [];
+  const record = nearestRentCastRecord(records, params);
   if (!record) return null;
   const normalized = normalizeRentCastRecord(record);
   return normalized.ownerName || normalized.lastSaleDate || normalized.lastSaleAmount || normalized.originalMortgage
@@ -1016,6 +1050,7 @@ export {
   normalizeRegridFeature,
   normalizeRentCastRecord,
   queryRegrid,
+  rentCastPropertyUrl,
   saleHistoryFromRecord,
 };
 export default router;

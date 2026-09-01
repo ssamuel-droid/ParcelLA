@@ -6,8 +6,23 @@ process.env.SUPABASE_SERVICE_KEY ||= 'owner-route-test-key';
 const {
   normalizeAttomRecord,
   normalizeRentCastRecord,
+  rentCastPropertyUrl,
   saleHistoryFromRecord,
 } = await import('../api/routes/owners.js');
+
+const exactUrl = rentCastPropertyUrl({ address: '267 N Toyopa Dr' });
+assert.equal(exactUrl.searchParams.get('address'), '267 N Toyopa Dr, Los Angeles, CA');
+assert.equal(exactUrl.searchParams.get('latitude'), null);
+
+const rangeUrl = rentCastPropertyUrl({
+  address: '6201-6229 W Sunset Blvd',
+  lat: 34.0981,
+  lng: -118.3245,
+});
+assert.equal(rangeUrl.searchParams.get('address'), null);
+assert.equal(rangeUrl.searchParams.get('latitude'), '34.0981');
+assert.equal(rangeUrl.searchParams.get('longitude'), '-118.3245');
+assert.equal(rangeUrl.searchParams.get('limit'), '10');
 
 const rentcast = normalizeRentCastRecord({
   formattedAddress: '267 N Toyopa Dr, Pacific Palisades, CA 90272',
