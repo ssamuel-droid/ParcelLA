@@ -139,7 +139,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status:    'ok',
     version:   '3.0.0',
-    release:   '2026-09-01-regrid-owner-field-mapping',
+    release:   '2026-09-01-clean-owner-empty-state',
     timestamp: new Date().toISOString(),
     env:       process.env.NODE_ENV ?? 'development',
     services: {

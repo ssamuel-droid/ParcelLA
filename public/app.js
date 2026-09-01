@@ -1910,16 +1910,9 @@ function ownerInfoHTML(owner, s = {}) {
   const sales = ownerSaleHistory(owner, s).slice(0, 2);
   const mortgage = ownerMortgageInfo(owner, s);
   if (!owner.ownerName && !sales.length && !mortgage) {
-    const diagnostics = Array.isArray(owner.diagnostics) ? owner.diagnostics : [];
-    const statusText = diagnostics.map(item => {
-      const status = item.status === 'not_configured' ? 'not configured' : String(item.status || '').replace('_', ' ');
-      return `${item.provider}: ${status}${item.message ? ` (${item.message})` : ''}`;
-    }).join(' | ');
     return `<div class="ownerbox">
-      <b>Owner not returned</b>
-      <span>${escapeText(owner.message || 'No owner record was returned for this parcel/address.')}</span>
-      <span>Address checked: ${escapeText(owner.situsAddress || s.addr || '')}</span>
-      ${statusText ? `<span><b>Provider status:</b> ${escapeText(statusText)}</span>` : ''}
+      <b>Ownership unavailable</b>
+      <span>No verified ownership record is available for this property.</span>
     </div>`;
   }
   return `<table class="ct ownerct">
