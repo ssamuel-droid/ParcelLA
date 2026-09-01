@@ -29,7 +29,7 @@ if (!response.ok) {
   throw new Error(`${response.status} ${payload?.error || text.slice(0, 200)}`);
 }
 if (typeof payload?.narrative !== 'string' || payload.narrative.trim().length < 80) {
-  throw new Error('Narrative response is missing usable analysis text');
+  throw new Error(`Narrative response is missing usable analysis text: ${text.slice(0, 500)}`);
 }
 
 console.log(`Permit-backed SFH narrative passed for site ${siteId}.`);

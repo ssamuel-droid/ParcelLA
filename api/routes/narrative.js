@@ -286,9 +286,25 @@ Be direct, specific with numbers, opinionated. Finish every paragraph completely
       return res.json({ narrative, cached: false, fallback: true, error: message });
     }
 
-    const data      = await r.json();
-    const narrative = data.content?.[0]?.text ?? '';
-    const tokens    = data.usage?.input_tokens + data.usage?.output_tokens;
+    const data = await r.json();
+    const narrative = Array.isArray(data.content)
+      ? data.content
+          .filter(block => block?.type === 'text' && typeof block.text === 'string')
+          .map(block => block.text.trim())
+          .filter(Boolean)
+          .join('\n\n')
+      : '';
+    const tokens = Number(data.usage?.input_tokens || 0) + Number(data.usage?.output_tokens || 0);
+
+    if (!narrative) {
+      const fallback = narrativeFallback(site, model, 'Claude returned no text, so this is a deterministic model summary.');
+      console.warn('[narrative] Claude returned no text blocks:', data.content?.map?.(block => block?.type));
+      await logActivity(req.user?.id, 'generate_narrative_fallback', cacheableSiteId, {
+        ...activityMetadata,
+        reason: 'Claude returned no text',
+      });
+      return res.json({ narrative: fallback, cached: false, fallback: true, error: 'Claude returned no text' });
+    }
 
     // Cache it (graceful fallback if table doesn't exist)
     if (cacheableSiteId) {
