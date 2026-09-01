@@ -681,6 +681,7 @@ function calcIRR(cashflows, guess = 0.15) {
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
 let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
+let detailRenderRevision = 0;
 const houseCompBenchmarks = new Map();
 const houseCompBenchmarkPending = new Set();
 const underwritingSnapshots = new Map();
@@ -2926,6 +2927,7 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
   };
 }
 function renderDetail(s) {
+  const renderRevision = ++detailRenderRevision;
   const house = isHouseSite(s);
   const costs = costModelForSite(s);
   const income = incomeStatementForSite(s, costs);
@@ -2979,6 +2981,7 @@ function renderDetail(s) {
     if (!appraisalEl && !compsEl) return;
     try {
       const snapshot = await getUnderwritingSnapshot(s);
+      if (openId !== s.id || renderRevision !== detailRenderRevision) return;
       const { comps, rentComps, appraisal, valuation: compValuation } = snapshot;
       const valuationEl = g('valuation-' + s.id);
       const pencilEl = g('pencil-' + s.id);
@@ -3271,6 +3274,7 @@ function compQueryForSite(s, limit = 12) {
 }
 
 function underwritingSnapshotSignature(s, costs, income, baseValuation) {
+  const metrics = currentUserMetrics();
   return JSON.stringify([
     Number(s?.id || 0),
     siteNeighborhood(s),
@@ -3287,6 +3291,9 @@ function underwritingSnapshotSignature(s, costs, income, baseValuation) {
     income?.grossPotentialRent,
     baseValuation?.exitValue,
     baseValuation?.exitValueMetricValue,
+    ...Object.keys(DEFAULT_USER_METRICS).map(key => Number(metrics[key]) || 0),
+    currentHardCostOverride(),
+    currentInterestRateOverride(),
   ]);
 }
 

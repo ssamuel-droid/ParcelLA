@@ -139,7 +139,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status:    'ok',
     version:   '3.0.0',
-    release:   '2026-08-31-permit-house-ai-analysis-v2',
+    release:   '2026-09-01-settings-persistence',
     timestamp: new Date().toISOString(),
     env:       process.env.NODE_ENV ?? 'development',
     services: {
