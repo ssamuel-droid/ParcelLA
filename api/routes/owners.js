@@ -16,6 +16,7 @@ const RENTCAST_LIVE_OWNER_ENABLED = /^(1|true|yes)$/i.test(process.env.RENTCAST_
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const ownerCache = new Map();
 let ownerDb = null;
+let regridProbeCache = null;
 
 const OWNER_FIELDS = [
   'AIN',
@@ -437,12 +438,25 @@ function regridFeature(data) {
   return Array.isArray(features) ? features[0] : null;
 }
 
+function enhancedOwnershipRows(properties = {}) {
+  const value = properties.enhanced_ownership
+    ?? properties.enhancedOwnership
+    ?? properties.enhanced_owners
+    ?? properties.enhancedOwners;
+  const rows = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? (Object.keys(value).some(key => /^eo_/i.test(key)) ? [value] : Object.values(value))
+      : [];
+  return rows
+    .filter(row => row && typeof row === 'object' && !Array.isArray(row))
+    .map(row => row.fields && typeof row.fields === 'object' ? { ...row.fields, ...row } : row);
+}
+
 function normalizeRegridFeature(feature) {
   const p = feature?.properties || {};
   const fields = p.fields && typeof p.fields === 'object' ? p.fields : p;
-  const enhancedRows = Array.isArray(p.enhanced_ownership)
-    ? p.enhanced_ownership
-    : (p.enhanced_ownership || p.enhancedOwnership ? [p.enhanced_ownership || p.enhancedOwnership] : []);
+  const enhancedRows = enhancedOwnershipRows(p);
   const enhanced = enhancedRows[0] || {};
   const ownerName = unique(compact([
     fields.owner,
@@ -450,11 +464,22 @@ function normalizeRegridFeature(feature) {
     fields.owner_1,
     fields.owner_name,
     fields.ownername,
+    fields.unmodified_owner,
+    fields.owner2,
+    fields.owner3,
+    fields.owner4,
+    [fields.ownfrst, fields.ownlast].map(clean).filter(Boolean).join(' '),
     ...enhancedRows.flatMap(row => [
       row.eo_owner,
       row.eo_owner2,
       row.eo_owner3,
       row.eo_owner4,
+      row.eo_deedowner,
+      row.eo_deedowner2,
+      row.eo_deedowner3,
+      row.eo_deedowner4,
+      [row.eo_ownerfirst, row.eo_ownermiddle, row.eo_ownerlast].map(clean).filter(Boolean).join(' '),
+      [row.eo_deedownerfirst, row.eo_deedownermiddle, row.eo_deedownerlast].map(clean).filter(Boolean).join(' '),
     ]),
   ])).join(' / ');
   const saleDate = cleanDate(first(
@@ -488,6 +513,17 @@ function normalizeRegridFeature(feature) {
       enhanced.eo_mail_zip,
     ].filter(Boolean).join(', '),
     fields.mailadd,
+    [
+      fields.mail_addno,
+      fields.mail_addpref,
+      fields.mail_addstr,
+      fields.mail_addsttyp,
+      fields.mail_addstsuf,
+      fields.mail_unit,
+      fields.mail_city,
+      fields.mail_state2,
+      fields.mail_zip,
+    ].map(clean).filter(Boolean).join(' '),
     fields.mail_address,
     fields.mailing_address,
     fields.owner_address
@@ -503,6 +539,7 @@ function normalizeRegridFeature(feature) {
   return {
     found: !!ownerName,
     ownerName: ownerName || null,
+    ownerType: first(fields.owntype, fields.owner_type, fields.ownership_type, enhanced.eo_ownertype) || null,
     mailingAddress: mailingAddress || null,
     situsAddress: situsAddress || null,
     apn: first(fields.parcelnumb, fields.parcel_number, fields.apn, fields.ain, fields.alt_parcelnumb1) || null,
@@ -516,6 +553,12 @@ function normalizeRegridFeature(feature) {
       source: REGRID_SOURCE,
     }] : [],
     originalMortgage,
+    ownerRecordUpdatedAt: cleanDate(first(
+      enhanced.eo_last_refresh,
+      enhanced.eo_lastrefresh,
+      fields.last_refresh,
+      fields.updated_at
+    )),
     source: REGRID_SOURCE,
   };
 }
@@ -731,7 +774,44 @@ router.get('/', optionalAuth, async (req, res, next) => {
   }
 });
 
+router.get('/provider-health', async (req, res) => {
+  const now = Date.now();
+  if (regridProbeCache && now - regridProbeCache.time < 6 * 60 * 60 * 1000) {
+    return res.json(regridProbeCache.value);
+  }
+  if (!regridToken()) {
+    return res.json({ provider: REGRID_SOURCE, configured: false, credentialAccepted: false, ownerMapped: false });
+  }
+  try {
+    const result = await queryRegrid({ address: '12500 Riverside Dr, Valley Village, CA 91607' });
+    const value = {
+      provider: REGRID_SOURCE,
+      configured: true,
+      credentialAccepted: true,
+      ownerMapped: !!result?.ownerName,
+      mailingAddressMapped: !!result?.mailingAddress,
+      apnMapped: !!result?.apn,
+      checkedAt: new Date().toISOString(),
+    };
+    regridProbeCache = { time: now, value };
+    return res.json(value);
+  } catch (error) {
+    const status = Number(error.status) || null;
+    const value = {
+      provider: REGRID_SOURCE,
+      configured: true,
+      credentialAccepted: ![401, 403].includes(status),
+      ownerMapped: false,
+      error: status ? `HTTP ${status}` : clean(error.message).slice(0, 120),
+      checkedAt: new Date().toISOString(),
+    };
+    regridProbeCache = { time: now, value };
+    return res.status(503).json(value);
+  }
+});
+
 export {
+  enhancedOwnershipRows,
   normalizeMortgageRecord,
   normalizeRegridFeature,
   normalizeRentCastRecord,

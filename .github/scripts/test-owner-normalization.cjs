@@ -1,5 +1,6 @@
 const assert = require('assert');
 const {
+  normalizeRegrid,
   normalizeRentCast,
   ownerNameParts,
   latestRentCastSale,
@@ -66,5 +67,18 @@ assert.strictEqual(mortgage.termMonths, 360);
 
 const noMortgage = compactAttomMortgage({ property: [{ mortgage: {} }] });
 assert.strictEqual(noMortgage, null);
+
+const deedOwnerPatch = normalizeRegrid({
+  properties: {
+    fields: {},
+    enhancedOwnership: [{
+      fields: {
+        eo_deedowner: 'Current Deed Owner LLC',
+        eo_deedowner2: 'Second Deed Owner',
+      },
+    }],
+  },
+});
+assert.strictEqual(deedOwnerPatch.owner_name, 'Current Deed Owner LLC / Second Deed Owner');
 
 console.log('Owner normalization tests passed.');
