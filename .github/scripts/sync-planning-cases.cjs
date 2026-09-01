@@ -53,9 +53,45 @@ function number(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function extractApns(...values) {
+  const found = [];
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (value === null || value === undefined || typeof value === 'object') return;
+    const text = clean(value);
+    const matches = text.match(/\b(?:\d{8,14}|\d{4}[\s-]\d{3}[\s-]\d{3})\b/g) || [];
+    for (const match of matches) {
+      const digits = match.replace(/\D/g, '');
+      if (digits.length >= 8 && digits.length <= 14) found.push(digits);
+    }
+  };
+  values.forEach(visit);
+  return [...new Set(found)];
+}
+
 function cleanApn(value) {
-  const digits = clean(value).replace(/\D/g, '');
-  return digits.length >= 8 && digits.length <= 14 ? digits : '';
+  return extractApns(value)[0] || '';
+}
+
+function caseApns(planningCase = {}) {
+  const source = planningCase.source_record || {};
+  const pdis = source.pdis || {};
+  return extractApns(
+    planningCase.apns,
+    planningCase.apn,
+    source.apns,
+    pdis.apns,
+    source.filing?.User_fld,
+    source.filing?.USER_APN,
+    source.completed?.APN,
+    source.completed?.Field,
+    ...array(planningCase.case_addresses).flatMap(row => row && typeof row === 'object'
+      ? [row.apn, row.APN, row.ain, row.AIN, row.parcelNumber, row.parcel_number]
+      : [row])
+  );
 }
 
 function cleanDate(value) {
@@ -216,10 +252,11 @@ function filingCase(feature) {
   const a = feature?.attributes || {};
   const caseNumber = clean(a.USER_CaseNumber).toUpperCase();
   if (!caseNumber) return null;
+  const apns = extractApns(a.User_fld, a.USER_APN, a.APN);
   return {
     case_number: caseNumber,
     case_id: number(a.USER_CaseID),
-    apn: cleanApn(a.User_fld) || null,
+    apn: apns[0] || null,
     address: clean(a.USER_Address || a.Match_addr || a.IN_SingleLine) || null,
     address_normalized: normalizeAddress(a.USER_Address || a.Match_addr || a.IN_SingleLine) || null,
     neighborhood_council: clean(a.USER_NeighborhoodCouncil) || null,
@@ -232,7 +269,7 @@ function filingCase(feature) {
     case_status: 'filed',
     pdis_url: `${PDIS_BASE}/search/casenumber/${encodeURIComponent(caseNumber)}`,
     related_case_numbers: [],
-    source_record: { filing: a },
+    source_record: { filing: a, apns },
     lat: number(feature?.geometry?.y),
     lng: number(feature?.geometry?.x),
     synced_at: new Date().toISOString(),
@@ -243,10 +280,11 @@ function completedCase(feature) {
   const a = feature?.attributes || {};
   const caseNumber = clean(a.CaseNumber || a.CASE_NUM).toUpperCase();
   if (!caseNumber) return null;
+  const apns = extractApns(a.APN, a.Field, a.ParcelNumber, a.AIN);
   return {
     case_number: caseNumber,
     case_id: number(a.CaseID || a.CASE_ID),
-    apn: cleanApn(a.APN || a.Field) || null,
+    apn: apns[0] || null,
     address: clean(a.Address) || null,
     address_normalized: normalizeAddress(a.Address) || null,
     neighborhood_council: clean(a.NeighborhoodCouncil) || null,
@@ -259,7 +297,7 @@ function completedCase(feature) {
     case_status: 'completed',
     pdis_url: `${PDIS_BASE}/search/casenumber/${encodeURIComponent(caseNumber)}`,
     related_case_numbers: [],
-    source_record: { completed: a },
+    source_record: { completed: a, apns },
     lat: number(feature?.geometry?.y),
     lng: number(feature?.geometry?.x),
     synced_at: new Date().toISOString(),
@@ -276,15 +314,16 @@ function mergeCases(filings, completed) {
     }
     const prefer = row.case_status === 'completed' ? row : previous;
     const fallback = prefer === row ? previous : row;
+    const apns = extractApns(caseApns(prefer), caseApns(fallback));
     byNumber.set(row.case_number, {
       ...fallback,
       ...prefer,
-      apn: prefer.apn || fallback.apn || null,
+      apn: apns[0] || prefer.apn || fallback.apn || null,
       case_id: prefer.case_id || fallback.case_id || null,
       address: prefer.address || fallback.address || null,
       address_normalized: prefer.address_normalized || fallback.address_normalized || null,
       application_date: prefer.application_date || fallback.application_date || null,
-      source_record: { ...(fallback.source_record || {}), ...(prefer.source_record || {}) },
+      source_record: { ...(fallback.source_record || {}), ...(prefer.source_record || {}), apns },
     });
   }
   return [...byNumber.values()];
@@ -344,16 +383,22 @@ function siteApns(site) {
   const raw = site.raw_permit_data || {};
   const external = site.external_property_record || {};
   const candidates = [
+    site.apns,
     site.apn,
-    firstNested(raw, ['apn', 'ain', 'parcel_number', 'parcelNumber', 'assessor_parcel_number']),
-    firstNested(external, ['apn', 'ain', 'parcelNumber', 'assessorParcelNumber']),
-    firstNested(raw.raw_data, ['apn', 'ain', 'parcel_number', 'parcelNumber']),
+    raw.apns,
+    raw.ains,
+    raw.parcel_numbers,
+    ...['apn', 'ain', 'parcel_number', 'parcelNumber', 'assessor_parcel_number'].map(key => raw[key]),
+    external.apns,
+    ...['apn', 'ain', 'parcelNumber', 'assessorParcelNumber', 'assessorId', 'assessorID'].map(key => external[key]),
+    raw.raw_data?.apns,
+    ...['apn', 'ain', 'parcel_number', 'parcelNumber'].map(key => raw.raw_data?.[key]),
   ];
   const book = firstNested(raw, ['assessor_book', 'book']);
   const page = firstNested(raw, ['assessor_page', 'page']);
   const parcel = firstNested(raw, ['assessor_parcel', 'parcel']);
   if (book && page && parcel) candidates.push(`${book}${page}${parcel}`);
-  return [...new Set(candidates.map(cleanApn).filter(Boolean))];
+  return extractApns(candidates);
 }
 
 function siteAddressKeys(site) {
@@ -384,8 +429,9 @@ function buildMatches(cases, sites) {
   const matches = new Map();
   for (const planningCase of cases) {
     const candidates = [];
-    if (planningCase.apn && sitesByApn.has(planningCase.apn)) {
-      for (const siteId of sitesByApn.get(planningCase.apn)) candidates.push({ siteId, method: 'apn', confidence: 1 });
+    for (const apn of caseApns(planningCase)) {
+      if (!sitesByApn.has(apn)) continue;
+      for (const siteId of sitesByApn.get(apn)) candidates.push({ siteId, method: 'apn', confidence: 1 });
     }
     if (!candidates.length) {
       for (const key of addressKeys(planningCase.address)) {
@@ -486,6 +532,12 @@ async function fetchPdisCase(planningCase, options = {}) {
   const related = relatedIndex >= 0 && results[relatedIndex]?.status === 'fulfilled' ? results[relatedIndex].value : [];
   const addressesIndex = addressesUrl ? (initialUrl ? (relatedUrl ? 3 : 2) : (relatedUrl ? 2 : 1)) : -1;
   const addresses = addressesIndex >= 0 && results[addressesIndex]?.status === 'fulfilled' ? array(results[addressesIndex].value) : [];
+  const apns = extractApns(
+    caseApns(planningCase),
+    ...addresses.flatMap(row => row && typeof row === 'object'
+      ? [row.apn, row.APN, row.ain, row.AIN, row.parcelNumber, row.parcel_number]
+      : [row])
+  );
   const zimasPin = clean(addresses.find(row => clean(row.pin))?.pin);
   const documentsByKey = new Map();
   const documentRows = [
@@ -512,6 +564,7 @@ async function fetchPdisCase(planningCase, options = {}) {
   return {
     documents,
     documentParties,
+    apns,
     relatedCaseNumbers: [...new Set(array(related).map(row => clean(row.caseNumber || row.CaseNumber).toUpperCase()).filter(Boolean))],
     addresses,
     zimasPin: zimasPin || null,
@@ -614,9 +667,16 @@ async function main() {
           ...(result.documentParties ? {
             source_record: {
               ...(planningCase.source_record || {}),
-              pdis: { ...existingPdis, documentParties: result.documentParties },
+              apns: extractApns(caseApns(planningCase), result.apns),
+              pdis: { ...existingPdis, apns: result.apns, documentParties: result.documentParties },
             },
-          } : {}),
+          } : {
+            source_record: {
+              ...(planningCase.source_record || {}),
+              apns: extractApns(caseApns(planningCase), result.apns),
+              pdis: { ...existingPdis, apns: result.apns },
+            },
+          }),
         }
       );
       console.log(`[planning] ${planningCase.case_number}: ${result.documents.length} document(s), ${result.relatedCaseNumbers.length} related case(s)`);
@@ -660,7 +720,9 @@ module.exports = {
   array,
   buildMatches,
   classifyDocument,
+  caseApns,
   cleanApn,
+  extractApns,
   filingCase,
   completedCase,
   mergeCases,

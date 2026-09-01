@@ -1785,6 +1785,50 @@ function pencilReadHTML(s, costs, income, valuation) {
   </div>`;
 }
 
+function normalizeApnValues(...values) {
+  const found = [];
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (value === null || value === undefined || typeof value === 'object') return;
+    const matches = String(value).match(/\b(?:\d{8,14}|\d{4}[\s-]\d{3}[\s-]\d{3})\b/g) || [];
+    matches.forEach(match => {
+      const digits = match.replace(/\D/g, '');
+      if (digits.length >= 8 && digits.length <= 14) found.push(digits);
+    });
+  };
+  values.forEach(visit);
+  return [...new Set(found)];
+}
+
+function formatApn(value) {
+  const digits = normalizeApnValues(value)[0] || '';
+  return digits.length === 10 ? `${digits.slice(0, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}` : digits;
+}
+
+function siteParcelApns(s = {}, owner = {}) {
+  const external = s.externalPropertyRecord || {};
+  const cases = Array.isArray(s.planningCases) ? s.planningCases : [];
+  return normalizeApnValues(
+    s.apns,
+    s.apn,
+    s.ownerApn,
+    owner.apns,
+    owner.apn,
+    external.apns,
+    external.apn,
+    external.assessorId,
+    external.assessorID,
+    ...cases.flatMap(planningCase => [planningCase.apns, planningCase.apn])
+  );
+}
+
+function apnDisplay(values) {
+  return normalizeApnValues(values).map(formatApn).join(', ');
+}
+
 function ownerQueryForSite(s = {}) {
   const p = new URLSearchParams();
   const addresses = [
@@ -1798,7 +1842,11 @@ function ownerQueryForSite(s = {}) {
     p.set('lat', s.lat);
     p.set('lng', s.lng);
   }
-  if (s.apn || s.ownerApn) p.set('apn', s.apn || s.ownerApn);
+  const apns = siteParcelApns(s);
+  if (apns.length) {
+    p.set('apn', apns[0]);
+    p.set('apns', apns.join(','));
+  }
   return p.toString();
 }
 
@@ -1845,6 +1893,7 @@ function mergeOwnerInfo(localOwner, providerOwner, s = {}) {
   const sources = [...new Set([localOwner.source, providerOwner.source].filter(Boolean))];
   const planningFallback = localOwner.ownerAuthority === 'planning_document';
   const providerHasOwner = !!providerOwner.ownerName;
+  const apns = normalizeApnValues(localOwner.apns, localOwner.apn, providerOwner.apns, providerOwner.apn, siteParcelApns(s));
   const merged = {
     ...providerOwner,
     ...localOwner,
@@ -1858,7 +1907,8 @@ function mergeOwnerInfo(localOwner, providerOwner, s = {}) {
       ? (providerOwner.ownerAuthority || 'property_record')
       : localOwner.ownerAuthority || providerOwner.ownerAuthority || null,
     situsAddress: localOwner.situsAddress || providerOwner.situsAddress || s.addr || null,
-    apn: localOwner.apn || providerOwner.apn || s.apn || null,
+    apn: apns[0] || null,
+    apns,
     originalMortgage: localOwner.originalMortgage || providerOwner.originalMortgage || null,
     historyRefreshedAt: localOwner.historyRefreshedAt || providerOwner.historyRefreshedAt || null,
     source: sources.join(' + '),
@@ -1880,13 +1930,15 @@ function planningDocumentOwnerInfo(s = {}) {
   ).map(value => String(value || '').trim()).filter(Boolean))];
   if (!owners.length) return null;
   const checkedAt = cases.find(planningCase => planningCase.documentPartiesCheckedAt)?.documentPartiesCheckedAt || '';
+  const apns = siteParcelApns(s);
   return {
     found: true,
     ownerName: owners.join(' / '),
     ownerType: 'Named owner in planning filing',
     ownerAuthority: 'planning_document',
     situsAddress: s.addr || null,
-    apn: s.ownerApn || s.apn || null,
+    apn: apns[0] || null,
+    apns,
     source: 'Los Angeles City Planning document (not recorder-verified)',
     historyRefreshedAt: checkedAt,
     saleHistory: [],
@@ -1905,13 +1957,15 @@ function siteOwnerInfo(s = {}) {
   const originalMortgage = ownerMortgageInfo({ originalMortgage: external.originalMortgage }, s);
   if (!s.ownerName && !external.ownerName && !saleHistory.length && !originalMortgage && !planningOwner) return null;
   const recordedOwnerName = s.ownerName || external.ownerName || null;
+  const apns = siteParcelApns(s);
   return {
     found: true,
     ownerName: recordedOwnerName || planningOwner?.ownerName || null,
     ownerType: recordedOwnerName ? (external.ownerType || null) : planningOwner?.ownerType || null,
     ownerAuthority: recordedOwnerName ? 'property_record' : planningOwner?.ownerAuthority || null,
     situsAddress: s.ownerSitusAddress || s.addr || null,
-    apn: s.ownerApn || s.apn || null,
+    apn: apns[0] || null,
+    apns,
     source: s.ownerSource || (recordedOwnerName || saleHistory.length
       ? 'Monthly property records cache'
       : (originalMortgage?.source || planningOwner?.source || 'Permit/source record')),
@@ -1950,13 +2004,16 @@ function ownerInfoHTML(owner, s = {}) {
   if (!owner) return '<div class="ownerbox"><b>Owner lookup unavailable</b><span>Owner data could not be loaded for this address.</span></div>';
   const sales = ownerSaleHistory(owner, s).slice(0, 2);
   const mortgage = ownerMortgageInfo(owner, s);
+  const apns = siteParcelApns(s, owner);
   if (!owner.ownerName && !sales.length && !mortgage) {
     return `<div class="ownerbox">
       <b>Ownership unavailable</b>
       <span>No verified ownership record is available for this property.</span>
+      ${apns.length ? `<span><b>${apns.length === 1 ? 'APN' : 'APNs'}:</b> ${escapeText(apnDisplay(apns))}</span>` : ''}
     </div>`;
   }
   return `<table class="ct ownerct">
+    ${ownerLine(apns.length === 1 ? 'APN' : 'APNs', apnDisplay(apns))}
     ${ownerLine(owner.ownerAuthority === 'planning_document' ? 'Planning document owner' : 'Owner', owner.ownerName || 'Not returned')}
     ${ownerLine('Owner type', owner.ownerType)}
     ${owner.ownerAuthority === 'planning_document' ? ownerLine('Ownership status', 'Named in a City Planning filing; not recorder-verified') : ''}
@@ -1979,7 +2036,9 @@ function ownerInfoHTML(owner, s = {}) {
 function ownerPDFRows(owner, s = {}) {
   const sales = ownerSaleHistory(owner || {}, s).slice(0, 2);
   const mortgage = ownerMortgageInfo(owner || {}, s);
+  const apns = siteParcelApns(s, owner || {});
   const rows = [
+    [apns.length === 1 ? 'APN' : 'APNs', apnDisplay(apns)],
     [owner?.ownerAuthority === 'planning_document' ? 'Planning Document Owner' : 'Owner', owner?.ownerName || 'Not returned'],
     ['Owner Type', owner?.ownerType || ''],
     ['Ownership Status', owner?.ownerAuthority === 'planning_document' ? 'Named in a City Planning filing; not recorder-verified' : ''],
@@ -2601,6 +2660,7 @@ function planningDocumentsHTML(site) {
       const applicationDate = dateText(planningCase.applicationDate);
       const completionDate = dateText(planningCase.completionDate);
       const status = planningCase.status === 'completed' ? 'Completed case' : 'Filed case';
+      const caseApns = normalizeApnValues(planningCase.apns, planningCase.apn);
       return `<div class="ownerbox" style="gap:7px;margin-bottom:7px">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
           <div><b>${caseNumber}</b><span style="display:block">${escapeText(status)}${planningCase.requestType ? ` | ${escapeText(planningCase.requestType)}` : ''}</span></div>
@@ -2612,7 +2672,7 @@ function planningDocumentsHTML(site) {
         ${Array.isArray(planningCase.documentApplicants) && planningCase.documentApplicants.length ? `<span><b>Applicant named in filing:</b> ${planningCase.documentApplicants.map(escapeText).join(' / ')}</span>` : ''}
         ${planningCase.representative ? `<span><b>Representative:</b> ${escapeText(planningCase.representative)}</span>` : ''}
         ${(applicationDate || completionDate) ? `<span>${applicationDate ? `Filed ${escapeText(applicationDate)}` : ''}${applicationDate && completionDate ? ' | ' : ''}${completionDate ? `Completed ${escapeText(completionDate)}` : ''}</span>` : ''}
-        ${planningCase.apn ? `<span>APN ${escapeText(planningCase.apn)}${planningCase.matchMethod ? ` | Matched by ${escapeText(String(planningCase.matchMethod).replace('_', ' '))}` : ''}</span>` : ''}
+        ${caseApns.length ? `<span><b>${caseApns.length === 1 ? 'APN' : 'APNs'}:</b> ${escapeText(apnDisplay(caseApns))}${planningCase.matchMethod ? ` | Matched by ${escapeText(String(planningCase.matchMethod).replace('_', ' '))}` : ''}</span>` : ''}
         ${directDocuments.length ? `<div style="display:grid;gap:5px">${directDocuments.join('')}</div>` : '<span><b>No verified planning PDF is available for this case yet.</b></span>'}
         ${related.length ? `<span><b>Related cases:</b> ${related.map(escapeText).join(', ')}</span>` : ''}
       </div>`;
@@ -2676,6 +2736,7 @@ function planningExportData(site) {
     status: planningCase.status || '',
     requestType: planningCase.requestType || '',
     apn: planningCase.apn || '',
+    apns: normalizeApnValues(planningCase.apns, planningCase.apn),
     address: planningCase.address || '',
     projectDescription: planningCase.projectDescription || '',
     applicant: planningCase.applicant || '',
@@ -2721,7 +2782,7 @@ function planningPDFHTML(site) {
     <table>
       <tr><th colspan="2">${escapeText(planningCase.caseNumber)}</th></tr>
       <tr><td>Status / request</td><td>${escapeText([planningCase.status, planningCase.requestType].filter(Boolean).join(' | '))}</td></tr>
-      ${planningCase.apn ? `<tr><td>APN</td><td>${escapeText(planningCase.apn)}</td></tr>` : ''}
+      ${planningCase.apns.length ? `<tr><td>${planningCase.apns.length === 1 ? 'APN' : 'APNs'}</td><td>${escapeText(apnDisplay(planningCase.apns))}</td></tr>` : ''}
       ${planningCase.projectDescription ? `<tr><td>Project description</td><td>${escapeText(planningCase.projectDescription)}</td></tr>` : ''}
       ${planningCase.documentOwners.length ? `<tr><td>Owner named in filing</td><td>${planningCase.documentOwners.map(escapeText).join(' / ')}</td></tr>` : ''}
       ${planningCase.applicant ? `<tr><td>Applicant</td><td>${escapeText(planningCase.applicant)}</td></tr>` : ''}
@@ -3105,6 +3166,7 @@ function renderDetail(s) {
   const contractorLine = [s.contractorName, [s.contractorAddress, s.contractorCity, s.contractorState].filter(Boolean).join(', ')].filter(Boolean).join(' - ');
   const applicantLine = [s.applicantName, s.applicantBusinessName].filter(Boolean).join(' - ');
   const planningDocuments = planningDocumentsHTML(s);
+  const parcelApns = siteParcelApns(s);
   const projectDetailRows = [
     s.workDescription ? `<tr><td>Work description</td><td>${escapeText(s.workDescription)}</td></tr>` : '',
     s.stories ? `<tr><td>Stories</td><td>${escapeText(String(s.stories))}</td></tr>` : '',
@@ -3177,6 +3239,11 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
     </div>
     <button class="ab as" onclick="toggleWatch(${s.id}, event)">${isWatched(s.id)?'Remove from watchlist':'Save to watchlist'}</button>
+    <div class="sh">Parcels</div>
+    <div class="ownerbox">
+      <b>${parcelApns.length ? `${parcelApns.length} ${parcelApns.length === 1 ? 'parcel' : 'parcels'} identified` : 'Parcel identifiers unavailable'}</b>
+      <span>${parcelApns.length ? escapeText(apnDisplay(parcelApns)) : 'No APN was returned by the permit, planning, or property records.'}</span>
+    </div>
     <div class="sh">Owner information</div>
     <div id="owner-${s.id}">${ownerInfoHTML(siteOwnerInfo(s), s)}</div>
     <div class="sh">Planning cases & documents</div>
@@ -4620,6 +4687,8 @@ async function exportExcel(id) {
       stories: s.stories || '',
       buildingSf: siteBuildingSf(s),
       buildingSfSource: s.buildingSfSource || '',
+      apn: siteParcelApns(s)[0] || '',
+      apns: siteParcelApns(s),
       contractorName: s.contractorName || '',
       contractorAddress: [s.contractorAddress, s.contractorCity, s.contractorState].filter(Boolean).join(', '),
       applicantName: s.applicantName || '',
@@ -4634,6 +4703,8 @@ async function exportExcel(id) {
       ownerName: ownerInfo?.ownerName || '',
       ownerType: ownerInfo?.ownerType || '',
       ownerAuthority: ownerInfo?.ownerAuthority || '',
+      apn: siteParcelApns(s, ownerInfo || {})[0] || '',
+      apns: siteParcelApns(s, ownerInfo || {}),
       lastSaleDate: ownerInfo?.lastSaleDate || ownerInfo?.recordingDate || ownerInfo?.saleDate || '',
       lastSaleAmount: ownerInfo?.lastSaleAmount || ownerInfo?.salePrice || 0,
       saleHistory: ownerSaleHistory(ownerInfo || {}, s),

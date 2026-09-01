@@ -1170,12 +1170,20 @@ async function refreshPlanningCaseFromPdis(planningCase, options = {}) {
   const relatedCaseNumbers = [...new Set(related
     .map(row => String(row?.caseNumber || row?.CaseNumber || '').trim().toUpperCase())
     .filter(Boolean))];
+  const apns = planningApns(
+    planningCaseApns(planningCase),
+    ...addresses.flatMap(row => row && typeof row === 'object'
+      ? [row.apn, row.APN, row.ain, row.AIN, row.parcelNumber, row.parcel_number]
+      : [row])
+  );
   const zimasPin = String(addresses.find(row => row?.pin)?.pin || planningCase.zimas_pin || '').trim() || null;
   const checkedAt = new Date().toISOString();
   const sourceRecord = {
     ...(planningCase.source_record || {}),
+    apns,
     pdis: {
       ...existingPdis,
+      apns,
       applicant: profile.applicant || null,
       representative: profile.representative || null,
       projectDescription: profile.projectDescription || null,
@@ -1210,10 +1218,12 @@ async function refreshPlanningCaseFromPdis(planningCase, options = {}) {
 function planningCaseFromRow(planningCase, match, documents) {
   const caseDocuments = documents.filter(document => document.case_number === planningCase.case_number);
   const pdisProfile = planningCase.source_record?.pdis || {};
+  const apns = planningCaseApns(planningCase);
   return {
     caseNumber: planningCase.case_number,
     caseId: planningCase.case_id,
-    apn: planningCase.apn,
+    apn: apns[0] || planningCase.apn,
+    apns,
     address: planningCase.address,
     neighborhoodCouncil: planningCase.neighborhood_council,
     communityPlanArea: planningCase.community_plan_area,
@@ -1296,13 +1306,91 @@ function planningAddressSpansOverlap(left, right) {
   return !!left && !!right && left.street === right.street && left.start <= right.end && right.start <= left.end;
 }
 
+function planningApns(...values) {
+  const found = [];
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (value === null || value === undefined || typeof value === 'object') return;
+    const matches = String(value).match(/\b(?:\d{8,14}|\d{4}[\s-]\d{3}[\s-]\d{3})\b/g) || [];
+    for (const match of matches) {
+      const digits = match.replace(/\D/g, '');
+      if (digits.length >= 8 && digits.length <= 14) found.push(digits);
+    }
+  };
+  values.forEach(visit);
+  return [...new Set(found)];
+}
+
 function planningApn(value) {
-  const digits = String(value || '').replace(/\D/g, '');
-  return digits.length >= 8 && digits.length <= 14 ? digits : '';
+  return planningApns(value)[0] || '';
+}
+
+function planningCaseApns(planningCase = {}) {
+  const source = planningCase.source_record || planningCase.sourceRecord || {};
+  const pdis = source.pdis || {};
+  return planningApns(
+    planningCase.apns,
+    planningCase.apn,
+    source.apns,
+    pdis.apns,
+    source.filing?.User_fld,
+    source.filing?.USER_APN,
+    source.completed?.APN,
+    source.completed?.Field,
+    ...(Array.isArray(planningCase.case_addresses)
+      ? planningCase.case_addresses
+      : Array.isArray(planningCase.caseAddresses)
+        ? planningCase.caseAddresses
+        : []).flatMap(row =>
+      row && typeof row === 'object'
+        ? [row.apn, row.APN, row.ain, row.AIN, row.parcelNumber, row.parcel_number]
+        : [row]
+    )
+  );
+}
+
+function siteParcelApns(site = {}) {
+  const raw = site.raw_permit_data || site.rawPermit || {};
+  const external = site.external_property_record || site.externalPropertyRecord || {};
+  const cases = Array.isArray(site.planningCases)
+    ? site.planningCases
+    : Array.isArray(raw.planning_cases)
+      ? raw.planning_cases
+      : [];
+  const book = raw.assessor_book || raw.book;
+  const page = raw.assessor_page || raw.page;
+  const parcel = raw.assessor_parcel || raw.parcel;
+  return planningApns(
+    site.apns,
+    site.apn,
+    site.ownerApn,
+    raw.apns,
+    raw.ains,
+    raw.parcel_numbers,
+    raw.apn,
+    raw.ain,
+    raw.parcel_number,
+    raw.parcelNumber,
+    raw.assessor_parcel_number,
+    raw.raw_data?.apns,
+    raw.raw_data?.apn,
+    raw.raw_data?.ain,
+    raw.raw_data?.parcel_number,
+    external.apns,
+    external.apn,
+    external.assessorId,
+    external.assessorID,
+    external.parcelNumber,
+    book && page && parcel ? `${book}${page}${parcel}` : null,
+    ...cases.flatMap(planningCase => planningCaseApns(planningCase))
+  );
 }
 
 async function recoverPlanningMatches(site, siteId) {
-  const apn = planningApn(site?.ownerApn || site?.apn || site?.externalPropertyRecord?.apn);
+  const apns = siteParcelApns(site);
   const addressKeys = [...new Set([
     site?.addr,
     site?.address,
@@ -1314,8 +1402,8 @@ async function recoverPlanningMatches(site, siteId) {
     ...(Array.isArray(site?.addressAliases) ? site.addressAliases : []),
   ].map(planningAddressSpan).filter(Boolean).map(span => [`${span.start}|${span.end}|${span.street}`, span])).values()];
   const queries = [];
-  if (apn) {
-    queries.push(planningDb.from('planning_cases').select('*').eq('apn', apn).then(result => ({ ...result, method: 'apn', confidence: 1 })));
+  if (apns.length) {
+    queries.push(planningDb.from('planning_cases').select('*').in('apn', apns).then(result => ({ ...result, method: 'apn', confidence: 1 })));
   }
   if (addressKeys.length) {
     queries.push(planningDb.from('planning_cases').select('*').in('address_normalized', addressKeys).then(result => ({ ...result, method: 'address_alias', confidence: 0.98 })));
@@ -1459,12 +1547,15 @@ async function attachPlanningDiscovery(site, siteId) {
 
     const discoveredDocuments = cases.flatMap(planningCase => planningCase.documents || []);
     const planningDocuments = uniquePlanningDocuments([...discoveredDocuments, ...manualDocuments]);
+    const apns = planningApns(siteParcelApns(site), ...cases.flatMap(planningCase => planningCase.apns || planningCase.apn));
     const syncComplete = syncState?.status === 'complete' || (indexProbe || []).length > 0;
     const status = cases.length
       ? 'cases_found'
       : (syncComplete ? 'no_discretionary_case_found' : 'index_pending');
     return {
       ...site,
+      apn: site.apn || apns[0] || null,
+      apns,
       hasPlanningDocuments: planningDocuments.length > 0,
       planningCases: cases,
       planningDocuments,
@@ -1528,6 +1619,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const externalSources = Array.isArray(s.external_data_sources) ? s.external_data_sources : [];
   const planningDocuments = planningDocumentsForSite(s);
   const planningCases = Array.isArray(rawPermit.planning_cases) ? rawPermit.planning_cases : [];
+  const apns = siteParcelApns({ ...s, planningCases });
   return {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
@@ -1562,6 +1654,8 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     demo:         s.has_demo ?? false,
     lat:          s.lat,
     lng:          s.lng,
+    apn:          s.apn || apns[0] || null,
+    apns,
     permitSourceId: s.permit_source_id,
     permitNumber: rawPermit.permit_number || null,
     permitStatus: rawPermit.permit_status || rawPermit.status || null,
@@ -1910,6 +2004,7 @@ function siteSearchDbClauses(value) {
 
 function siteSearchHaystack(s) {
   const aliases = Array.isArray(s.addressAliases) ? s.addressAliases : [];
+  const apns = siteParcelApns(s);
   const knownAliases = String(s.addr || '').toUpperCase() === '6091 W PICO BLVD' && Number(s.units || 0) === 138
     ? PICO_6075_6099_ALIASES
     : [];
@@ -1925,6 +2020,7 @@ function siteSearchHaystack(s) {
     s.buildingSf,
     s.totalBuildingSf,
     s._m?.buildingSf,
+    ...apns,
     ...aliases,
     ...knownAliases,
   ].map(v => String(v || '').toUpperCase()).join(' ');

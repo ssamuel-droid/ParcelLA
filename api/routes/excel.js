@@ -15,6 +15,33 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
+function normalizeApns(...values) {
+  const found = [];
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (value === null || value === undefined || typeof value === 'object') return;
+    const matches = String(value).match(/\b(?:\d{8,14}|\d{4}[\s-]\d{3}[\s-]\d{3})\b/g) || [];
+    matches.forEach(match => {
+      const digits = match.replace(/\D/g, '');
+      if (digits.length >= 8 && digits.length <= 14) found.push(digits);
+    });
+  };
+  values.forEach(visit);
+  return [...new Set(found)];
+}
+
+function formatApn(value) {
+  const digits = normalizeApns(value)[0] || '';
+  return digits.length === 10 ? `${digits.slice(0, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}` : digits;
+}
+
+function apnText(...values) {
+  return normalizeApns(values).map(formatApn).join(', ');
+}
+
 function num(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -186,6 +213,8 @@ function compactOwner(owner = {}) {
   return {
     ownerName: text(owner.ownerName) || 'Not returned',
     ownerType: text(owner.ownerType),
+    apn: normalizeApns(owner.apns, owner.apn)[0] || '',
+    apns: normalizeApns(owner.apns, owner.apn),
     lastSaleDate: saleHistory[0]?.date || fallbackDate,
     lastSaleAmount: saleHistory[0]?.price || fallbackPrice,
     saleHistory,
@@ -268,6 +297,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     const salesComps = tableRows(p.salesComps || [], 50);
     const rentComps = tableRows(p.rentComps || [], 50);
     const isHouse = text(site.type).toLowerCase() === 'new house' || appraisal.isHouse === true;
+    const siteApns = normalizeApns(site.apns, site.apn, owner.apns, owner.apn, planningCases.flatMap(planningCase => [planningCase.apns, planningCase.apn]));
     const ed1Profile = assumptions.ed1Affordability || site.ed1Affordability || null;
     const isEd1 = !isHouse && (site.isEd1 === true || !!ed1Profile);
 
@@ -342,6 +372,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     setupSheet(ownerWs, [28, 20, 20, 42]);
     writeRow(ownerWs, ['Owner & Sale', siteName], 'title');
     writeRow(ownerWs, ['Field', 'Value'], 'header');
+    writeRow(ownerWs, [siteApns.length === 1 ? 'APN' : 'APNs', apnText(siteApns)]);
     writeRow(ownerWs, [owner.ownerAuthority === 'planning_document' ? 'Planning document owner' : 'Owner', owner.ownerName]);
     writeRow(ownerWs, ['Owner type', owner.ownerType]);
     if (owner.ownerAuthority === 'planning_document') {
@@ -379,6 +410,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     writeRow(permitWs, ['Development status', text(site.developmentStatus)]);
     writeRow(permitWs, ['Permit status', text(site.permitStatus)]);
     writeRow(permitWs, ['Project type', text(site.type)]);
+    writeRow(permitWs, [siteApns.length === 1 ? 'APN' : 'APNs', apnText(siteApns)]);
     writeRow(permitWs, ['Units / houses', cell(unitsValue, FMT.whole)]);
     writeRow(permitWs, ['Stories', text(site.stories)]);
     writeRow(permitWs, ['Total building SF', cell(totalSfValue, FMT.whole)]);
@@ -400,7 +432,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
         text(planningCase.status),
         text(planningCase.applicationDate),
         text(planningCase.completionDate),
-        text(planningCase.apn),
+        apnText(planningCase.apns, planningCase.apn),
         text(planningCase.requestType),
         text(planningCase.applicant),
         text(planningCase.representative),
@@ -786,6 +818,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     writeRow(summaryWs, ['ParceLLA Underwriting Summary', siteName, generated], 'title');
     writeRow(summaryWs, ['Metric', 'Value', 'Source / formula'], 'header');
     writeRow(summaryWs, ['Address', siteName, text(site.addressNote || '')]);
+    writeRow(summaryWs, [siteApns.length === 1 ? 'APN' : 'APNs', apnText(siteApns), 'Permit, planning, and property records']);
     writeRow(summaryWs, ['Neighborhood', text(site.hood || site.neighborhood), '']);
     writeRow(summaryWs, ['Project type', text(site.type), '']);
     if (isEd1) writeRow(summaryWs, ['Program', `ED1 - ${num(ed1Profile?.amiPct, 80)}% AMI gross-rent limits`, text(assumptions.rentRestrictionNote || ed1Profile?.caveat)]);

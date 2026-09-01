@@ -81,6 +81,24 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))];
 }
 
+function normalizeApns(...values) {
+  const found = [];
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (value === null || value === undefined || typeof value === 'object') return;
+    const matches = String(value).match(/\b(?:\d{8,14}|\d{4}[\s-]\d{3}[\s-]\d{3})\b/g) || [];
+    for (const match of matches) {
+      const digits = match.replace(/\D/g, '');
+      if (digits.length >= 8 && digits.length <= 14) found.push(digits);
+    }
+  };
+  values.forEach(visit);
+  return unique(found).slice(0, 50);
+}
+
 function ownerNameParts(value) {
   if (Array.isArray(value)) return value.flatMap(ownerNameParts);
   if (value === null || value === undefined) return [];
@@ -149,13 +167,15 @@ function normalizeOwnerFeature(feature) {
   ], a.City_State, a.Zip);
   const lastSaleDate = cleanDate(a.Last_Sale_Date);
   const lastSaleAmount = cleanMoney(a.Last_Sale_Amount);
+  const apns = normalizeApns(a.AIN, a.AIN_1);
 
   return {
     found: !!ownerName,
     ownerName: ownerName || null,
     mailingAddress: mailingAddress || null,
     situsAddress: situsAddress || null,
-    apn: clean(a.AIN) || clean(a.AIN_1) || null,
+    apn: apns[0] || null,
+    apns,
     specialNameLegend: clean(a.Special_Name_Legend) || null,
     recordingDate: cleanDate(a.Recording_Date),
     lastSaleDate,
@@ -344,6 +364,7 @@ function normalizeRentCastRecord(record) {
   const mailing = record?.owner?.mailingAddress || {};
   const saleHistory = saleHistoryFromRecord(record);
   const latestSale = saleHistory[0] || null;
+  const apns = normalizeApns(record?.assessorID, record?.assessorId, record?.apn);
   return {
     found: !!ownerName,
     ownerName: ownerName || null,
@@ -355,7 +376,8 @@ function normalizeRentCastRecord(record) {
       mailing.zipCode
     ) || null,
     situsAddress: clean(record?.formattedAddress || record?.situsAddress) || null,
-    apn: clean(record?.assessorID || record?.assessorId || record?.apn) || null,
+    apn: apns[0] || null,
+    apns,
     lastSaleDate: cleanDate(record?.lastSaleDate) || latestSale?.date || null,
     recordingDate: cleanDate(record?.lastSaleDate) || latestSale?.date || null,
     lastSaleAmount: cleanMoney(record?.lastSalePrice) || latestSale?.price || null,
@@ -384,6 +406,7 @@ function normalizeAttomRecord(payload) {
   const mortgage = normalizeMortgageRecord(property.mortgage, ATTOM_SOURCE);
   const ownerName = names.join(' / ');
   if (!ownerName && !mortgage) return null;
+  const apns = normalizeApns(property.identifier?.apn, property.identifier?.apnOrig);
   return {
     found: !!ownerName,
     ownerName: ownerName || null,
@@ -395,7 +418,8 @@ function normalizeAttomRecord(payload) {
         : null,
     mailingAddress: first(owner.mailingaddressoneline, owner.mailingAddressOneLine),
     situsAddress: first(property.address?.oneLine, property.address?.oneline),
-    apn: first(property.identifier?.apn, property.identifier?.apnOrig),
+    apn: apns[0] || null,
+    apns,
     originalMortgage: mortgage,
     source: ATTOM_SOURCE,
   };
@@ -422,37 +446,49 @@ function addressLine(value) {
 async function queryMonthlyPropertyCache(params) {
   const db = monthlyDatabase();
   const line = addressLine(params.address);
-  if (!db || !line) return null;
+  const apns = normalizeApns(params.apns, params.apn);
+  if (!db || (!line && !apns.length)) return null;
   const safePrefix = line.replace(/[%_]/g, '');
-  let [compResult, cacheResult] = await Promise.all([
-    db
+  const emptyResult = Promise.resolve({ data: [], error: null });
+  const soldCompQuery = (mode, includeRawRecord = true) => {
+    let query = db
       .from('sold_comps')
-      .select('address,sale_date,sale_price,source,raw_record')
-      .ilike('address', `${safePrefix}%`)
+      .select(`address,apn,sale_date,sale_price,source${includeRawRecord ? ',raw_record' : ''}`)
       .order('sale_date', { ascending: false })
-      .limit(12),
-    db
-      .from('property_enrichment_cache')
-      .select('address,provider,purpose,status,fetched_at,expires_at,normalized')
-      .in('purpose', ['property_record', 'mortgage_record'])
-      .ilike('address', `${safePrefix}%`)
-      .order('fetched_at', { ascending: false })
-      .limit(12),
+      .limit(50);
+    query = mode === 'apn' ? query.in('apn', apns) : query.ilike('address', `${safePrefix}%`);
+    return query;
+  };
+  let [addressCompResult, apnCompResult, cacheResult] = await Promise.all([
+    line ? soldCompQuery('address') : emptyResult,
+    apns.length ? soldCompQuery('apn') : emptyResult,
+    line
+      ? db
+        .from('property_enrichment_cache')
+        .select('address,provider,purpose,status,fetched_at,expires_at,normalized')
+        .in('purpose', ['property_record', 'mortgage_record'])
+        .ilike('address', `${safePrefix}%`)
+        .order('fetched_at', { ascending: false })
+        .limit(50)
+      : emptyResult,
   ]);
-  if (compResult.error && /raw_record/i.test(clean(compResult.error.message))) {
-    compResult = await db
-      .from('sold_comps')
-      .select('address,sale_date,sale_price,source')
-      .ilike('address', `${safePrefix}%`)
-      .order('sale_date', { ascending: false })
-      .limit(12);
+  if (addressCompResult.error && /raw_record/i.test(clean(addressCompResult.error.message))) {
+    addressCompResult = await soldCompQuery('address', false);
   }
-  if (compResult.error && cacheResult.error) throw compResult.error;
+  if (apnCompResult.error && /raw_record/i.test(clean(apnCompResult.error.message))) {
+    apnCompResult = await soldCompQuery('apn', false);
+  }
+  const successfulCompResults = [addressCompResult, apnCompResult].filter(result => !result.error);
+  if (!successfulCompResults.length && cacheResult.error) throw addressCompResult.error || apnCompResult.error || cacheResult.error;
   const matchesAddress = row => {
+    if (!line) return false;
     const candidate = addressLine(row.address);
     return candidate === line || candidate.startsWith(`${line} `) || line.startsWith(`${candidate} `);
   };
-  const compRows = (compResult.data || []).filter(matchesAddress);
+  const compRows = [...new Map([
+    ...(addressCompResult.data || []).filter(matchesAddress),
+    ...(apnCompResult.data || []).filter(row => apns.includes(normalizeApns(row.apn)[0])),
+  ].map(row => [`${row.apn || ''}|${row.address || ''}|${row.sale_date || ''}|${row.sale_price || ''}`, row])).values()];
   const cacheRows = (cacheResult.data || []).filter(row => row.status === 'ok' && matchesAddress(row));
   if (!compRows.length && !cacheRows.length) return null;
 
@@ -487,6 +523,8 @@ async function queryMonthlyPropertyCache(params) {
   ].filter(Boolean)).join(' + ') || MONTHLY_CACHE_SOURCE;
   return {
     ...primary,
+    apn: primary.apn || apns[0] || normalizeApns(compRows.map(row => row.apn))[0] || null,
+    apns: normalizeApns(apns, primary.apns, primary.apn, compRows.map(row => row.apn)),
     found: !!primary.ownerName,
     situsAddress: primary.situsAddress || cacheRows[0]?.address || compRows[0]?.address || clean(params.address) || null,
     lastSaleDate: latestSale?.date || primary.lastSaleDate || null,
@@ -502,7 +540,7 @@ async function queryMonthlyPropertyCache(params) {
 }
 
 function lookupCacheKey(params) {
-  return addressLine(params.address) || clean(params.apn).replace(/\D/g, '') || compact([params.lat, params.lng]).join(',');
+  return addressLine(params.address) || normalizeApns(params.apns, params.apn).join('-') || compact([params.lat, params.lng]).join(',');
 }
 
 function cacheExpiresAt() {
@@ -622,16 +660,28 @@ function mergeOwnerResults(current, candidate) {
   if (!current) return candidate;
   if (!candidate) return current;
   const sources = unique([current.source, candidate.source].map(clean).filter(Boolean));
+  const ownerNames = unique([
+    ...(Array.isArray(current.ownerNames) ? current.ownerNames : clean(current.ownerName).split(/\s+\/\s+/)),
+    ...(Array.isArray(candidate.ownerNames) ? candidate.ownerNames : clean(candidate.ownerName).split(/\s+\/\s+/)),
+  ].map(clean).filter(Boolean));
+  const apns = normalizeApns(current.apns, current.apn, candidate.apns, candidate.apn);
+  const parcelRecords = [...new Map([
+    ...(Array.isArray(current.parcelRecords) ? current.parcelRecords : []),
+    ...(Array.isArray(candidate.parcelRecords) ? candidate.parcelRecords : []),
+  ].map(record => [`${record.apn || ''}|${record.situsAddress || ''}|${record.ownerName || ''}`, record])).values()];
   return {
     ...candidate,
     ...current,
-    found: !!(current.ownerName || candidate.ownerName),
-    ownerName: current.ownerName || candidate.ownerName || null,
+    found: ownerNames.length > 0,
+    ownerName: ownerNames.join(' / ') || null,
+    ownerNames,
     ownerType: current.ownerType || candidate.ownerType || null,
     ownerOccupied: current.ownerOccupied ?? candidate.ownerOccupied ?? null,
     mailingAddress: current.mailingAddress || candidate.mailingAddress || null,
     situsAddress: current.situsAddress || candidate.situsAddress || null,
-    apn: current.apn || candidate.apn || null,
+    apn: apns[0] || null,
+    apns,
+    parcelRecords,
     lastSaleDate: current.lastSaleDate || candidate.lastSaleDate || null,
     recordingDate: current.recordingDate || candidate.recordingDate || null,
     lastSaleAmount: current.lastSaleAmount || candidate.lastSaleAmount || null,
@@ -651,7 +701,7 @@ async function queryLayer(params) {
   url.searchParams.set('f', 'json');
   url.searchParams.set('outFields', OWNER_FIELDS);
   url.searchParams.set('returnGeometry', 'false');
-  url.searchParams.set('resultRecordCount', '5');
+  url.searchParams.set('resultRecordCount', '50');
   url.searchParams.set('where', '1=1');
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
@@ -659,8 +709,12 @@ async function queryLayer(params) {
 
   const data = await fetchJson(url.toString());
   if (data?.error) throw new Error(data.error.message || 'Assessor owner lookup failed');
-  const feature = Array.isArray(data?.features) ? data.features[0] : null;
-  return feature ? normalizeOwnerFeature(feature) : null;
+  const records = (Array.isArray(data?.features) ? data.features : [])
+    .map(normalizeOwnerFeature)
+    .filter(Boolean);
+  if (!records.length) return null;
+  const merged = records.reduce(mergeOwnerResults, null);
+  return { ...merged, parcelRecords: records };
 }
 
 function regridToken() {
@@ -769,6 +823,15 @@ function normalizeRegridFeature(feature) {
     loanType: first(fields.loan_type, fields.mortgage_type),
     documentNumber: first(fields.mortgage_document_number, fields.loan_document_number),
   }, REGRID_SOURCE);
+  const apns = normalizeApns(
+    fields.parcelnumb,
+    fields.parcel_number,
+    fields.apn,
+    fields.ain,
+    fields.alt_parcelnumb1,
+    fields.alt_parcelnumb2,
+    fields.alt_parcelnumb3
+  );
 
   return {
     found: !!ownerName,
@@ -776,7 +839,8 @@ function normalizeRegridFeature(feature) {
     ownerType: first(fields.owntype, fields.owner_type, fields.ownership_type, enhanced.eo_ownertype) || null,
     mailingAddress: mailingAddress || null,
     situsAddress: situsAddress || null,
-    apn: first(fields.parcelnumb, fields.parcel_number, fields.apn, fields.ain, fields.alt_parcelnumb1) || null,
+    apn: apns[0] || null,
+    apns,
     lastSaleDate: saleDate,
     recordingDate: saleDate,
     lastSaleAmount: saleAmount,
@@ -802,9 +866,10 @@ async function queryRegrid(params) {
   if (!token) return null;
 
   const attempts = [];
+  const apns = normalizeApns(params.apns, params.apn);
   const lat = Number(params.lat);
   const lng = Number(params.lng);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+  if (!apns.length && Number.isFinite(lat) && Number.isFinite(lng)) {
     const u = new URL(`${REGRID_BASE}/point`);
     u.searchParams.set('lat', String(lat));
     u.searchParams.set('lon', String(lng));
@@ -817,7 +882,7 @@ async function queryRegrid(params) {
     attempts.push(u);
   }
 
-  if (clean(params.address)) {
+  if (!apns.length && clean(params.address)) {
     const u = new URL(`${REGRID_BASE}/address`);
     u.searchParams.set('query', clean(params.address));
     u.searchParams.set('path', REGRID_LA_PATH);
@@ -829,9 +894,9 @@ async function queryRegrid(params) {
     attempts.push(u);
   }
 
-  if (clean(params.apn)) {
+  for (const apn of apns) {
     const u = new URL(`${REGRID_BASE}/apn`);
-    u.searchParams.set('parcelnumb', clean(params.apn));
+    u.searchParams.set('parcelnumb', apn);
     u.searchParams.set('path', REGRID_LA_PATH);
     u.searchParams.set('limit', '1');
     u.searchParams.set('return_geometry', 'false');
@@ -843,18 +908,25 @@ async function queryRegrid(params) {
 
   let lastError = null;
   let requestCompleted = false;
+  let merged = null;
+  const parcelRecords = [];
   for (const url of attempts) {
     try {
       const data = await fetchJson(url.toString(), 9000);
       requestCompleted = true;
       const feature = regridFeature(data);
       const normalized = normalizeRegridFeature(feature);
-      if (normalized?.ownerName || normalized?.lastSaleDate || normalized?.lastSaleAmount || normalized?.originalMortgage) return normalized;
+      if (normalized?.ownerName || normalized?.lastSaleDate || normalized?.lastSaleAmount || normalized?.originalMortgage) {
+        parcelRecords.push(normalized);
+        merged = mergeOwnerResults(merged, normalized);
+        if (apns.length <= 1) break;
+      }
     } catch (error) {
       lastError = error;
       if (error.status === 401 || error.status === 403) throw error;
     }
   }
+  if (merged) return { ...merged, parcelRecords };
   if (lastError && !requestCompleted) throw lastError;
   return null;
 }
@@ -880,8 +952,10 @@ function sqlText(value) {
   return String(value || '').replace(/'/g, "''").replace(/[^A-Z0-9 ]/gi, ' ').replace(/\s+/g, ' ').trim();
 }
 
-async function lookupOwner({ address, lat, lng, apn }) {
-  const cacheKey = JSON.stringify({ address: clean(address).toUpperCase(), lat: clean(lat), lng: clean(lng), apn: clean(apn) });
+async function lookupOwner({ address, lat, lng, apn, apns }) {
+  const parcelApns = normalizeApns(apns, apn);
+  const primaryApn = parcelApns[0] || null;
+  const cacheKey = JSON.stringify({ address: clean(address).toUpperCase(), lat: clean(lat), lng: clean(lng), apns: parcelApns });
   const cached = ownerCache.get(cacheKey);
   if (cached && Date.now() - cached.time < CACHE_TTL) return cached.value;
 
@@ -903,7 +977,7 @@ async function lookupOwner({ address, lat, lng, apn }) {
         ? `Credential rejected (HTTP ${status})`
         : clean(error.message).slice(0, 180) || 'Request failed';
       diagnostics.push({ provider, status: 'error', message, note });
-      console.warn(`[owners] ${provider} lookup failed for ${clean(address) || clean(apn) || 'parcel'}: ${message}`);
+      console.warn(`[owners] ${provider} lookup failed for ${clean(address) || primaryApn || 'parcel'}: ${message}`);
       return null;
     }
   };
@@ -911,19 +985,19 @@ async function lookupOwner({ address, lat, lng, apn }) {
   owner = await runProvider(
     MONTHLY_CACHE_SOURCE,
     !!monthlyDatabase(),
-    () => queryMonthlyPropertyCache({ address, lat, lng, apn }),
+    () => queryMonthlyPropertyCache({ address, lat, lng, apn: primaryApn, apns: parcelApns }),
     'Cached sale history is refreshed by the monthly property enrichment job.'
   );
 
-  if (!owner?.ownerName) {
-    const regridOwner = await runProvider(REGRID_SOURCE, !!regridToken(), () => queryRegrid({ address, lat, lng, apn }));
+  if (!owner?.ownerName || (parcelApns.length > 1 && normalizeApns(owner?.apns, owner?.apn).length < parcelApns.length)) {
+    const regridOwner = await runProvider(REGRID_SOURCE, !!regridToken(), () => queryRegrid({ address, lat, lng, apn: primaryApn, apns: parcelApns }));
     owner = mergeOwnerResults(owner, regridOwner);
   }
 
   if (!owner?.ownerName) {
     if (RENTCAST_LIVE_OWNER_ENABLED) {
       rentcastAttempted = true;
-      const rentcastOwner = await runProvider(RENTCAST_SOURCE, !!rentcastKey(), () => queryRentCastOnDemand({ address, lat, lng, apn }));
+      const rentcastOwner = await runProvider(RENTCAST_SOURCE, !!rentcastKey(), () => queryRentCastOnDemand({ address, lat, lng, apn: primaryApn, apns: parcelApns }));
       owner = mergeOwnerResults(owner, rentcastOwner);
     } else {
       diagnostics.push({
@@ -936,19 +1010,19 @@ async function lookupOwner({ address, lat, lng, apn }) {
 
   const saleCount = Array.isArray(owner?.saleHistory) ? owner.saleHistory.length : 0;
   if (!rentcastAttempted && RENTCAST_LIVE_OWNER_ENABLED && rentcastKey() && (owner?.cacheStale || saleCount < 2)) {
-    const rentcastOwner = await runProvider(RENTCAST_SOURCE, true, () => queryRentCastOnDemand({ address, lat, lng, apn }));
+    const rentcastOwner = await runProvider(RENTCAST_SOURCE, true, () => queryRentCastOnDemand({ address, lat, lng, apn: primaryApn, apns: parcelApns }));
     owner = mergeOwnerResults(owner, rentcastOwner);
   }
 
   if (ATTOM_LIVE_MORTGAGE_ENABLED && (!owner?.originalMortgage || owner?.mortgageCacheStale)) {
-    const attomOwner = await runProvider(ATTOM_SOURCE, !!attomKey(), () => queryAttomOnDemand({ address, lat, lng, apn }));
+    const attomOwner = await runProvider(ATTOM_SOURCE, !!attomKey(), () => queryAttomOnDemand({ address, lat, lng, apn: primaryApn, apns: parcelApns }));
     owner = mergeOwnerResults(owner, attomOwner);
   }
 
-  const ain = clean(apn).replace(/\D/g, '');
-  if (!owner?.ownerName && ain) {
+  if ((!owner?.ownerName || parcelApns.length > 1) && parcelApns.length) {
+    const apnWhere = parcelApns.flatMap(ain => [`AIN='${ain}'`, `AIN_1=${Number(ain) || 0}`]).join(' OR ');
     const assessorOwner = await runProvider(OWNER_SOURCE, true, () => queryLayer({
-      where: `AIN='${ain}' OR AIN_1=${Number(ain) || 0}`,
+      where: apnWhere,
     }), 'This public layer covers only a small VTC study area, not all of Los Angeles County.');
     owner = mergeOwnerResults(owner, assessorOwner);
   }
@@ -981,12 +1055,18 @@ async function lookupOwner({ address, lat, lng, apn }) {
     : configuredCountywide.length
       ? `No owner match was returned by ${configuredCountywide.map(item => item.provider).join(' or ')}. The free County layer is not countywide.`
       : 'No countywide ownership provider is working. Add a valid Regrid Parcel API token or a RentCast property-data key; the free County layer covers only a small study area.';
-  const value = owner ? { ...owner, diagnostics: uniqueDiagnostics } : {
+  const value = owner ? {
+    ...owner,
+    apn: normalizeApns(owner.apns, owner.apn, parcelApns)[0] || null,
+    apns: normalizeApns(owner.apns, owner.apn, parcelApns),
+    diagnostics: uniqueDiagnostics,
+  } : {
     found: false,
     ownerName: null,
     mailingAddress: null,
     situsAddress: clean(address) || null,
-    apn: ain || null,
+    apn: primaryApn,
+    apns: parcelApns,
     source: null,
     message,
     diagnostics: uniqueDiagnostics,
@@ -1009,11 +1089,12 @@ router.get('/', optionalAuth, async (req, res, next) => {
         access,
       });
     }
-    const { address, lat, lng, apn } = req.query;
-    if (!address && !apn && (!lat || !lng)) {
+    const { address, lat, lng, apn, apns } = req.query;
+    const parcelApns = normalizeApns(apns, apn);
+    if (!address && !parcelApns.length && (!lat || !lng)) {
       return res.status(400).json({ error: 'address, apn, or lat/lng is required' });
     }
-    const owner = await lookupOwner({ address, lat, lng, apn });
+    const owner = await lookupOwner({ address, lat, lng, apn: parcelApns[0], apns: parcelApns });
     res.set('Cache-Control', 'public, max-age=86400');
     res.json(owner);
   } catch (err) {
@@ -1078,6 +1159,7 @@ export {
   enhancedOwnershipRows,
   fetchJsonWithRetry,
   normalizeAttomRecord,
+  normalizeApns,
   normalizeMortgageRecord,
   normalizeRegridFeature,
   normalizeRentCastRecord,

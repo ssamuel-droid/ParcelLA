@@ -6,10 +6,17 @@ process.env.SUPABASE_SERVICE_KEY ||= 'owner-route-test-key';
 const {
   fetchJsonWithRetry,
   normalizeAttomRecord,
+  normalizeApns,
   normalizeRentCastRecord,
   rentCastPropertyUrl,
   saleHistoryFromRecord,
 } = await import('../api/routes/owners.js');
+
+assert.deepEqual(
+  normalizeApns('5546-026-020, 5546-026-037', ['5546026041', '5546-026-020']),
+  ['5546026020', '5546026037', '5546026041'],
+);
+assert.deepEqual(normalizeApns('12345678901234'), ['12345678901234']);
 
 const originalFetch = globalThis.fetch;
 let retryCalls = 0;
