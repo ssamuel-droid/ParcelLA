@@ -378,12 +378,18 @@ async function upsertRecentSaleComps(hood, rows) {
   );
 
   for (let offset = 0; offset < comps.length; offset += 200) {
-    await sbRequest(
-      'POST',
-      '/rest/v1/sold_comps',
-      comps.slice(offset, offset + 200),
-      'return=minimal'
-    );
+    const batch = comps.slice(offset, offset + 200);
+    try {
+      await sbRequest('POST', '/rest/v1/sold_comps', batch, 'return=minimal');
+    } catch (error) {
+      if (!/raw_record/i.test(error.message)) throw error;
+      await sbRequest(
+        'POST',
+        '/rest/v1/sold_comps',
+        batch.map(({ raw_record, ...row }) => row),
+        'return=minimal'
+      );
+    }
   }
   return comps.length;
 }

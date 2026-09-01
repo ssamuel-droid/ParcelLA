@@ -772,16 +772,21 @@ async function getLandCompBenchmarks(neighborhoods = []) {
   if (!process.env.SUPABASE_URL) return null;
 
   const cutoff = new Date(Date.now() - LAND_COMP_RECENCY_DAYS * 86400000).toISOString().slice(0, 10);
-  let query = supabase
-    .from('sold_comps')
-    .select('address,neighborhood,project_type,units,avg_unit_sf,sale_price,sale_date,price_per_unit,price_per_sf,source,raw_record')
-    .gte('sale_date', cutoff)
-    .eq('project_type', 'Land')
-    .order('sale_date', { ascending: false })
-    .limit(hoodList.length === 1 ? 750 : 2500);
-
-  if (hoodList.length) query = query.in('neighborhood', hoodList);
-  const { data, error } = await query;
+  const runQuery = columns => {
+    let query = supabase
+      .from('sold_comps')
+      .select(columns)
+      .gte('sale_date', cutoff)
+      .eq('project_type', 'Land')
+      .order('sale_date', { ascending: false })
+      .limit(hoodList.length === 1 ? 750 : 2500);
+    if (hoodList.length) query = query.in('neighborhood', hoodList);
+    return query;
+  };
+  let { data, error } = await runQuery('address,neighborhood,project_type,units,avg_unit_sf,sale_price,sale_date,price_per_unit,price_per_sf,source,raw_record');
+  if (error && /raw_record/i.test(String(error.message || ''))) {
+    ({ data, error } = await runQuery('address,neighborhood,project_type,units,avg_unit_sf,sale_price,sale_date,price_per_unit,price_per_sf,source'));
+  }
 
   if (error) {
     console.warn('[sites] Land comp benchmarks unavailable:', error.message);

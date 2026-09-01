@@ -424,7 +424,7 @@ async function queryMonthlyPropertyCache(params) {
   const line = addressLine(params.address);
   if (!db || !line) return null;
   const safePrefix = line.replace(/[%_]/g, '');
-  const [compResult, cacheResult] = await Promise.all([
+  let [compResult, cacheResult] = await Promise.all([
     db
       .from('sold_comps')
       .select('address,sale_date,sale_price,source,raw_record')
@@ -439,6 +439,14 @@ async function queryMonthlyPropertyCache(params) {
       .order('fetched_at', { ascending: false })
       .limit(12),
   ]);
+  if (compResult.error && /raw_record/i.test(clean(compResult.error.message))) {
+    compResult = await db
+      .from('sold_comps')
+      .select('address,sale_date,sale_price,source')
+      .ilike('address', `${safePrefix}%`)
+      .order('sale_date', { ascending: false })
+      .limit(12);
+  }
   if (compResult.error && cacheResult.error) throw compResult.error;
   const matchesAddress = row => {
     const candidate = addressLine(row.address);
