@@ -8,7 +8,6 @@ on:
     branches:
       - main
     paths:
-      - '.github/scripts/enrich-owners.cjs'
       - '.github/workflows/fetch-permits.yml'
 
 jobs:
@@ -16,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Fetch and underwrite LA permits
         env:
@@ -24,14 +23,3 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SOCRATA_APP_TOKEN: ${{ secrets.SOCRATA_APP_TOKEN }}
         run: node .github/scripts/sync-permits.cjs
-
-      - name: Enrich owner and sale data
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          REGRID_API_KEY: ${{ secrets.REGRID_API_KEY }}
-          RENTCAST_API_KEY: ${{ secrets.RENTCAST_API_KEY }}
-          OWNER_ENRICH_LIMIT: '25'
-          OWNER_ENRICH_STALE_DAYS: '30'
-          RENTCAST_BULK_OWNER_ENABLED: 'false'
-        run: node .github/scripts/enrich-owners.cjs
