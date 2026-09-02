@@ -1843,6 +1843,10 @@ function ownerQueryForSite(s = {}) {
   if (s.id) p.set('siteId', String(s.id));
   const zipCode = String(s.zipCode || s.zip || '').match(/\b\d{5}\b/)?.[0];
   if (zipCode) p.set('zipCode', zipCode);
+  const locality = String(s.hood || s.neighborhood || '').trim();
+  if (locality && !/^(members only|neighborhood tbd|unknown|all neighborhoods)$/i.test(locality)) {
+    p.set('locality', locality);
+  }
   if (s.lat && s.lng) {
     p.set('lat', s.lat);
     p.set('lng', s.lng);
@@ -1896,7 +1900,7 @@ function mergeOwnerInfo(localOwner, providerOwner, s = {}) {
   if (!localOwner) return providerOwner;
   if (!providerOwner) return localOwner;
   const sources = [...new Set([localOwner.source, providerOwner.source].filter(Boolean))];
-  const planningFallback = localOwner.ownerAuthority === 'planning_document';
+  const planningFallback = /^planning_/.test(String(localOwner.ownerAuthority || ''));
   const providerHasOwner = !!providerOwner.ownerName;
   const apns = normalizeApnValues(localOwner.apns, localOwner.apn, providerOwner.apns, providerOwner.apn, siteParcelApns(s));
   const merged = {
@@ -1933,18 +1937,28 @@ function planningDocumentOwnerInfo(s = {}) {
   const owners = [...new Set(cases.flatMap(planningCase =>
     Array.isArray(planningCase.documentOwners) ? planningCase.documentOwners : []
   ).map(value => String(value || '').trim()).filter(Boolean))];
-  if (!owners.length) return null;
+  const applicants = [...new Set([
+    ...cases.flatMap(planningCase => [
+      ...(Array.isArray(planningCase.documentApplicants) ? planningCase.documentApplicants : []),
+      planningCase.applicant,
+    ]),
+    s.ownerApplicantName,
+  ].map(value => String(value || '').trim()).filter(Boolean))];
+  if (!owners.length && !applicants.length) return null;
+  const hasDocumentOwner = owners.length > 0;
   const checkedAt = cases.find(planningCase => planningCase.documentPartiesCheckedAt)?.documentPartiesCheckedAt || '';
   const apns = siteParcelApns(s);
   return {
     found: true,
-    ownerName: owners.join(' / '),
-    ownerType: 'Named owner in planning filing',
-    ownerAuthority: 'planning_document',
+    ownerName: (hasDocumentOwner ? owners : applicants).join(' / '),
+    ownerType: hasDocumentOwner ? 'Named owner in planning filing' : 'Applicant / project entity',
+    ownerAuthority: hasDocumentOwner ? 'planning_document' : 'planning_applicant',
     situsAddress: s.addr || null,
     apn: apns[0] || null,
     apns,
-    source: 'Los Angeles City Planning document (not recorder-verified)',
+    source: hasDocumentOwner
+      ? 'Los Angeles City Planning document (not recorder-verified)'
+      : 'Los Angeles City Planning or permit filing (applicant, not recorder-verified)',
     historyRefreshedAt: checkedAt,
     saleHistory: [],
     originalMortgage: null,
@@ -2017,11 +2031,21 @@ function ownerInfoHTML(owner, s = {}) {
       ${apns.length ? `<span><b>${apns.length === 1 ? 'APN' : 'APNs'}:</b> ${escapeText(apnDisplay(apns))}</span>` : ''}
     </div>`;
   }
+  const planningLabel = owner.ownerAuthority === 'planning_document'
+    ? 'Planning document owner'
+    : owner.ownerAuthority === 'planning_applicant'
+      ? 'Planning / permit applicant'
+      : 'Owner';
+  const planningStatus = owner.ownerAuthority === 'planning_document'
+    ? 'Named in a City Planning filing; not recorder-verified'
+    : owner.ownerAuthority === 'planning_applicant'
+      ? 'Applicant or project entity; not recorder-verified as current owner'
+      : '';
   return `<table class="ct ownerct">
     ${ownerLine(apns.length === 1 ? 'APN' : 'APNs', apnDisplay(apns))}
-    ${ownerLine(owner.ownerAuthority === 'planning_document' ? 'Planning document owner' : 'Owner', owner.ownerName || 'Not returned')}
+    ${ownerLine(planningLabel, owner.ownerName || 'Not returned')}
     ${ownerLine('Owner type', owner.ownerType)}
-    ${owner.ownerAuthority === 'planning_document' ? ownerLine('Ownership status', 'Named in a City Planning filing; not recorder-verified') : ''}
+    ${ownerLine('Ownership status', planningStatus)}
     ${ownerMoneyLine('Original recorded mortgage', mortgage?.amount)}
     ${ownerLine('Mortgage date', mortgage?.date)}
     ${ownerLine('Mortgage lender', mortgage?.lender)}
@@ -2042,11 +2066,21 @@ function ownerPDFRows(owner, s = {}) {
   const sales = ownerSaleHistory(owner || {}, s).slice(0, 2);
   const mortgage = ownerMortgageInfo(owner || {}, s);
   const apns = siteParcelApns(s, owner || {});
+  const planningLabel = owner?.ownerAuthority === 'planning_document'
+    ? 'Planning Document Owner'
+    : owner?.ownerAuthority === 'planning_applicant'
+      ? 'Planning / Permit Applicant'
+      : 'Owner';
+  const planningStatus = owner?.ownerAuthority === 'planning_document'
+    ? 'Named in a City Planning filing; not recorder-verified'
+    : owner?.ownerAuthority === 'planning_applicant'
+      ? 'Applicant or project entity; not recorder-verified as current owner'
+      : '';
   const rows = [
     [apns.length === 1 ? 'APN' : 'APNs', apnDisplay(apns)],
-    [owner?.ownerAuthority === 'planning_document' ? 'Planning Document Owner' : 'Owner', owner?.ownerName || 'Not returned'],
+    [planningLabel, owner?.ownerName || 'Not returned'],
     ['Owner Type', owner?.ownerType || ''],
-    ['Ownership Status', owner?.ownerAuthority === 'planning_document' ? 'Named in a City Planning filing; not recorder-verified' : ''],
+    ['Ownership Status', planningStatus],
     ['Original Recorded Mortgage', mortgage?.amount ? fmtD(mortgage.amount) : 'Not available in monthly property records'],
     ['Mortgage Date', mortgage?.date || ''],
     ['Mortgage Lender', mortgage?.lender || ''],

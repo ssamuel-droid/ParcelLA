@@ -7,6 +7,7 @@ const {
   fetchJsonWithRetry,
   normalizeAttomRecord,
   normalizeApns,
+  normalizeCountyAssessorRecord,
   normalizeOwnerFeature,
   normalizeRentCastRecord,
   rentCastMatchedRecords,
@@ -49,11 +50,21 @@ const exactUrl = rentCastPropertyUrl({ address: '267 N Toyopa Dr' });
 assert.equal(exactUrl.searchParams.get('address'), '267 N Toyopa Dr, Los Angeles, CA');
 assert.equal(exactUrl.searchParams.get('latitude'), null);
 
+const exactWithCoordinatesUrl = rentCastPropertyUrl({
+  address: '267 N Toyopa Dr',
+  locality: 'Pacific Palisades',
+  zipCode: '90272',
+  lat: 34.03214,
+  lng: -118.52002,
+});
+assert.equal(exactWithCoordinatesUrl.searchParams.get('address'), '267 N Toyopa Dr, Pacific Palisades, CA 90272');
+assert.equal(exactWithCoordinatesUrl.searchParams.get('latitude'), null);
+
 const rangeUrl = rentCastPropertyUrl({
   address: '6201-6229 W Sunset Blvd',
   lat: 34.0981,
   lng: -118.3245,
-});
+}, 'coordinates');
 assert.equal(rangeUrl.searchParams.get('address'), null);
 assert.equal(rangeUrl.searchParams.get('latitude'), '34.0981');
 assert.equal(rangeUrl.searchParams.get('longitude'), '-118.3245');
@@ -92,6 +103,34 @@ assert.equal(countyOwner.ownerName, 'EXAMPLE OWNER LLC');
 assert.equal(countyOwner.saleHistory.length, 3);
 assert.equal(countyOwner.saleHistory[0].price, 5100000);
 assert.equal(countyOwner.useDescription, 'Single Family Residence');
+
+const countyPortalRecord = normalizeCountyAssessorRecord({
+  Parcel: {
+    AIN: '5546026020',
+    SitusStreet: '6215 W SUNSET BLVD',
+    SitusCity: 'LOS ANGELES CA',
+    SitusZipCode: '90028-8704',
+    UseType: 'Commercial',
+    SqftMain: 4100,
+    SqftLot: 41121,
+    CurrentRoll_LandValue: 10250000,
+    CurrentRoll_ImpValue: 50000,
+  },
+}, {
+  Parcel_OwnershipHistory: [
+    { RecordingDate: '11/08/2012', DTTSalePrice: '54875000', DocumentNumber: '1700936', DocumentTypeDesc: 'Sale for Consideration - Full DTT' },
+    { RecordingDate: '04/13/2012', DTTSalePrice: '', DocumentNumber: '0558339', DocumentTypeDesc: 'Foreclosure' },
+    { RecordingDate: '04/19/2007', DTTSalePrice: '70000000', DocumentNumber: '0938103', DocumentTypeDesc: 'Sale for Consideration - Full DTT' },
+  ],
+}, '5546026020');
+
+assert.equal(countyPortalRecord.ownerName, null);
+assert.equal(countyPortalRecord.apn, '5546026020');
+assert.equal(countyPortalRecord.lotSize, 41121);
+assert.deepEqual(
+  countyPortalRecord.saleHistory.map(sale => [sale.date, sale.price]),
+  [['2012-11-08', 54875000], ['2007-04-19', 70000000]],
+);
 
 const rentcast = normalizeRentCastRecord({
   formattedAddress: '267 N Toyopa Dr, Pacific Palisades, CA 90272',
