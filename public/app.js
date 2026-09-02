@@ -1874,10 +1874,18 @@ function ownerSaleHistory(owner = {}, s = {}) {
     const date = String(row?.date || row?.saleDate || row?.recordingDate || '').slice(0, 10);
     const price = Number(String(row?.price || row?.salePrice || row?.amount || '').replace(/[$,]/g, ''));
     if (!date || !Number.isFinite(price) || price <= 0) return;
-    deduped.set(`${date}|${Math.round(price)}`, {
+    const roundedPrice = Math.round(price);
+    const matchingEntry = [...deduped.entries()].find(([, existing]) => {
+      if (existing.date !== date) return false;
+      const tolerance = Math.max(1000, Math.min(existing.price, roundedPrice) * 0.001);
+      return Math.abs(existing.price - roundedPrice) <= tolerance;
+    });
+    const key = matchingEntry?.[0] || `${date}|${roundedPrice}`;
+    deduped.set(key, {
       ...row,
+      ...matchingEntry?.[1],
       date,
-      price: Math.round(price),
+      price: matchingEntry?.[1]?.price || roundedPrice,
     });
   });
   return [...deduped.values()].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);

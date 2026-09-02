@@ -154,6 +154,16 @@ assert.deepEqual(
   [['2025-02-01', 5100000], ['2018-06-15', 2800000]],
 );
 
+const mergedSaleSources = saleHistoryFromRecord({
+  saleHistory: [
+    { date: '2022-05-18', price: 8400084, documentNumber: '0539388', source: 'LA County Assessor Portal' },
+    { date: '2022-05-18', price: 8400000, source: 'RentCast property records' },
+  ],
+});
+assert.equal(mergedSaleSources.length, 1);
+assert.equal(mergedSaleSources[0].price, 8400084);
+assert.equal(mergedSaleSources[0].documentNumber, '0539388');
+
 const attom = normalizeAttomRecord({
   property: [{
     identifier: { apn: '4412003010' },

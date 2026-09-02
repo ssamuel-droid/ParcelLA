@@ -286,7 +286,13 @@ function saleHistoryFromRecord(record) {
     const price = cleanMoney(row.price || row.salePrice || row.amount || row.saleAmount);
     if (!date || !price) continue;
     const documentNumber = clean(row.documentNumber || row.documentNo || row.instrumentNumber) || null;
-    const key = `${date}|${documentNumber ? `doc:${documentNumber}` : price}`;
+    const matchingEntry = [...deduped.entries()].find(([, existing]) => {
+      if (existing.date !== date) return false;
+      if (documentNumber && existing.documentNumber) return existing.documentNumber === documentNumber;
+      const tolerance = Math.max(1000, Math.min(existing.price, price) * 0.001);
+      return Math.abs(existing.price - price) <= tolerance;
+    });
+    const key = matchingEntry?.[0] || `${date}|${documentNumber ? `doc:${documentNumber}` : price}`;
     const previous = deduped.get(key);
     deduped.set(key, {
       ...row,
