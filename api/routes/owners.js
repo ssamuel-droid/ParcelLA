@@ -1289,8 +1289,8 @@ async function lookupOwner({ address, addresses, lat, lng, apn, apns, siteId, zi
     owner = mergeOwnerResults(owner, regridOwner);
   }
 
-  const saleCount = Array.isArray(owner?.saleHistory) ? owner.saleHistory.length : 0;
-  if (!rentcastAttempted && RENTCAST_LIVE_OWNER_ENABLED && rentcastKey() && (owner?.cacheStale || saleCount < 2)) {
+  // County records backfill transfers; a fresh RentCast property cache should never be billed again for sale count.
+  if (!rentcastAttempted && RENTCAST_LIVE_OWNER_ENABLED && rentcastKey() && owner?.cacheStale) {
     const rentcastOwner = await runProvider(RENTCAST_SOURCE, true, () => queryRentCastOnDemand(providerParams));
     owner = mergeOwnerResults(owner, rentcastOwner);
   }
