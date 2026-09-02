@@ -329,6 +329,34 @@ function mergeCases(filings, completed) {
   return [...byNumber.values()];
 }
 
+function mergeExistingCaseData(imported, existing = {}) {
+  const importedSource = imported.source_record || {};
+  const existingSource = existing.source_record || {};
+  const apns = extractApns(caseApns(imported), caseApns(existing));
+  const sourceRecord = {
+    ...existingSource,
+    ...importedSource,
+    apns,
+  };
+  if (existingSource.pdis || importedSource.pdis) {
+    sourceRecord.pdis = {
+      ...(importedSource.pdis || {}),
+      ...(existingSource.pdis || {}),
+    };
+  }
+  return {
+    ...imported,
+    documents_checked_at: imported.documents_checked_at || existing.documents_checked_at || null,
+    case_addresses: array(imported.case_addresses).length ? imported.case_addresses : array(existing.case_addresses),
+    related_case_numbers: array(imported.related_case_numbers).length
+      ? imported.related_case_numbers
+      : array(existing.related_case_numbers),
+    zimas_pin: imported.zimas_pin || existing.zimas_pin || null,
+    zimas_url: imported.zimas_url || existing.zimas_url || null,
+    source_record: sourceRecord,
+  };
+}
+
 async function fetchAllSupabase(table, select, order = 'id.asc') {
   const rows = [];
   const pageSize = 1000;
@@ -606,7 +634,15 @@ async function main() {
     ]);
     const filingFeatures = filingLayers.flat();
     const completedFeatures = completedLayers.flat();
-    const cases = mergeCases(filingFeatures.map(filingCase), completedFeatures.map(completedCase));
+    const importedCases = mergeCases(filingFeatures.map(filingCase), completedFeatures.map(completedCase));
+    const existingCases = await fetchAllSupabaseByKey(
+      'planning_cases',
+      'case_number,case_id,documents_checked_at,case_addresses,related_case_numbers,zimas_pin,zimas_url,source_record',
+      'case_number',
+      500
+    );
+    const existingByCase = new Map(existingCases.map(row => [row.case_number, row]));
+    const cases = importedCases.map(row => mergeExistingCaseData(row, existingByCase.get(row.case_number)));
     console.log(`[planning] ${cases.length} unique cases ready to store`);
     await upsertChunks('planning_cases', 'case_number', cases, 200);
 
@@ -623,12 +659,6 @@ async function main() {
     console.log(`[planning] stored ${matches.length} APN/address matches`);
 
     const matchedNumbers = new Set(matches.map(row => row.case_number));
-    const existingCases = await fetchAllSupabaseByKey(
-      'planning_cases',
-      'case_number,case_id,documents_checked_at,source_record',
-      'case_number',
-      500
-    );
     const existingDocuments = await fetchAllSupabase(
       'planning_documents',
       'case_number',
@@ -725,6 +755,7 @@ module.exports = {
   extractApns,
   filingCase,
   completedCase,
+  mergeExistingCaseData,
   mergeCases,
   normalizeAddress,
   parseJsonPayload,

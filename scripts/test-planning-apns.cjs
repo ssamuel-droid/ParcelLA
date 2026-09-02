@@ -5,6 +5,7 @@ const {
   completedCase,
   extractApns,
   filingCase,
+  mergeExistingCaseData,
   mergeCases,
 } = require('../.github/scripts/sync-planning-cases.cjs');
 
@@ -31,6 +32,28 @@ const completed = completedCase({
 const [planningCase] = mergeCases([filed], [completed]);
 
 assert.deepStrictEqual(caseApns(planningCase), ['5546026037', '5546026041', '5546026020']);
+
+const preservedCase = mergeExistingCaseData(filed, {
+  case_number: 'ZA-2026-1000',
+  apn: '5546026041',
+  documents_checked_at: '2026-08-31T12:00:00.000Z',
+  case_addresses: [{ address: '6215 W Sunset Blvd' }],
+  related_case_numbers: ['ENV-2026-1001-CE'],
+  zimas_pin: 'PIN-123',
+  zimas_url: 'https://zimas.example/PIN-123',
+  source_record: {
+    apns: ['5546026041'],
+    pdis: {
+      applicant: 'Example Applicant',
+      documentParties: { owners: ['Example Owner LLC'], applicants: [] },
+    },
+  },
+});
+assert.deepStrictEqual(preservedCase.source_record.pdis.documentParties.owners, ['Example Owner LLC']);
+assert.deepStrictEqual(caseApns(preservedCase), ['5546026020', '5546026037', '5546026041']);
+assert.equal(preservedCase.documents_checked_at, '2026-08-31T12:00:00.000Z');
+assert.deepStrictEqual(preservedCase.related_case_numbers, ['ENV-2026-1001-CE']);
+assert.equal(preservedCase.zimas_pin, 'PIN-123');
 
 const matches = buildMatches([planningCase], [{
   id: 42,
