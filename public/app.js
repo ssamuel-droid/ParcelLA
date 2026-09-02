@@ -1838,6 +1838,11 @@ function ownerQueryForSite(s = {}) {
   ].map(value => String(value || '').trim()).filter(Boolean);
   const exactAddress = addresses.find(address => /^\d+\s+/.test(address) && !/^\d+\s*-\s*\d+\b/.test(address));
   if (exactAddress || addresses[0]) p.set('address', exactAddress || addresses[0]);
+  const addressAliases = [...new Set(addresses)];
+  if (addressAliases.length > 1) p.set('addresses', addressAliases.join('|'));
+  if (s.id) p.set('siteId', String(s.id));
+  const zipCode = String(s.zipCode || s.zip || '').match(/\b\d{5}\b/)?.[0];
+  if (zipCode) p.set('zipCode', zipCode);
   if (s.lat && s.lng) {
     p.set('lat', s.lat);
     p.set('lng', s.lng);

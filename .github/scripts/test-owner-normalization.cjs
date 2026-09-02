@@ -8,6 +8,8 @@ const {
 const {
   compactAttomMortgage,
   compactPropertyRecord,
+  normalizeApns,
+  rentCastMatchedRecords,
   rentCastSaleHistory,
 } = require('./monthly-property-enrichment.cjs');
 
@@ -46,6 +48,25 @@ assert.strictEqual(compact.lastSaleDate, '2025-03-04');
 assert.strictEqual(compact.lastSalePrice, 850000);
 assert.strictEqual(compact.saleHistory.length, 2);
 assert.notStrictEqual(compact.ownerName, '[object Object]');
+
+assert.deepStrictEqual(normalizeApns('5546-026-020', ['5546026037']), ['5546026020', '5546026037']);
+const matchedParcels = rentCastMatchedRecords([
+  { assessorID: '5546-026-020', formattedAddress: '6201 W Sunset Blvd', latitude: 34.09811, longitude: -118.32451 },
+  { assessorID: '5546-026-037', formattedAddress: '6229 W Sunset Blvd', latitude: 34.09815, longitude: -118.32456 },
+  { assessorID: '9999-999-999', formattedAddress: '6200 W Sunset Blvd', latitude: 34.09812, longitude: -118.32452 },
+], {
+  address: '6201-6229 W Sunset Blvd',
+  lat: 34.0981,
+  lng: -118.3245,
+  apns: ['5546026020', '5546026037'],
+});
+assert.deepStrictEqual(matchedParcels.map(row => row.assessorID), ['5546-026-020', '5546-026-037']);
+assert.deepStrictEqual(
+  rentCastMatchedRecords([
+    { assessorID: '4412-003-010', formattedAddress: '267 N Toyopa Dr, Pacific Palisades, CA 90272' },
+  ], { address: '267 N Toyopa Dr' }).map(row => row.assessorID),
+  ['4412-003-010']
+);
 
 const mortgage = compactAttomMortgage({
   property: [{

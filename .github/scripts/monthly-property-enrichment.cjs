@@ -20,6 +20,7 @@ const MAX_ATTOM_CALLS = intEnv('PROPERTY_ENRICH_MAX_ATTOM_CALLS', 5);
 const INCLUDE_SITE_AVM = /^(1|true|yes)$/i.test(process.env.PROPERTY_ENRICH_AVM || '');
 const RENTCAST_SALE_SOURCE = 'RentCast monthly property records';
 const ATTOM_MORTGAGE_SOURCE = 'ATTOM monthly mortgage records';
+const RENTCAST_SEARCH_RADIUS_MILES = 0.12;
 let rentcastCallCount = 0;
 let attomCallCount = 0;
 
@@ -62,6 +63,28 @@ function clean(value) {
   if (value !== null && typeof value === 'object') return '';
   const text = String(value ?? '').trim();
   return text && text !== '0' && text.toLowerCase() !== 'null' ? text : '';
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function normalizeApns(...values) {
+  const found = [];
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (value === null || value === undefined || typeof value === 'object') return;
+    const matches = String(value).match(/\b(?:\d{8,14}|\d{4}[\s-]\d{3}[\s-]\d{3})\b/g) || [];
+    for (const match of matches) {
+      const digits = match.replace(/\D/g, '');
+      if (digits.length >= 8 && digits.length <= 14) found.push(digits);
+    }
+  };
+  values.forEach(visit);
+  return unique(found).slice(0, 50);
 }
 
 function ownerNameParts(value) {
@@ -198,6 +221,52 @@ function normalizeAddress(address) {
     .trim();
 }
 
+function addressLine(address) {
+  return clean(address)
+    .split(',')[0]
+    .toUpperCase()
+    .replace(/[.#]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function nearestRentCastRecord(records, site = {}) {
+  const latitude = asNumber(site.lat);
+  const longitude = asNumber(site.lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return records[0] || null;
+  const distance = record => {
+    const recordLatitude = asNumber(record?.latitude ?? record?.lat);
+    const recordLongitude = asNumber(record?.longitude ?? record?.lng);
+    return Number.isFinite(recordLatitude) && Number.isFinite(recordLongitude)
+      ? Math.hypot(recordLatitude - latitude, recordLongitude - longitude)
+      : Number.POSITIVE_INFINITY;
+  };
+  return [...records].sort((left, right) => distance(left) - distance(right))[0] || null;
+}
+
+function rentCastMatchedRecords(records, site = {}) {
+  const candidates = Array.isArray(records) ? records.filter(Boolean) : [];
+  if (!candidates.length) return [];
+  const targetApns = normalizeApns(site.apns, site.apn);
+  const apnMatches = targetApns.length
+    ? candidates.filter(record => normalizeApns(record?.assessorID, record?.assessorId, record?.apn)
+      .some(apn => targetApns.includes(apn)))
+    : [];
+  if (apnMatches.length) return apnMatches;
+
+  const targetAddresses = new Set([
+    site.address,
+    ...(Array.isArray(site.addresses) ? site.addresses : []),
+  ].map(addressLine).filter(Boolean));
+  const addressMatches = targetAddresses.size
+    ? candidates.filter(record => targetAddresses.has(addressLine(record?.formattedAddress || record?.addressLine1)))
+    : [];
+  if (addressMatches.length) return addressMatches;
+
+  const nearest = nearestRentCastRecord(candidates, site);
+  return nearest ? [nearest] : [];
+}
+
 function fullAddress(address) {
   const text = clean(address);
   if (!text) return '';
@@ -317,6 +386,7 @@ function compactPropertyRecord(r) {
     ownerMailingAddress,
     ownerOccupied: typeof r.ownerOccupied === 'boolean' ? r.ownerOccupied : null,
     assessorId: first(r.assessorID, r.assessorId, r.apn),
+    apns: normalizeApns(r.assessorID, r.assessorId, r.apn),
     legalDescription: first(r.legalDescription),
     lastSaleDate: saleDate,
     lastSalePrice: salePrice,
@@ -351,6 +421,7 @@ async function upsertRecentSaleComps(hood, rows) {
     const avgUnitSf = buildingSf && units ? Math.round(buildingSf / units) : null;
     return {
       address,
+      apn: normalizeApns(record.apns, record.assessorId)[0] || null,
       neighborhood: hood,
       zip: clean(record.zipCode) || null,
       lat: asNumber(record.latitude),
@@ -516,6 +587,7 @@ async function fetchSitesForPropertyRecords() {
     'neighborhood',
     'owner_name',
     'owner_enriched_at',
+    'raw_permit_data',
   ].join(',');
   const candidateLimit = Math.min(Math.max(SITE_LIMIT * 10, 100), 1000);
   const siteRows = await sbRequest(
@@ -528,14 +600,32 @@ async function fetchSitesForPropertyRecords() {
   ).catch(() => []);
   const cacheRows = await sbRequest(
     'GET',
-    `/rest/v1/property_enrichment_cache?select=cache_key,fetched_at&purpose=eq.property_record&order=fetched_at.desc&limit=${Math.min(candidateLimit * 2, 2000)}`
+    `/rest/v1/property_enrichment_cache?select=site_id,cache_key,fetched_at,expires_at,status&purpose=eq.property_record&order=fetched_at.desc&limit=${Math.min(candidateLimit * 2, 2000)}`
   ).catch(() => []);
-  const cacheTimes = new Map((cacheRows || []).map(row => [
-    clean(row.cache_key),
-    row.fetched_at ? new Date(row.fetched_at).getTime() : 0,
-  ]));
+  const latestCache = new Map();
+  for (const row of cacheRows || []) {
+    const siteId = Number.parseInt(row.site_id, 10) || null;
+    const cacheKey = siteId ? `site:${siteId}` : clean(row.cache_key).replace(/^owner:/, '');
+    if (!cacheKey || latestCache.has(cacheKey)) continue;
+    latestCache.set(cacheKey, {
+      fetchedAt: row.fetched_at ? new Date(row.fetched_at).getTime() : 0,
+      expiresAt: row.expires_at ? new Date(row.expires_at).getTime() : 0,
+      tracked: /^owner:site:/i.test(clean(row.cache_key)),
+    });
+  }
   const candidates = [
-    ...(siteRows || []).map(row => ({ ...row, recordKind: 'site', cacheKey: `site:${row.id}` })),
+    ...(siteRows || []).map(row => ({
+      ...row,
+      recordKind: 'site',
+      cacheKey: `site:${row.id}`,
+      apns: normalizeApns(
+        row.apn,
+        row.raw_permit_data?.apns,
+        row.raw_permit_data?.apn,
+        row.raw_permit_data?.assessor_id,
+        row.raw_permit_data?.assessorID
+      ),
+    })),
     ...(permitRows || []).map(row => ({
       ...row,
       recordKind: 'permit',
@@ -546,10 +636,18 @@ async function fetchSitesForPropertyRecords() {
     })),
   ];
   const seenAddresses = new Set();
+  const now = Date.now();
   return candidates
+    .filter(row => {
+      const cached = latestCache.get(row.cacheKey);
+      return !cached || !cached.expiresAt || cached.expiresAt <= now;
+    })
     .sort((a, b) => {
-      const aTime = cacheTimes.get(a.cacheKey) || (a.owner_enriched_at ? new Date(a.owner_enriched_at).getTime() : 0);
-      const bTime = cacheTimes.get(b.cacheKey) || (b.owner_enriched_at ? new Date(b.owner_enriched_at).getTime() : 0);
+      const aCache = latestCache.get(a.cacheKey);
+      const bCache = latestCache.get(b.cacheKey);
+      if (!!aCache?.tracked !== !!bCache?.tracked) return aCache?.tracked ? -1 : 1;
+      const aTime = aCache?.fetchedAt || (a.owner_enriched_at ? new Date(a.owner_enriched_at).getTime() : 0);
+      const bTime = bCache?.fetchedAt || (b.owner_enriched_at ? new Date(b.owner_enriched_at).getTime() : 0);
       return aTime - bTime;
     })
     .filter(row => {
@@ -559,6 +657,15 @@ async function fetchSitesForPropertyRecords() {
       return true;
     })
     .slice(0, SITE_LIMIT);
+}
+
+async function fetchFreshMarketCache() {
+  const now = encodeURIComponent(new Date().toISOString());
+  const rows = await sbRequest(
+    'GET',
+    `/rest/v1/property_enrichment_cache?select=purpose,cache_key,expires_at&provider=eq.rentcast&purpose=in.(rental_listings,recent_sales)&status=eq.ok&expires_at=gt.${now}&limit=1000`
+  ).catch(() => []);
+  return new Set((rows || []).map(row => `${clean(row.purpose)}|${clean(row.cache_key)}`));
 }
 
 async function pullRentcastRentalListings(hood, zip) {
@@ -616,16 +723,39 @@ async function pullRentcastRecentSales(hood, zip) {
 
 async function pullRentcastPropertyRecord(site) {
   const address = fullAddress(site.address);
-  if (!address) return null;
-  const params = new URLSearchParams({
-    address,
-    limit: '1',
-  });
+  const latitude = asNumber(site.lat);
+  const longitude = asNumber(site.lng);
+  if (!address && (!Number.isFinite(latitude) || !Number.isFinite(longitude))) return null;
+  const hasCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
+  const params = hasCoordinates
+    ? new URLSearchParams({
+        latitude: String(latitude),
+        longitude: String(longitude),
+        radius: String(RENTCAST_SEARCH_RADIUS_MILES),
+        limit: '50',
+      })
+    : new URLSearchParams({ address, limit: '1' });
   const { json } = await requestRentcast(
     `https://api.rentcast.io/v1/properties?${params}`
   );
-  const rows = arrayFromPayload(json).map(compactPropertyRecord).filter(r => r.formattedAddress);
-  const record = rows[0] || null;
+  const matchedRows = rentCastMatchedRecords(arrayFromPayload(json), site)
+    .map(compactPropertyRecord)
+    .filter(record => record.formattedAddress);
+  const saleHistory = rentCastSaleHistory({
+    saleHistory: matchedRows.flatMap(record => record.saleHistory || []),
+  });
+  const latestSale = saleHistory[0] || null;
+  const record = matchedRows.length ? {
+    ...matchedRows[0],
+    ownerName: unique(matchedRows.map(row => row.ownerName).filter(Boolean)).join(' / ') || null,
+    ownerMailingAddress: matchedRows.find(row => row.ownerMailingAddress)?.ownerMailingAddress || null,
+    assessorId: normalizeApns(matchedRows.map(row => row.apns), site.apns, site.apn)[0] || null,
+    apns: normalizeApns(matchedRows.map(row => row.apns), site.apns, site.apn),
+    lastSaleDate: latestSale?.date || matchedRows[0].lastSaleDate || null,
+    lastSalePrice: latestSale?.price || matchedRows[0].lastSalePrice || null,
+    saleHistory,
+    parcelRecords: matchedRows,
+  } : null;
   await upsertCache({
     site_id: site.recordKind === 'site' ? site.id : null,
     provider: 'rentcast',
@@ -637,8 +767,13 @@ async function pullRentcastPropertyRecord(site) {
     status: record ? 'ok' : 'miss',
     fetched_at: new Date().toISOString(),
     expires_at: cacheExpiry(),
-    request_meta: { endpoint: '/properties', address },
-    payload: { sampleCount: rows.length },
+    request_meta: {
+      endpoint: '/properties',
+      address,
+      lookupStrategy: hasCoordinates ? 'coordinate_apn' : 'address',
+      apns: normalizeApns(site.apns, site.apn),
+    },
+    payload: { sampleCount: matchedRows.length },
     normalized: { record },
   });
   return record;
@@ -799,35 +934,6 @@ async function main() {
   }
   console.log(`[monthly-enrich] Guardrails: RentCast max ${MAX_RENTCAST_CALLS} call(s); ATTOM max ${MAX_ATTOM_CALLS} call(s); ${SITE_LIMIT} individual site record(s); AVM ${INCLUDE_SITE_AVM ? 'enabled' : 'disabled'}.`);
 
-  let marketRequests = 0;
-  let rentalRows = 0;
-  let saleRows = 0;
-  const markets = await fetchMarkets();
-  const seenZips = new Set();
-  for (const hood of markets) {
-    const zip = HOOD_ZIPS[hood];
-    if (!zip || seenZips.has(zip)) continue;
-    seenZips.add(zip);
-    try {
-      const count = await pullRentcastRentalListings(hood, zip);
-      marketRequests++;
-      rentalRows += count;
-      console.log(`[monthly-enrich] ${hood} ${zip}: cached ${count} rental listing(s).`);
-    } catch (err) {
-      console.warn(`[monthly-enrich] Rental listings failed for ${hood} ${zip}: ${err.message}`);
-    }
-    await sleep(REQUEST_DELAY_MS);
-    try {
-      const count = await pullRentcastRecentSales(hood, zip);
-      marketRequests++;
-      saleRows += count;
-      console.log(`[monthly-enrich] ${hood} ${zip}: cached ${count} recent sale record(s).`);
-    } catch (err) {
-      console.warn(`[monthly-enrich] Recent sales failed for ${hood} ${zip}: ${err.message}`);
-    }
-    await sleep(REQUEST_DELAY_MS);
-  }
-
   let siteUpdated = 0;
   let siteMiss = 0;
   let schemaWarningShown = false;
@@ -851,6 +957,53 @@ async function main() {
     await sleep(REQUEST_DELAY_MS);
   }
 
+  let marketRequests = 0;
+  let rentalRows = 0;
+  let saleRows = 0;
+  let budgetWarningShown = false;
+  const freshMarketCache = await fetchFreshMarketCache();
+  const markets = await fetchMarkets();
+  const seenZips = new Set();
+  for (const hood of markets) {
+    const zip = HOOD_ZIPS[hood];
+    if (!zip || seenZips.has(zip)) continue;
+    seenZips.add(zip);
+    const saleCacheKey = `recent_sales|zip:${zip}`;
+    if (freshMarketCache.has(saleCacheKey)) {
+      console.log(`[monthly-enrich] ${hood} ${zip}: recent sales cache is still fresh; skipped paid request.`);
+    } else if (rentcastCallCount < MAX_RENTCAST_CALLS) {
+      try {
+        const count = await pullRentcastRecentSales(hood, zip);
+        marketRequests++;
+        saleRows += count;
+        console.log(`[monthly-enrich] ${hood} ${zip}: cached ${count} recent sale record(s).`);
+      } catch (err) {
+        console.warn(`[monthly-enrich] Recent sales failed for ${hood} ${zip}: ${err.message}`);
+      }
+      await sleep(REQUEST_DELAY_MS);
+    }
+
+    const rentalCacheKey = `rental_listings|zip:${zip}`;
+    if (freshMarketCache.has(rentalCacheKey)) {
+      console.log(`[monthly-enrich] ${hood} ${zip}: rental cache is still fresh; skipped paid request.`);
+    } else if (rentcastCallCount < MAX_RENTCAST_CALLS) {
+      try {
+        const count = await pullRentcastRentalListings(hood, zip);
+        marketRequests++;
+        rentalRows += count;
+        console.log(`[monthly-enrich] ${hood} ${zip}: cached ${count} rental listing(s).`);
+      } catch (err) {
+        console.warn(`[monthly-enrich] Rental listings failed for ${hood} ${zip}: ${err.message}`);
+      }
+      await sleep(REQUEST_DELAY_MS);
+    }
+
+    if (!budgetWarningShown && rentcastCallCount >= MAX_RENTCAST_CALLS) {
+      console.warn(`[monthly-enrich] RentCast call budget reached; remaining stale market snapshots will wait for the next run.`);
+      budgetWarningShown = true;
+    }
+  }
+
   console.log(`[monthly-enrich] Complete. RentCast API calls: ${rentcastCallCount}/${MAX_RENTCAST_CALLS}; ATTOM API calls: ${attomCallCount}/${MAX_ATTOM_CALLS}; successful market calls: ${marketRequests}; cached rentals: ${rentalRows}; cached recent sales: ${saleRows}; site records updated: ${siteUpdated}; site misses: ${siteMiss}.`);
 }
 
@@ -866,6 +1019,9 @@ module.exports = {
   compactMortgageRecord,
   compactPropertyRecord,
   latestRentCastSale,
+  nearestRentCastRecord,
+  normalizeApns,
   ownerNameParts,
+  rentCastMatchedRecords,
   rentCastSaleHistory,
 };

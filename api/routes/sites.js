@@ -1624,6 +1624,8 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     id:           s.id || (50000 + i),
     addr:         s.address ?? s.addr,
     hood:         neighborhood,
+    zipCode:      String(rawPermit.zip_code || rawPermit.zip || rawPermit.zipcode || s.zip_code || s.zip || '')
+      .match(/\b\d{5}\b/)?.[0] || null,
     type:         canonicalProjectType(s.project_type ?? s.type) || 'Multifamily',
     zone:         s.zoning ?? s.zone ?? null,
     lot:          lotSf,

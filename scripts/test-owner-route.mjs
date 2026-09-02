@@ -7,7 +7,9 @@ const {
   fetchJsonWithRetry,
   normalizeAttomRecord,
   normalizeApns,
+  normalizeOwnerFeature,
   normalizeRentCastRecord,
+  rentCastMatchedRecords,
   rentCastPropertyUrl,
   saleHistoryFromRecord,
 } = await import('../api/routes/owners.js');
@@ -55,7 +57,41 @@ const rangeUrl = rentCastPropertyUrl({
 assert.equal(rangeUrl.searchParams.get('address'), null);
 assert.equal(rangeUrl.searchParams.get('latitude'), '34.0981');
 assert.equal(rangeUrl.searchParams.get('longitude'), '-118.3245');
-assert.equal(rangeUrl.searchParams.get('limit'), '10');
+assert.equal(rangeUrl.searchParams.get('radius'), '0.12');
+assert.equal(rangeUrl.searchParams.get('limit'), '50');
+
+const parcelMatches = rentCastMatchedRecords([
+  { assessorID: '5546-026-020', formattedAddress: '6201 W Sunset Blvd', latitude: 34.09811, longitude: -118.32451 },
+  { assessorID: '5546-026-037', formattedAddress: '6229 W Sunset Blvd', latitude: 34.09815, longitude: -118.32456 },
+  { assessorID: '9999-999-999', formattedAddress: '6200 W Sunset Blvd', latitude: 34.09812, longitude: -118.32452 },
+], {
+  address: '6201-6229 W Sunset Blvd',
+  lat: 34.0981,
+  lng: -118.3245,
+  apns: ['5546026020', '5546026037'],
+});
+assert.deepEqual(parcelMatches.map(row => row.assessorID), ['5546-026-020', '5546-026-037']);
+
+const countyOwner = normalizeOwnerFeature({
+  attributes: {
+    AIN: '5546026037',
+    First_Owner_Name: 'EXAMPLE OWNER LLC',
+    Last_Sale_Date: '20250131',
+    Last_Sale_Amount: 5100000,
+    Last_Sale_Verif_Key: 'A',
+    Sale_Two_Date: '20180615',
+    Sale_Two_Amount: 2800000,
+    Sale_Two_Verif_Key: 'B',
+    Sale_Three_Date: '20120120',
+    Sale_Three_Amount: 1900000,
+    Sale_Three_Verif_Key: 'C',
+    LUDesc: 'Single Family Residence',
+  },
+});
+assert.equal(countyOwner.ownerName, 'EXAMPLE OWNER LLC');
+assert.equal(countyOwner.saleHistory.length, 3);
+assert.equal(countyOwner.saleHistory[0].price, 5100000);
+assert.equal(countyOwner.useDescription, 'Single Family Residence');
 
 const rentcast = normalizeRentCastRecord({
   formattedAddress: '267 N Toyopa Dr, Pacific Palisades, CA 90272',

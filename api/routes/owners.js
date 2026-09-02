@@ -14,6 +14,7 @@ const ATTOM_SOURCE = 'ATTOM owner and mortgage records';
 const MONTHLY_CACHE_SOURCE = 'Monthly property records cache';
 const RENTCAST_BASE = 'https://api.rentcast.io/v1/properties';
 const ATTOM_BASE = 'https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailmortgageowner';
+const RENTCAST_SEARCH_RADIUS_MILES = 0.12;
 const EXTERNAL_CACHE_DAYS = positiveInt(process.env.OWNER_DATA_CACHE_DAYS, 30);
 const RENTCAST_DAILY_LIMIT = positiveInt(process.env.RENTCAST_OWNER_DAILY_LIMIT, 25);
 const ATTOM_DAILY_LIMIT = positiveInt(process.env.ATTOM_MORTGAGE_DAILY_LIMIT, 10);
@@ -24,6 +25,7 @@ const ownerCache = new Map();
 const providerUsage = new Map();
 let ownerDb = null;
 let regridProbeCache = null;
+let regridCredentialRejectedUntil = 0;
 
 const OWNER_FIELDS = [
   'AIN',
@@ -46,10 +48,17 @@ const OWNER_FIELDS = [
   'City_State',
   'Zip',
   'Recording_Date',
+  'Last_Sale_Verif_Key',
   'Last_Sale_Amount',
   'Last_Sale_Date',
+  'Sale_Two_Verif_Key',
+  'Sale_Two_Amount',
+  'Sale_Two_Date',
+  'Sale_Three_Verif_Key',
+  'Sale_Three_Amount',
+  'Sale_Three_Date',
   'Use_Code',
-  'Use_Code_Desc',
+  'LUDesc',
   'Zoning_Code',
   'Land_Current_Value',
   'Imp_Current_Value',
@@ -165,8 +174,19 @@ function normalizeOwnerFeature(feature) {
     a.Street_Name,
     a.Unit_1,
   ], a.City_State, a.Zip);
-  const lastSaleDate = cleanDate(a.Last_Sale_Date);
-  const lastSaleAmount = cleanMoney(a.Last_Sale_Amount);
+  const saleHistory = [
+    [a.Last_Sale_Date, a.Last_Sale_Amount, a.Last_Sale_Verif_Key],
+    [a.Sale_Two_Date, a.Sale_Two_Amount, a.Sale_Two_Verif_Key],
+    [a.Sale_Three_Date, a.Sale_Three_Amount, a.Sale_Three_Verif_Key],
+  ].map(([date, price, verification]) => ({
+    date: cleanDate(date),
+    price: cleanMoney(price),
+    event: 'Sale',
+    documentType: clean(verification) || null,
+    source: OWNER_SOURCE,
+  })).filter(row => row.date && row.price)
+    .sort((left, right) => right.date.localeCompare(left.date));
+  const latestSale = saleHistory[0] || null;
   const apns = normalizeApns(a.AIN, a.AIN_1);
 
   return {
@@ -178,16 +198,11 @@ function normalizeOwnerFeature(feature) {
     apns,
     specialNameLegend: clean(a.Special_Name_Legend) || null,
     recordingDate: cleanDate(a.Recording_Date),
-    lastSaleDate,
-    lastSaleAmount,
-    saleHistory: lastSaleDate && lastSaleAmount ? [{
-      date: lastSaleDate,
-      price: lastSaleAmount,
-      event: 'Sale',
-      source: OWNER_SOURCE,
-    }] : [],
+    lastSaleDate: latestSale?.date || null,
+    lastSaleAmount: latestSale?.price || null,
+    saleHistory,
     useCode: clean(a.Use_Code) || null,
-    useDescription: clean(a.Use_Code_Desc) || null,
+    useDescription: clean(a.LUDesc) || null,
     zoning: clean(a.Zoning_Code) || null,
     landValue: cleanMoney(a.Land_Current_Value),
     improvementValue: cleanMoney(a.Imp_Current_Value),
@@ -315,21 +330,20 @@ function rentCastPropertyUrl(params = {}) {
   const address = clean(params.address);
   const latitude = Number(params.lat);
   const longitude = Number(params.lng);
-  const ambiguousAddress = /^\d+\s*-\s*\d+\b/.test(address)
-    || /^\d+(?:\s*,\s*\d+)+\b/.test(address);
   const hasCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
   const url = new URL(RENTCAST_BASE);
-  if (ambiguousAddress && hasCoordinates) {
+  if (hasCoordinates) {
     url.searchParams.set('latitude', String(latitude));
     url.searchParams.set('longitude', String(longitude));
-    url.searchParams.set('radius', '0.05');
-    url.searchParams.set('limit', '10');
+    url.searchParams.set('radius', String(RENTCAST_SEARCH_RADIUS_MILES));
+    url.searchParams.set('limit', '50');
     return url;
   }
   if (!address) return null;
+  const zipCode = clean(params.zipCode).replace(/\D/g, '').slice(0, 5);
   url.searchParams.set('address', /\bCA\b|CALIFORNIA/i.test(address)
     ? address
-    : `${address}, Los Angeles, CA`);
+    : `${address}, Los Angeles, CA${zipCode ? ` ${zipCode}` : ''}`);
   url.searchParams.set('limit', '1');
   return url;
 }
@@ -348,6 +362,32 @@ function nearestRentCastRecord(records, params = {}) {
   return [...records].sort((left, right) => {
     return distance(left) - distance(right);
   })[0] || null;
+}
+
+function rentCastMatchedRecords(records, params = {}) {
+  const candidates = Array.isArray(records) ? records.filter(Boolean) : [];
+  if (!candidates.length) return [];
+  const targetApns = normalizeApns(params.apns, params.apn);
+  const apnMatches = targetApns.length
+    ? candidates.filter(record => normalizeApns(record?.assessorID, record?.assessorId, record?.apn)
+      .some(apn => targetApns.includes(apn)))
+    : [];
+  if (apnMatches.length) return apnMatches;
+
+  const addressValues = [
+    params.address,
+    ...(Array.isArray(params.addresses)
+      ? params.addresses
+      : clean(params.addresses).split('|')),
+  ];
+  const targetAddresses = new Set(addressValues.map(addressLine).filter(Boolean));
+  const addressMatches = targetAddresses.size
+    ? candidates.filter(record => targetAddresses.has(addressLine(record?.formattedAddress || record?.addressLine1)))
+    : [];
+  if (addressMatches.length) return addressMatches;
+
+  const nearest = nearestRentCastRecord(candidates, params);
+  return nearest ? [nearest] : [];
 }
 
 function attomKey() {
@@ -447,7 +487,8 @@ async function queryMonthlyPropertyCache(params) {
   const db = monthlyDatabase();
   const line = addressLine(params.address);
   const apns = normalizeApns(params.apns, params.apn);
-  if (!db || (!line && !apns.length)) return null;
+  const siteId = Number.parseInt(params.siteId, 10) || null;
+  if (!db || (!line && !apns.length && !siteId)) return null;
   const safePrefix = line.replace(/[%_]/g, '');
   const emptyResult = Promise.resolve({ data: [], error: null });
   const soldCompQuery = (mode, includeRawRecord = true) => {
@@ -459,15 +500,25 @@ async function queryMonthlyPropertyCache(params) {
     query = mode === 'apn' ? query.in('apn', apns) : query.ilike('address', `${safePrefix}%`);
     return query;
   };
-  let [addressCompResult, apnCompResult, cacheResult] = await Promise.all([
+  const cacheColumns = 'site_id,cache_key,address,provider,purpose,status,fetched_at,expires_at,normalized';
+  let [addressCompResult, apnCompResult, addressCacheResult, siteCacheResult] = await Promise.all([
     line ? soldCompQuery('address') : emptyResult,
     apns.length ? soldCompQuery('apn') : emptyResult,
     line
       ? db
         .from('property_enrichment_cache')
-        .select('address,provider,purpose,status,fetched_at,expires_at,normalized')
+        .select(cacheColumns)
         .in('purpose', ['property_record', 'mortgage_record'])
         .ilike('address', `${safePrefix}%`)
+        .order('fetched_at', { ascending: false })
+        .limit(50)
+      : emptyResult,
+    siteId
+      ? db
+        .from('property_enrichment_cache')
+        .select(cacheColumns)
+        .in('purpose', ['property_record', 'mortgage_record'])
+        .eq('site_id', siteId)
         .order('fetched_at', { ascending: false })
         .limit(50)
       : emptyResult,
@@ -479,7 +530,9 @@ async function queryMonthlyPropertyCache(params) {
     apnCompResult = await soldCompQuery('apn', false);
   }
   const successfulCompResults = [addressCompResult, apnCompResult].filter(result => !result.error);
-  if (!successfulCompResults.length && cacheResult.error) throw addressCompResult.error || apnCompResult.error || cacheResult.error;
+  if (!successfulCompResults.length && addressCacheResult.error && siteCacheResult.error) {
+    throw addressCompResult.error || apnCompResult.error || addressCacheResult.error || siteCacheResult.error;
+  }
   const matchesAddress = row => {
     if (!line) return false;
     const candidate = addressLine(row.address);
@@ -489,13 +542,21 @@ async function queryMonthlyPropertyCache(params) {
     ...(addressCompResult.data || []).filter(matchesAddress),
     ...(apnCompResult.data || []).filter(row => apns.includes(normalizeApns(row.apn)[0])),
   ].map(row => [`${row.apn || ''}|${row.address || ''}|${row.sale_date || ''}|${row.sale_price || ''}`, row])).values()];
-  const cacheRows = (cacheResult.data || []).filter(row => row.status === 'ok' && matchesAddress(row));
+  const cacheRows = [...new Map([
+    ...(addressCacheResult.data || []).filter(row => row.status === 'ok' && matchesAddress(row)),
+    ...(siteCacheResult.data || []).filter(row => row.status === 'ok'),
+  ].map(row => [`${row.provider}|${row.purpose}|${row.cache_key}`, row])).values()];
   if (!compRows.length && !cacheRows.length) return null;
 
   const propertyCaches = cacheRows.filter(row => row.purpose === 'property_record' && row.normalized?.record);
   const propertyCache = propertyCaches[0] || null;
   const rentcastPropertyCache = propertyCaches.find(row => /^rentcast/i.test(clean(row.provider)));
-  const rawProperties = propertyCaches.map(row => row.normalized.record);
+  const rawProperties = propertyCaches.flatMap(row => {
+    const record = row.normalized.record;
+    return Array.isArray(record?.parcelRecords) && record.parcelRecords.length
+      ? record.parcelRecords
+      : [record];
+  });
   const rawProperty = rawProperties[0] || compRows[0]?.raw_record || {};
   const primary = rawProperties.length
     ? rawProperties.map(normalizeRentCastRecord).reduce(mergeOwnerResults, null)
@@ -540,7 +601,8 @@ async function queryMonthlyPropertyCache(params) {
 }
 
 function lookupCacheKey(params) {
-  return addressLine(params.address) || normalizeApns(params.apns, params.apn).join('-') || compact([params.lat, params.lng]).join(',');
+  const siteId = Number.parseInt(params.siteId, 10) || null;
+  return siteId ? `site:${siteId}` : addressLine(params.address) || normalizeApns(params.apns, params.apn).join('-') || compact([params.lat, params.lng]).join(',');
 }
 
 function cacheExpiresAt() {
@@ -579,6 +641,7 @@ async function persistProviderRecord(provider, purpose, params, normalized, stat
   const cacheKey = lookupCacheKey(params);
   if (!db || !cacheKey) return;
   const result = await db.from('property_enrichment_cache').upsert({
+    site_id: Number.parseInt(params.siteId, 10) || null,
     provider,
     purpose,
     cache_key: `owner:${cacheKey}`,
@@ -588,7 +651,11 @@ async function persistProviderRecord(provider, purpose, params, normalized, stat
     status,
     fetched_at: new Date().toISOString(),
     expires_at: cacheExpiresAt(),
-    request_meta: { detailView: true },
+    request_meta: {
+      detailView: true,
+      lookupStrategy: Number.isFinite(Number(params.lat)) && Number.isFinite(Number(params.lng)) ? 'coordinate_apn' : 'address',
+      apns: normalizeApns(params.apns, params.apn),
+    },
     payload: {},
     normalized: purpose === 'mortgage_record'
       ? { originalMortgage: normalized?.originalMortgage || null }
@@ -603,12 +670,19 @@ async function queryRentCast(params) {
   if (!key || !url) return null;
   const data = await fetchJsonWithRetry(url.toString(), 10000, { 'X-Api-Key': key });
   const records = Array.isArray(data) ? data : data?.properties || data?.data || [];
-  const record = nearestRentCastRecord(records, params);
-  if (!record) return null;
-  const normalized = normalizeRentCastRecord(record);
-  return normalized.ownerName || normalized.lastSaleDate || normalized.lastSaleAmount || normalized.originalMortgage
-    ? normalized
-    : null;
+  const normalizedRecords = rentCastMatchedRecords(records, params)
+    .map(normalizeRentCastRecord)
+    .filter(record => record.ownerName || record.lastSaleDate || record.lastSaleAmount || record.originalMortgage);
+  if (!normalizedRecords.length) return null;
+  const merged = normalizedRecords.reduce(mergeOwnerResults, null);
+  const latestSale = merged.saleHistory?.[0] || null;
+  return {
+    ...merged,
+    lastSaleDate: latestSale?.date || merged.lastSaleDate || null,
+    recordingDate: latestSale?.date || merged.recordingDate || null,
+    lastSaleAmount: latestSale?.price || merged.lastSaleAmount || null,
+    parcelRecords: normalizedRecords,
+  };
 }
 
 async function queryRentCastOnDemand(params) {
@@ -952,10 +1026,17 @@ function sqlText(value) {
   return String(value || '').replace(/'/g, "''").replace(/[^A-Z0-9 ]/gi, ' ').replace(/\s+/g, ' ').trim();
 }
 
-async function lookupOwner({ address, lat, lng, apn, apns }) {
+async function lookupOwner({ address, addresses, lat, lng, apn, apns, siteId, zipCode }) {
   const parcelApns = normalizeApns(apns, apn);
   const primaryApn = parcelApns[0] || null;
-  const cacheKey = JSON.stringify({ address: clean(address).toUpperCase(), lat: clean(lat), lng: clean(lng), apns: parcelApns });
+  const providerParams = { address, addresses, lat, lng, apn: primaryApn, apns: parcelApns, siteId, zipCode };
+  const cacheKey = JSON.stringify({
+    address: clean(address).toUpperCase(),
+    lat: clean(lat),
+    lng: clean(lng),
+    apns: parcelApns,
+    siteId: Number.parseInt(siteId, 10) || null,
+  });
   const cached = ownerCache.get(cacheKey);
   if (cached && Date.now() - cached.time < CACHE_TTL) return cached.value;
 
@@ -973,6 +1054,9 @@ async function lookupOwner({ address, lat, lng, apn, apns }) {
       return result;
     } catch (error) {
       const status = Number(error.status) || null;
+      if (provider === REGRID_SOURCE && (status === 401 || status === 403)) {
+        regridCredentialRejectedUntil = Date.now() + 6 * 60 * 60 * 1000;
+      }
       const message = status === 401 || status === 403
         ? `Credential rejected (HTTP ${status})`
         : clean(error.message).slice(0, 180) || 'Request failed';
@@ -985,19 +1069,24 @@ async function lookupOwner({ address, lat, lng, apn, apns }) {
   owner = await runProvider(
     MONTHLY_CACHE_SOURCE,
     !!monthlyDatabase(),
-    () => queryMonthlyPropertyCache({ address, lat, lng, apn: primaryApn, apns: parcelApns }),
+    () => queryMonthlyPropertyCache(providerParams),
     'Cached sale history is refreshed by the monthly property enrichment job.'
   );
 
   if (!owner?.ownerName || (parcelApns.length > 1 && normalizeApns(owner?.apns, owner?.apn).length < parcelApns.length)) {
-    const regridOwner = await runProvider(REGRID_SOURCE, !!regridToken(), () => queryRegrid({ address, lat, lng, apn: primaryApn, apns: parcelApns }));
+    const regridOwner = await runProvider(
+      REGRID_SOURCE,
+      !!regridToken() && Date.now() >= regridCredentialRejectedUntil,
+      () => queryRegrid(providerParams),
+      regridCredentialRejectedUntil > Date.now() ? 'Credential was recently rejected; retry is paused for six hours.' : ''
+    );
     owner = mergeOwnerResults(owner, regridOwner);
   }
 
   if (!owner?.ownerName) {
     if (RENTCAST_LIVE_OWNER_ENABLED) {
       rentcastAttempted = true;
-      const rentcastOwner = await runProvider(RENTCAST_SOURCE, !!rentcastKey(), () => queryRentCastOnDemand({ address, lat, lng, apn: primaryApn, apns: parcelApns }));
+      const rentcastOwner = await runProvider(RENTCAST_SOURCE, !!rentcastKey(), () => queryRentCastOnDemand(providerParams));
       owner = mergeOwnerResults(owner, rentcastOwner);
     } else {
       diagnostics.push({
@@ -1010,12 +1099,12 @@ async function lookupOwner({ address, lat, lng, apn, apns }) {
 
   const saleCount = Array.isArray(owner?.saleHistory) ? owner.saleHistory.length : 0;
   if (!rentcastAttempted && RENTCAST_LIVE_OWNER_ENABLED && rentcastKey() && (owner?.cacheStale || saleCount < 2)) {
-    const rentcastOwner = await runProvider(RENTCAST_SOURCE, true, () => queryRentCastOnDemand({ address, lat, lng, apn: primaryApn, apns: parcelApns }));
+    const rentcastOwner = await runProvider(RENTCAST_SOURCE, true, () => queryRentCastOnDemand(providerParams));
     owner = mergeOwnerResults(owner, rentcastOwner);
   }
 
   if (ATTOM_LIVE_MORTGAGE_ENABLED && (!owner?.originalMortgage || owner?.mortgageCacheStale)) {
-    const attomOwner = await runProvider(ATTOM_SOURCE, !!attomKey(), () => queryAttomOnDemand({ address, lat, lng, apn: primaryApn, apns: parcelApns }));
+    const attomOwner = await runProvider(ATTOM_SOURCE, !!attomKey(), () => queryAttomOnDemand(providerParams));
     owner = mergeOwnerResults(owner, attomOwner);
   }
 
@@ -1089,12 +1178,12 @@ router.get('/', optionalAuth, async (req, res, next) => {
         access,
       });
     }
-    const { address, lat, lng, apn, apns } = req.query;
+    const { address, addresses, lat, lng, apn, apns, siteId, zipCode } = req.query;
     const parcelApns = normalizeApns(apns, apn);
     if (!address && !parcelApns.length && (!lat || !lng)) {
       return res.status(400).json({ error: 'address, apn, or lat/lng is required' });
     }
-    const owner = await lookupOwner({ address, lat, lng, apn: parcelApns[0], apns: parcelApns });
+    const owner = await lookupOwner({ address, addresses, lat, lng, apn: parcelApns[0], apns: parcelApns, siteId, zipCode });
     res.set('Cache-Control', 'public, max-age=86400');
     res.json(owner);
   } catch (err) {
@@ -1161,9 +1250,11 @@ export {
   normalizeAttomRecord,
   normalizeApns,
   normalizeMortgageRecord,
+  normalizeOwnerFeature,
   normalizeRegridFeature,
   normalizeRentCastRecord,
   queryRegrid,
+  rentCastMatchedRecords,
   rentCastPropertyUrl,
   saleHistoryFromRecord,
 };
