@@ -16,7 +16,7 @@ import { RENTS } from '../../src/data/submarkets.js';
 import affordableRents from '../../src/data/affordableRents.cjs';
 import { enrichSite }    from '../../src/data/laOpenData.js';
 import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/DemandScore.js';
-import { requireAuth, optionalAuth, getUserAccessFast } from '../middleware/auth.js';
+import { requireAuth, optionalAuth, getUserAccessFast, getUnlockedSiteIdsFast } from '../middleware/auth.js';
 import { validateSiteFilters, validateModelOverrides } from '../middleware/middleware.js';
 import { supabase } from '../../src/data/supabase.js';
 import {
@@ -3094,7 +3094,11 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
     const total = usedFastPage ? fastTotal : filtered.length;
     const paginated = usedFastPage ? filtered : filtered.slice(requestedOffset, requestedOffset + requestedLimit);
 
-    const access = await getUserAccessFast(req.user);
+    const [access, unlockedSiteIds] = await Promise.all([
+      getUserAccessFast(req.user),
+      getUnlockedSiteIdsFast(req.user?.id),
+    ]);
+    const unlocked = new Set(unlockedSiteIds.map(String));
 
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
@@ -3203,7 +3207,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         cfbt:         s._m.cfbt,
         coc:          s._m.cocReturn,
         eqMult:       s._m.equityMultiple,
-      }, access.active)),
+      }, access.active || unlocked.has(String(s.id)))),
     });
   } catch (err) { next(err); }
 });
@@ -3246,8 +3250,12 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 
     if (!site) return res.status(404).json({ error: 'Site not found' });
 
-    const access = await getUserAccessFast(req.user);
-    if (!access.active) {
+    const [access, unlockedSiteIds] = await Promise.all([
+      getUserAccessFast(req.user),
+      getUnlockedSiteIdsFast(req.user?.id),
+    ]);
+    const hasSiteAccess = access.active || unlockedSiteIds.includes(String(id));
+    if (!hasSiteAccess) {
       return res.json({
         site: redactSiteResult({
           id: site.id,

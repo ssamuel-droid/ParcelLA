@@ -19,7 +19,8 @@ let authConfig = null;
 let accountState = {
   user: null,
   profile: null,
-  access: { active: false, plan: 'free', reason: 'locked', trialSecondsRemaining: 0 },
+  access: { active: false, plan: 'free', reason: 'free_preview', trialSecondsRemaining: 0 },
+  unlockedSiteIds: [],
 };
 
 async function fetchLACityData(datasetId, params = {}) {
@@ -785,11 +786,10 @@ function hasFullAccess() {
   return accountState?.access?.active === true;
 }
 
-function accessTimeText(seconds) {
-  const sec = Number(seconds || 0);
-  if (sec <= 0) return 'expired';
-  if (sec >= 3600) return Math.ceil(sec / 3600) + 'h left';
-  return Math.ceil(sec / 60) + 'm left';
+function hasSiteAccess(siteOrId) {
+  if (hasFullAccess()) return true;
+  const id = typeof siteOrId === 'object' ? siteOrId?.id : siteOrId;
+  return accountState.unlockedSiteIds.map(String).includes(String(id || ''));
 }
 
 function accountLabel() {
@@ -797,8 +797,7 @@ function accountLabel() {
   if (!accountState.user) return 'Preview';
   if (access.reason === 'owner_allowlist') return 'Owner';
   if (access.reason === 'subscription') return (access.plan || 'Pro').toUpperCase();
-  if (access.reason === 'free_24h_trial') return 'Trial ' + accessTimeText(access.trialSecondsRemaining);
-  return 'Locked';
+  return 'Free';
 }
 
 function protectedAddressLabel(s) {
@@ -806,11 +805,11 @@ function protectedAddressLabel(s) {
 }
 
 function gatedDisplayAddress(s) {
-  return hasFullAccess() ? siteDisplayAddress(s) : protectedAddressLabel(s);
+  return hasSiteAccess(s) ? siteDisplayAddress(s) : protectedAddressLabel(s);
 }
 
 function gatedMetaLine(s) {
-  if (hasFullAccess()) return siteMetaLine(s);
+  if (hasSiteAccess(s)) return siteMetaLine(s);
   const parts = [
     s?.type || 'Development site',
     siteProjectSfText(s),
@@ -821,16 +820,22 @@ function gatedMetaLine(s) {
   return parts.map(escapeText).join(' &middot; ');
 }
 
-function paywallHTML(title = 'Create a free account to unlock this deal') {
+function paywallHTML(title = 'Unlock the full property record', siteId = null) {
   return `<div class="paywall">
     <h3>${escapeText(title)}</h3>
-    <p>Full addresses, neighborhoods, map pins, owner and sale records, Excel exports, and PDF memos are available after sign-in.</p>
-    <div class="paygrid">
-      <div><b>Free account</b><span>24 hours of full access</span></div>
-      <div><b>Intro Pro</b><span>$29.99/mo after a 3-day Stripe trial</span></div>
+    <p>The free view keeps addresses, map pins, ownership, sale history, and source documents private. Choose one property or unlock every deal.</p>
+    <div class="paygrid ${siteId ? '' : 'one'}">
+      ${siteId ? `<div><b>$10 once</b><span>Full data for this property</span><button class="authprimary" onclick="startCheckout('property', '${escapeText(siteId)}')">Unlock property</button></div>` : ''}
+      <div><b>$49 / month</b><span>Unlimited property views</span><button class="authprimary" onclick="startCheckout('subscription')">Get unlimited access</button></div>
     </div>
-    <button class="ab ap" onclick="openAuthDialog()">Sign in / start free access</button>
+    ${accountState.user ? '' : '<button class="ab as" onclick="openAuthDialog()">Log in or create a free account</button>'}
   </div>`;
+}
+
+function renderExperience() {
+  const signedIn = !!accountState.user;
+  document.body.classList.toggle('landing-mode', !signedIn);
+  document.body.classList.toggle('dashboard-mode', signedIn);
 }
 
 function renderAuthUI() {
@@ -857,31 +862,29 @@ function renderAuthUI() {
   if (!accountState.user) {
     const googleButton = '<button class="authprimary" onclick="signInWithGoogle()">Continue with Google</button><div class="authsplit"><span></span><em>or</em><span></span></div>';
     body.innerHTML = `<div class="authcopy">
-      <h3>Start free access</h3>
-      <p>Sign in to unlock full addresses, areas, map pins, owner/sale data, Excel, and PDF for 24 hours.</p>
+      <h3>Log in to ParcelLA</h3>
+      <p>Create a free account to browse redacted opportunities and download sample underwriting. Upgrade only when you need the underlying property data.</p>
       ${authMessage ? `<div class="authmsg">${escapeText(authMessage)}</div>` : ''}
       ${googleButton}
       <label>Email</label>
       <div class="authrow"><input id="auth-email" type="email" placeholder="you@example.com"><button onclick="sendMagicLink()">Send link</button></div>
-      <div class="authfine">After the free 24-hour account access, Intro Pro is $29.99/mo after a 3-day Stripe trial.</div>
+      <div class="authfine">Free preview. Single-property access is $10; unlimited access is $49/month during the current launch promotion.</div>
     </div>`;
     return;
   }
 
   const access = accountState.access || {};
-  const trialText = access.reason === 'free_24h_trial'
-    ? 'Free access: ' + accessTimeText(access.trialSecondsRemaining)
-    : access.reason === 'owner_allowlist'
+  const accessText = access.reason === 'owner_allowlist'
       ? 'Owner access active'
       : access.reason === 'subscription'
-      ? 'Subscription active'
-      : 'Free access expired';
+      ? 'Unlimited subscription active'
+      : `${accountState.unlockedSiteIds.length} individual propert${accountState.unlockedSiteIds.length === 1 ? 'y' : 'ies'} unlocked`;
 
   body.innerHTML = `<div class="authcopy">
     <h3>Your account</h3>
     <p>${escapeText(accountState.user.email || '')}</p>
-    <div class="authmsg">${escapeText(trialText)}</div>
-    <button class="authprimary" onclick="startCheckout()">Start Intro Pro - $29.99/mo</button>
+    <div class="authmsg">${escapeText(accessText)}</div>
+    ${hasFullAccess() ? '' : '<button class="authprimary" onclick="startCheckout(\'subscription\')">Get unlimited access - $49/month</button>'}
     <button class="authsecondary" onclick="openBillingPortal()">Manage billing</button>
     <button class="authsecondary" onclick="signOut()">Sign out</button>
   </div>`;
@@ -892,9 +895,11 @@ async function refreshAccount() {
     accountState = {
       user: null,
       profile: null,
-      access: { active: false, plan: 'free', reason: 'locked', trialSecondsRemaining: 0 },
+      access: { active: false, plan: 'free', reason: 'free_preview', trialSecondsRemaining: 0 },
+      unlockedSiteIds: [],
     };
     renderAuthUI();
+    renderExperience();
     return;
   }
   try {
@@ -902,16 +907,19 @@ async function refreshAccount() {
     accountState = {
       user: data.user || null,
       profile: data.profile || null,
-      access: data.access || { active: false, plan: 'free', reason: 'locked' },
+      access: data.access || { active: false, plan: 'free', reason: 'free_preview' },
+      unlockedSiteIds: Array.isArray(data.unlockedSiteIds) ? data.unlockedSiteIds : [],
     };
   } catch {
     accountState = {
       user: null,
       profile: null,
-      access: { active: false, plan: 'free', reason: 'locked', trialSecondsRemaining: 0 },
+      access: { active: false, plan: 'free', reason: 'free_preview', trialSecondsRemaining: 0 },
+      unlockedSiteIds: [],
     };
   }
   renderAuthUI();
+  renderExperience();
 }
 
 async function initAuth() {
@@ -930,7 +938,7 @@ async function initAuth() {
     authClient.auth.onAuthStateChange(async (_event, session) => {
       authSession = session || null;
       await refreshAccount();
-      if (authBooted) loadSites();
+      if (authBooted && authSession) loadSites();
     });
   } catch {
     renderAuthUI();
@@ -990,16 +998,19 @@ async function signOut() {
   authSession = null;
   await refreshAccount();
   closeAuthDialog();
-  loadSites();
 }
 
-async function startCheckout() {
-  if (!accountState.user) return openAuthDialog('Sign in first, then you can start the paid trial.');
+async function startCheckout(kind = 'subscription', siteId = null) {
+  if (!accountState.user) {
+    localStorage.setItem('parcella_checkout_intent', JSON.stringify({ kind, siteId }));
+    return openAuthDialog('Log in first, then ParcelLA will continue to secure checkout.');
+  }
+  if (kind === 'property' && !siteId) return;
   try {
     const data = await fetchJSONWithTimeout(API + '/api/stripe/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan: 'pro' }),
+      body: JSON.stringify({ kind, siteId }),
     }, 20000);
     if (data?.url) window.location.href = data.url;
   } catch (e) {
@@ -1022,10 +1033,11 @@ async function openBillingPortal() {
 
 function requireFullAccess(action = 'view this deal') {
   if (hasFullAccess()) return true;
-  openAuthDialog('Sign in to ' + action + '. Free accounts unlock full data for 24 hours.');
+  openAuthDialog('Unlimited access is required to ' + action + '.');
   return false;
 }
 
+document.body.className = 'landing-mode';
 document.getElementById('app').innerHTML = `<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--navy:#0f1f3d;--navy2:#172b52;--gold:#b98b2f;--green:#1d9e75;--red:#d94b4b;--amber:#ef9f27;--blue:#378add;--ink:#1b2533;--muted:#6f7b8c;--line:#dfe5ec;--panel:#ffffff;--soft:#f3f6f9;--soft2:#e9eef4}
@@ -1055,7 +1067,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .empty{text-align:center;padding:34px 16px;color:#7f8a9a;font-size:12px}.sw{text-align:center;padding:34px;color:#7f8a9a;font-size:12px}.spin{width:26px;height:26px;border:3px solid #e7edf4;border-top-color:var(--navy);border-radius:50%;animation:sp 0.8s linear infinite;margin:0 auto 9px}@keyframes sp{to{transform:rotate(360deg)}}
 .detail{position:fixed;right:0;top:48px;width:min(560px,46vw);max-width:100vw;height:calc(100vh - 48px);background:#fff;border-left:1px solid var(--line);overflow-y:auto;overflow-x:hidden;transform:translateX(100%);transition:transform 0.2s;z-index:50;box-shadow:-10px 0 30px rgba(15,31,61,0.14)}.detail.open{transform:translateX(0)}
 .settings,.authmodal{position:fixed;inset:0;background:rgba(15,31,61,.42);display:none;align-items:flex-start;justify-content:center;padding:70px 16px 16px;z-index:200;overflow:auto}.settings.open,.authmodal.open{display:flex}.settings-panel,.authpanel{width:min(820px,100%);background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 50px rgba(15,31,61,.25);overflow:hidden}.authpanel{width:min(430px,100%)}.settings-head,.authhead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);background:#f8fafc}.settings-head h3,.authhead h3{font-size:14px;color:var(--navy)}.settings-head p,.authhead p{font-size:10px;color:#6f7b8c;margin-top:2px}.settings-body,.authbody{padding:12px 14px}.settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.setfield{border:1px solid var(--line);border-radius:8px;padding:8px;background:#fbfcfd}.setfield label{display:block;font-size:8px;font-weight:900;text-transform:uppercase;color:#7f8a9a;margin-bottom:5px}.setfield .mfr input{font-size:12px}.setnote{font-size:10px;color:#6f7b8c;line-height:1.35;margin:10px 0 0}.setactions{display:flex;justify-content:flex-end;gap:7px;padding:10px 14px;border-top:1px solid var(--line);background:#f8fafc}.setactions button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:800;cursor:pointer;color:#536071}.setactions button.primary{background:var(--navy);border-color:var(--navy);color:#fff}.setactions button.warn{color:#8a5b06;background:#fffaf0;border-color:#ead7a6}
-.authcopy{display:grid;gap:9px}.authcopy h3{font-size:16px;color:var(--navy)}.authcopy p{font-size:12px;color:#536071;line-height:1.4}.authcopy label{font-size:9px;font-weight:900;color:#7f8a9a;text-transform:uppercase}.authprimary,.authsecondary,.authrow button{border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:7px;padding:9px 10px;font-size:12px;font-weight:900;cursor:pointer}.authsecondary{background:#fff;color:var(--navy)}.authrow{display:flex;gap:6px}.authrow input{flex:1;border:1px solid var(--line);border-radius:7px;padding:8px;font-size:12px}.authmsg{border:1px solid #e8d6a7;background:#fffaf0;color:#7a5108;border-radius:7px;padding:8px;font-size:12px;font-weight:800}.authfine{font-size:11px;color:#6f7b8c;line-height:1.35}.authsplit{display:flex;align-items:center;gap:8px;color:#9aa4b2;font-size:10px;text-transform:uppercase;font-weight:900}.authsplit span{height:1px;background:var(--line);flex:1}.paywall{border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;background:#fffaf0;padding:12px;margin:6px 0 10px}.paywall h3{font-size:15px;color:var(--navy);margin-bottom:5px}.paywall p{font-size:12px;color:#536071;line-height:1.45}.paygrid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}.paygrid div{background:#fff;border:1px solid #ead7a6;border-radius:7px;padding:8px}.paygrid b{display:block;font-size:12px;color:#7a5108}.paygrid span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}
+.authcopy{display:grid;gap:9px}.authcopy h3{font-size:16px;color:var(--navy)}.authcopy p{font-size:12px;color:#536071;line-height:1.4}.authcopy label{font-size:9px;font-weight:900;color:#7f8a9a;text-transform:uppercase}.authprimary,.authsecondary,.authrow button{border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:7px;padding:9px 10px;font-size:12px;font-weight:900;cursor:pointer}.authsecondary{background:#fff;color:var(--navy)}.authrow{display:flex;gap:6px}.authrow input{flex:1;border:1px solid var(--line);border-radius:7px;padding:8px;font-size:12px}.authmsg{border:1px solid #e8d6a7;background:#fffaf0;color:#7a5108;border-radius:7px;padding:8px;font-size:12px;font-weight:800}.authfine{font-size:11px;color:#6f7b8c;line-height:1.35}.authsplit{display:flex;align-items:center;gap:8px;color:#9aa4b2;font-size:10px;text-transform:uppercase;font-weight:900}.authsplit span{height:1px;background:var(--line);flex:1}.paywall{border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;background:#fffaf0;padding:12px;margin:6px 0 10px}.paywall h3{font-size:15px;color:var(--navy);margin-bottom:5px}.paywall p{font-size:12px;color:#536071;line-height:1.45}.paygrid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}.paygrid.one{grid-template-columns:1fr}.paygrid div{background:#fff;border:1px solid #ead7a6;border-radius:7px;padding:8px}.paygrid b{display:block;font-size:12px;color:#7a5108}.paygrid span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.paygrid .authprimary{width:100%;margin-top:8px}
 .dh{padding:9px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#fff;z-index:2}.dht{font-size:12px;font-weight:800;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px}.dha{display:flex;gap:5px;flex-shrink:0}.da{padding:5px 8px;font-size:9px;font-weight:800;border:1px solid var(--line);border-radius:5px;cursor:pointer;background:#fff;color:#536071}.da.p{background:var(--navy);color:#fff;border-color:var(--navy)}.dhx{background:none;border:none;font-size:18px;cursor:pointer;color:#8792a2;padding:0 2px;flex-shrink:0}
 .db{padding:10px 12px}.sh{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0;color:#8390a2;margin:10px 0 5px}.sh:first-child{margin-top:0}.ig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:6px}.ic{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:6px 8px}.icl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.icv{font-size:11px;font-weight:800;overflow-wrap:anywhere}
 .mbg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:5px}.mb{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:7px 8px;border-left:3px solid #ddd}.mbl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.mbv{font-size:15px;font-weight:900}.mbs{font-size:8px;color:#7f8a9a;margin-top:1px;line-height:1.15}
@@ -1068,6 +1080,71 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 @media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}}
 @media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg,.maplinks,.sourcelinks,.settings-grid{grid-template-columns:1fr}.viewtabs{width:100%;margin-left:0}.viewbtn{flex:1}}
 </style>
+<main class="landing-page" id="landing-page">
+  <section class="landing-hero">
+    <img src="/assets/parcella-dashboard.png?v=2026090202" alt="ParcelLA development site dashboard with underwriting and planning documents">
+    <div class="landing-scrim"></div>
+    <header class="landing-nav">
+      <a class="landing-brand" href="#">PARCEL<span>LA</span></a>
+      <nav class="landing-navlinks" aria-label="Landing page navigation"><a href="#platform">Platform</a><a href="#capabilities">Data</a><a href="#pricing">Pricing</a></nav>
+      <button class="landing-login" onclick="openAuthDialog()">Log in</button>
+    </header>
+    <div class="landing-hero-inner">
+      <div class="landing-eyebrow">Los Angeles development intelligence</div>
+      <h1>ParcelLA</h1>
+      <p class="landing-hero-copy">Find permitted and entitled opportunities, test the underwriting, and move from city records to a deal decision in one place.</p>
+      <div class="landing-actions">
+        <button class="landing-cta" onclick="openAuthDialog()">Explore free</button>
+        <a class="landing-link" href="#platform">See the platform</a>
+      </div>
+      <div class="landing-hero-proof">
+        <div><b>Permit pipeline</b><span>Multifamily, mixed-use, condo and new homes</span></div>
+        <div><b>Live underwriting</b><span>Costs, comps, returns and scenarios</span></div>
+        <div><b>Source documents</b><span>Planning cases, PDFs and property records</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="landing-band" id="platform">
+    <div class="landing-inner">
+      <div class="landing-kicker">The working screen</div>
+      <h2 class="landing-title">One view from site discovery to the planning file.</h2>
+      <p class="landing-lead">Search the active development pipeline, compare opportunities, adjust construction and financing assumptions, and inspect the documents behind the project.</p>
+      <img class="product-shot" src="/assets/parcella-dashboard.png?v=2026090202" alt="ParcelLA property list, underwriting metrics, and planning PDF links">
+    </div>
+  </section>
+
+  <section class="landing-band landing-capabilities" id="capabilities">
+    <div class="landing-inner">
+      <div class="landing-kicker">Built for acquisition work</div>
+      <h2 class="landing-title">The facts that shape a development decision.</h2>
+      <div class="cap-grid">
+        <article class="cap-item"><span class="cap-number">01</span><h3>Search the permit pipeline</h3><p>Filter multifamily, mixed-use, condo, ED1, and single-family projects by status, size, neighborhood, and economics.</p></article>
+        <article class="cap-item"><span class="cap-number">02</span><h3>Re-underwrite instantly</h3><p>Adjust hard costs, land basis, financing, construction type, rents, and exit assumptions without rebuilding a model.</p></article>
+        <article class="cap-item"><span class="cap-number">03</span><h3>Open the underlying record</h3><p>Review available planning cases, direct PDFs, owner evidence, APNs, sale history, mortgage records, and local comps.</p></article>
+        <article class="cap-item"><span class="cap-number">04</span><h3>Evaluate houses correctly</h3><p>New homes use completed-home sales per building square foot, lot-based land assumptions, and residential return metrics.</p></article>
+        <article class="cap-item"><span class="cap-number">05</span><h3>Model affordable housing</h3><p>ED1 underwriting carries applicable rent limitations into revenue assumptions and exported analysis.</p></article>
+        <article class="cap-item"><span class="cap-number">06</span><h3>Take the work with you</h3><p>Generate consistent Excel workbooks, PDF deal memos, and shareable property views from the same underwriting state.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="landing-band pricing-band" id="pricing">
+    <div class="landing-inner">
+      <div class="promo-row"><strong>Launch promotion</strong><span>Choose free research, one deal, or unlimited access. Cancel the monthly plan any time.</span></div>
+      <div class="pricing-grid">
+        <article class="price-card"><div class="price-label">Free research</div><h3>Preview</h3><div class="price">$0</div><p class="price-copy">Understand the opportunity set before paying for identifying data.</p><ul class="price-list"><li>Redacted property browsing</li><li>Core underwriting metrics</li><li>Sample Excel and PDF exports</li></ul><button class="price-action" onclick="openAuthDialog()">Create free account</button></article>
+        <article class="price-card"><div class="price-label">Pay as you go</div><h3>One property</h3><div class="price">$10 <small>once</small></div><p class="price-copy">Unlock the full record for one property you select.</p><ul class="price-list"><li>Full property address</li><li>Available owner, sale and mortgage data</li><li>Planning PDFs and full exports</li></ul><button class="price-action" onclick="openAuthDialog('Log in free, then choose the property you want to unlock.')">Browse properties</button></article>
+        <article class="price-card featured"><div class="price-label">Best for active searches</div><h3>Unlimited</h3><div class="price">$49 <small>/ month</small></div><p class="price-copy">Open every available property record with no per-property charge.</p><ul class="price-list"><li>Unlimited addresses and map access</li><li>Full records and source documents</li><li>Full Excel, PDF, sharing and analysis</li></ul><button class="price-action" onclick="startCheckout('subscription')">Get unlimited access</button></article>
+      </div>
+      <p class="pricing-note">Payments are processed by Stripe. Card and US bank account payments are supported. Parcel and planning records vary by property and source availability.</p>
+    </div>
+  </section>
+
+  <section class="landing-final"><div class="landing-inner"><div><h2>Start with the pipeline. Unlock the deals that matter.</h2><p>Create a free account and see how ParcelLA fits your acquisition process.</p></div><button class="landing-cta" onclick="openAuthDialog()">Explore ParcelLA</button></div></section>
+  <footer class="landing-footer"><div class="landing-inner"><span>ParcelLA · Los Angeles development intelligence</span><a href="#pricing">Pricing</a></div></footer>
+</main>
+<div id="dashboard-shell">
 <nav class="nav">
   <div class="logo">PARCEL<span>LA</span></div>
   <div class="ntag">LA Development Sites</div>
@@ -1183,21 +1260,60 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
     </div>
   </div>
 </div>
+</div>
 <div class="authmodal" id="auth-modal">
   <div class="authpanel">
     <div class="authhead">
-      <div><h3>ParceLLA Access</h3><p>Free account unlocks full data for 24 hours.</p></div>
+      <div><h3>ParcelLA Access</h3><p>Free preview, $10 per property, or $49/month unlimited.</p></div>
       <button class="dhx" onclick="closeAuthDialog()">×</button>
     </div>
     <div class="authbody" id="auth-body"></div>
   </div>
 </div>`;
 
+async function confirmCheckoutReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const checkout = params.get('checkout');
+  const sessionId = params.get('session_id');
+  if (checkout === 'cancelled') {
+    openAuthDialog('Checkout was cancelled. No charge was made.');
+    return null;
+  }
+  if (checkout !== 'success' || !sessionId || !authSession) return null;
+
+  openAuthDialog('Confirming your payment with Stripe...');
+  try {
+    const result = await fetchJSONWithTimeout(API + '/api/stripe/checkout-session/' + encodeURIComponent(sessionId), {}, 25000);
+    await refreshAccount();
+    if (result.fulfilled) {
+      openAuthDialog(result.purchaseKind === 'property'
+        ? 'Payment confirmed. This property is now unlocked.'
+        : 'Payment confirmed. Unlimited access is active.');
+    } else if (result.status === 'payment_pending') {
+      openAuthDialog('Your bank payment is processing. ParcelLA will unlock access automatically after Stripe confirms it.');
+    } else {
+      openAuthDialog('Payment is still being confirmed. Your access will update automatically.');
+    }
+    return result;
+  } catch (error) {
+    openAuthDialog('Payment return received, but confirmation is still pending. Please check again shortly.');
+    return null;
+  }
+}
+
+async function resumeCheckoutIntent() {
+  if (!accountState.user) return false;
+  let intent = null;
+  try { intent = JSON.parse(localStorage.getItem('parcella_checkout_intent') || 'null'); } catch {}
+  localStorage.removeItem('parcella_checkout_intent');
+  if (!intent?.kind) return false;
+  await startCheckout(intent.kind, intent.siteId || null);
+  return true;
+}
+
 async function boot() {
   syncUnderwritingModeControls();
-  initAuth().then(() => {
-    if (authSession?.access_token) loadSites();
-  });
+  await initAuth();
   try {
     await fetchJSONWithTimeout(API + '/api/health', {}, 8000);
     g('adot').className = 'adot ok';
@@ -1206,6 +1322,9 @@ async function boot() {
     g('adot').className = 'adot';
     g('albl').textContent = 'API waking up';
   }
+  if (!authSession?.access_token) return;
+  const checkoutResult = await confirmCheckoutReturn();
+  if (!checkoutResult && await resumeCheckoutIntent()) return;
   await loadSites();
 }
 function currentHardCostOverride() {
@@ -2107,8 +2226,8 @@ async function hydrateOwnerInfo(s) {
   const revision = ++ownerHydrationRevision;
   const el = g('owner-' + s.id);
   if (!el) return;
-  if (!hasFullAccess()) {
-    el.innerHTML = '<div class="ownerbox"><b>Owner data locked</b><span>Sign in for a free 24-hour account to view owner and sale data.</span></div>';
+  if (!hasSiteAccess(s)) {
+    el.innerHTML = '<div class="ownerbox"><b>Owner data locked</b><span>Unlock this property or choose Unlimited to view owner and sale data.</span></div>';
     return;
   }
   el.innerHTML = '<div class="ownerbox"><b>Loading owner info...</b><span>Checking configured parcel and property-data providers.</span></div>';
@@ -2525,7 +2644,7 @@ function renderCards() {
     const addrNote = siteAddressNote(s);
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
       <div class="ch">
-        <div><div class="ca">${escapeText(displayAddr)}</div><div class="cm">${hasFullAccess() && addrNote ? escapeText(addrNote) + ' &middot; ' : ''}${gatedMetaLine(s)}</div></div>
+        <div><div class="ca">${escapeText(displayAddr)}</div><div class="cm">${hasSiteAccess(s) && addrNote ? escapeText(addrNote) + ' &middot; ' : ''}${gatedMetaLine(s)}</div></div>
         <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div><button class="watchbtn ${watched?'on':''}" onclick="toggleWatch(${s.id}, event)">${watched?'Saved':'Save'}</button></div>
       </div>
       <div class="bdgs">
@@ -2550,7 +2669,7 @@ function renderCards() {
 function renderMapView() {
   const el = g('list');
   if (!hasFullAccess()) {
-    el.innerHTML = paywallHTML('Sign in to view the deal map');
+    el.innerHTML = paywallHTML('Unlimited access unlocks the full deal map');
     return;
   }
   const visibleSites = filtered
@@ -2633,8 +2752,8 @@ async function openDetail(id) {
   if (!s) return;
   g('d-title').textContent = gatedDisplayAddress(s);
   g('detail').classList.add('open');
-  if (!hasFullAccess()) {
-    g('d-body').innerHTML = paywallHTML('Sign in to view this property');
+  if (!hasSiteAccess(s)) {
+    renderSampleDetail(s);
     renderCards();
     return;
   }
@@ -2657,6 +2776,35 @@ async function openDetail(id) {
       renderDetail(s);
     }
   }
+}
+
+function renderSampleDetail(s) {
+  const costs = costModelForSite(s);
+  const valuation = valuationForScreenSite(s, costs);
+  const house = isHouseSite(s);
+  const profit = Number(valuation.netProfit || 0);
+  const irr = Number(valuation.leveragedIRR || 0);
+  g('d-body').innerHTML = `
+    <div class="ownerbox" style="border-left-color:var(--gold);margin-bottom:8px">
+      <b>Free sample view</b>
+      <span>This underwriting is visible, but the address and identifying property records remain protected.</span>
+    </div>
+    <div class="sh">Sample opportunity</div>
+    <div class="ig">
+      <div class="ic"><div class="icl">Project type</div><div class="icv">${escapeText(s.type || 'Development site')}</div></div>
+      <div class="ic"><div class="icl">Units</div><div class="icv">${fmtN(s.units || 0)}</div></div>
+      <div class="ic"><div class="icl">Status</div><div class="icv">${escapeText(developmentStatusLabel(s))}</div></div>
+    </div>
+    <div class="mbg">
+      <div class="mb" style="border-left-color:${profit >= 0 ? '#1d9e75' : '#d94b4b'}"><div class="mbl">Net profit</div><div class="mbv">${fmtD(profit)}</div></div>
+      <div class="mb" style="border-left-color:${irrC(irr)}"><div class="mbl">IRR</div><div class="mbv">${Math.round(irr * 10) / 10}%</div></div>
+      <div class="mb"><div class="mbl">All-in cost</div><div class="mbv">${fmtD(costs.totalCost || 0)}</div></div>
+      <div class="mb"><div class="mbl">${house ? 'Return on cost' : 'Development spread'}</div><div class="mbv">${house ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : ((valuation.devSpreadPct || 0) * 100).toFixed(1)}%</div></div>
+    </div>
+    <div class="sh">Sample downloads</div>
+    <button class="ab as" onclick="exportExcel(${s.id})">Download sample Excel workbook</button>
+    <button class="ab as" onclick="exportPDF(${s.id})">Download sample PDF deal memo</button>
+    ${paywallHTML('Unlock the address and complete record', s.id)}`;
 }
 
 function planningDocumentsHTML(site) {
@@ -4683,10 +4831,48 @@ function pencilCheckRows(s, m) {
 }
 
 
+function exportSampleExcel(s) {
+  const costs = costModelForSite(s);
+  const valuation = valuationForScreenSite(s, costs);
+  const rows = [
+    ['PARCELLA SAMPLE UNDERWRITING', ''],
+    ['Property', 'Protected sample property'],
+    ['Project type', s.type || 'Development site'],
+    ['Units', Number(s.units || 0)],
+    ['Development status', developmentStatusLabel(s)],
+    ['All-in cost', Math.round(costs.totalCost || 0)],
+    ['Exit value', Math.round(valuation.exitValue || 0)],
+    ['Net profit', Math.round(valuation.netProfit || 0)],
+    ['IRR', Math.round(Number(valuation.leveragedIRR || 0) * 10) / 10],
+    [isHouseSite(s) ? 'Return on cost' : 'Development spread', isHouseSite(s)
+      ? Math.round(Number(valuation.returnOnCost || 0) * 1000) / 10
+      : Math.round(Number(valuation.devSpreadPct || 0) * 1000) / 10],
+    ['', ''],
+    ['SAMPLE DATA', 'Address and identifying property data are intentionally omitted.'],
+    ['Access', '$10 for this property or $49/month for unlimited properties.'],
+  ];
+  const body = rows.map(row => `<Row>${row.map(value => xlsCell(value, typeof value === 'number' ? 'Number' : 'String')).join('')}</Row>`).join('');
+  const workbook = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="body"/><Style ss:ID="num"><NumberFormat ss:Format="#,##0.00"/></Style></Styles><Worksheet ss:Name="Sample Underwriting"><Table>${body}</Table></Worksheet></Workbook>`;
+  downloadBlobFile('ParcelLA_Sample_Underwriting.xls', new Blob([workbook], { type: 'application/vnd.ms-excel' }));
+}
+
+function exportSamplePDF(s) {
+  const costs = costModelForSite(s);
+  const valuation = valuationForScreenSite(s, costs);
+  const win = window.open('', '_blank');
+  if (!win) return alert('Please allow pop-ups to open the sample PDF.');
+  const metric = isHouseSite(s) ? 'Return on cost' : 'Development spread';
+  const metricValue = isHouseSite(s)
+    ? ((valuation.returnOnCost || 0) * 100).toFixed(1)
+    : ((valuation.devSpreadPct || 0) * 100).toFixed(1);
+  win.document.write(`<!doctype html><html><head><title>ParcelLA Sample Deal Memo</title><style>body{font-family:Arial,sans-serif;color:#17243a;margin:42px}header{border-bottom:4px solid #b98b2f;padding-bottom:16px}h1{margin:0;font-size:28px}h1 span{color:#b98b2f}.sample{margin:18px 0;padding:12px;border:1px solid #d6dde6;background:#f5f7f9;font-weight:700}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.metric{border:1px solid #d6dde6;padding:14px}.metric b{display:block;font-size:11px;text-transform:uppercase;color:#6f7b8c;margin-bottom:5px}.metric span{font-size:19px;font-weight:800}footer{margin-top:34px;border-top:1px solid #d6dde6;padding-top:14px;font-size:10px;color:#6f7b8c}@media print{body{margin:24px}}</style></head><body><header><h1>PARCEL<span>LA</span></h1><p>Sample Development Underwriting</p></header><div class="sample">SAMPLE DATA. Address and identifying property records are intentionally omitted.</div><h2>Protected sample property</h2><p>${escapeText(s.type || 'Development site')} · ${fmtN(s.units || 0)} units · ${escapeText(developmentStatusLabel(s))}</p><div class="grid"><div class="metric"><b>All-in cost</b><span>${fmtD(costs.totalCost || 0)}</span></div><div class="metric"><b>Exit value</b><span>${fmtD(valuation.exitValue || 0)}</span></div><div class="metric"><b>Net profit</b><span>${fmtD(valuation.netProfit || 0)}</span></div><div class="metric"><b>IRR</b><span>${Math.round(Number(valuation.leveragedIRR || 0) * 10) / 10}%</span></div><div class="metric"><b>${metric}</b><span>${metricValue}%</span></div><div class="metric"><b>Access</b><span>$10 property / $49 monthly</span></div></div><footer>ParcelLA automated underwriting is for screening purposes and is not a formal appraisal or investment advice.</footer><script>window.print();<\/script></body></html>`);
+  win.document.close();
+}
+
 async function exportExcel(id) {
-  if (!requireFullAccess('download Excel workbooks')) return;
   const s = allSites.find(x => x.id === id);
   if (!s) return;
+  if (!hasSiteAccess(s)) return exportSampleExcel(s);
   await hydrateSitePlanningDetails(s);
   const displayAddr = siteDisplayAddress(s);
   const isHouse = isHouseSite(s);
@@ -4860,10 +5046,10 @@ async function exportExcel(id) {
   }
 }
 async function exportPDF(id) {
-  if (!requireFullAccess('download PDF memos')) return;
   if (!id) return;
   const s = allSites.find(x => x.id === id);
   if (!s) return;
+  if (!hasSiteAccess(s)) return exportSamplePDF(s);
   await hydrateSitePlanningDetails(s);
   const displayAddr = siteDisplayAddress(s);
   const addrNote = siteAddressNote(s);

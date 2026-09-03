@@ -10,8 +10,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY   // service key for server-side verification
 );
 
-const FREE_ACCESS_HOURS = 24;
+const FREE_ACCESS_HOURS = 0;
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing']);
+const PROPERTY_UNLOCK_EVENT_TYPES = [
+  'checkout.session.completed',
+  'checkout.session.async_payment_succeeded',
+  'checkout.session.verified',
+];
 const AUTH_LOOKUP_TIMEOUT_MS = Number(process.env.AUTH_LOOKUP_TIMEOUT_MS || 2500);
 const DEFAULT_ALWAYS_ACCESS_EMAILS = [
   'ssamuel@goodhealthcorp.com',
@@ -32,16 +37,6 @@ function timeoutAfter(ms, value) {
 
 async function withAuthTimeout(promise, fallback, timeoutMs = AUTH_LOOKUP_TIMEOUT_MS) {
   return Promise.race([promise, timeoutAfter(timeoutMs, fallback)]);
-}
-
-function trialEndIso() {
-  return new Date(Date.now() + FREE_ACCESS_HOURS * 60 * 60 * 1000).toISOString();
-}
-
-function expiresInSeconds(value) {
-  if (!value) return 0;
-  const ms = new Date(value).getTime() - Date.now();
-  return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
 }
 
 function emailKey(value) {
@@ -71,19 +66,48 @@ export function accessForProfile(profile = null) {
   const plan = profile?.plan || 'free';
   const subscriptionStatus = profile?.subscription_status || 'inactive';
   const paidAccess = ['pro', 'enterprise'].includes(plan) && ACTIVE_SUBSCRIPTION_STATUSES.has(subscriptionStatus);
-  const trialSecondsRemaining = expiresInSeconds(profile?.trial_ends_at);
-  const trialAccess = plan === 'free' && trialSecondsRemaining > 0;
-  const active = paidAccess || trialAccess;
 
   return {
-    active,
+    active: paidAccess,
     plan,
     subscriptionStatus,
-    trialEndsAt: profile?.trial_ends_at || null,
-    trialSecondsRemaining,
+    trialEndsAt: null,
+    trialSecondsRemaining: 0,
     freeAccessHours: FREE_ACCESS_HOURS,
-    reason: paidAccess ? 'subscription' : trialAccess ? 'free_24h_trial' : 'locked',
+    reason: paidAccess ? 'subscription' : 'free_preview',
   };
+}
+
+function paidPropertyUnlock(row = {}) {
+  const session = row.stripe_data || {};
+  const metadata = session.metadata || {};
+  const purchaseKind = metadata.purchase_kind || metadata.kind;
+  const siteId = String(metadata.site_id || '').trim();
+  const paymentStatus = String(session.payment_status || '').toLowerCase();
+  return purchaseKind === 'property' && siteId && paymentStatus === 'paid' ? siteId : null;
+}
+
+export async function getUnlockedSiteIds(userId) {
+  if (!userId) return [];
+  const { data, error } = await supabase
+    .from('subscription_events')
+    .select('event_type,stripe_data')
+    .eq('user_id', userId)
+    .in('event_type', PROPERTY_UNLOCK_EVENT_TYPES)
+    .limit(1000);
+  if (error) throw error;
+  return [...new Set((data || []).map(paidPropertyUnlock).filter(Boolean))];
+}
+
+export async function getUnlockedSiteIdsFast(userId, timeoutMs = AUTH_LOOKUP_TIMEOUT_MS) {
+  if (!userId) return [];
+  try {
+    const result = await withAuthTimeout(getUnlockedSiteIds(userId), [], timeoutMs);
+    return Array.isArray(result) ? result : [];
+  } catch (err) {
+    console.warn('[auth] Property unlock lookup failed:', err.message);
+    return [];
+  }
 }
 
 export async function ensureUserProfile(user) {
@@ -109,18 +133,13 @@ export async function ensureUserProfile(user) {
         id: user.id,
         ...patch,
         plan: 'free',
-        subscription_status: 'trialing',
-        trial_ends_at: trialEndIso(),
+        subscription_status: 'inactive',
+        trial_ends_at: null,
       })
       .select('*')
       .single();
     if (error) throw error;
     return data;
-  }
-
-  if (!existing.trial_ends_at && (existing.plan || 'free') === 'free') {
-    patch.subscription_status = existing.subscription_status || 'trialing';
-    patch.trial_ends_at = trialEndIso();
   }
 
   const { data, error } = await supabase
@@ -180,7 +199,7 @@ export async function requireActiveAccess(req, res, next) {
     const access = await getUserAccess(req.user);
     if (!access.active) {
       return res.status(402).json({
-        error: 'A free account or active subscription is required to view full deal details.',
+        error: 'A property unlock or active subscription is required to view full deal details.',
         access,
         upgrade: '/api/stripe/checkout',
       });

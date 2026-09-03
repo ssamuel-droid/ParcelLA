@@ -59,7 +59,7 @@ export { pdfRouter };
  * GET  /api/auth/me
  */
 import { createClient } from '@supabase/supabase-js';
-import { ensureUserProfile, accessForProfile } from '../middleware/auth.js';
+import { ensureUserProfile, accessForProfile, getUnlockedSiteIdsFast } from '../middleware/auth.js';
 
 const authRouter = Router();
 
@@ -74,9 +74,10 @@ authRouter.get('/config', (req, res) => {
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
     googleEnabled: googleProviderReady,
     googleProviderReady,
-    freeAccessHours: 24,
-    introPrice: 29.99,
-    checkoutTrialDays: 3,
+    freeAccessHours: 0,
+    propertyPrice: 10,
+    introPrice: 49,
+    checkoutTrialDays: 0,
   });
 });
 
@@ -157,10 +158,13 @@ authRouter.get('/me', async (req, res, next) => {
     const { data: saved } = await sb
       .from('saved_sites').select('site_id').eq('user_id', user.id);
 
+    const unlockedSiteIds = await getUnlockedSiteIdsFast(user.id);
+
     res.json({
       user,
       profile,
       access,
+      unlockedSiteIds,
       savedSiteIds: saved?.map(s => s.site_id) ?? [],
     });
   } catch (err) { next(err); }

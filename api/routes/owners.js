@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
-import { optionalAuth, getUserAccess } from '../middleware/auth.js';
+import { optionalAuth, getUserAccess, getUnlockedSiteIdsFast } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -585,6 +585,38 @@ function monthlyDatabase() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   return ownerDb;
+}
+
+async function unlockedOwnerQuery(siteId) {
+  const db = monthlyDatabase();
+  const id = Number.parseInt(siteId, 10);
+  if (!db || !id) return null;
+
+  const [{ data: site }, { data: permit }] = await Promise.all([
+    db.from('sites')
+      .select('id,address,lat,lng,raw_permit_data,external_property_record')
+      .eq('id', id)
+      .maybeSingle(),
+    db.from('permits')
+      .select('id,address,lat,lng,raw_data')
+      .eq('id', id)
+      .maybeSingle(),
+  ]);
+  const record = site || permit;
+  if (!record) return null;
+  const raw = record.raw_permit_data || record.raw_data || {};
+  const property = record.external_property_record || {};
+  return {
+    siteId: String(id),
+    address: record.address,
+    addresses: raw.address_aliases || raw.addressAliases || [],
+    lat: record.lat,
+    lng: record.lng,
+    apn: normalizeApns(property.apns, property.apn, raw.apns, raw.apn)[0] || '',
+    apns: normalizeApns(property.apns, property.apn, raw.apns, raw.apn),
+    zipCode: property.zipCode || raw.zip_code || raw.zipCode || '',
+    locality: property.city || raw.city || 'Los Angeles',
+  };
 }
 
 function addressLine(value) {
@@ -1364,13 +1396,20 @@ async function lookupOwner({ address, addresses, lat, lng, apn, apns, siteId, zi
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const access = await getUserAccess(req.user);
+    let ownerQuery = req.query;
     if (!access.active) {
-      return res.status(402).json({
-        error: 'Sign in for a free 24-hour account to view owner and sale data.',
-        access,
-      });
+      const siteId = String(req.query.siteId || '').trim();
+      const unlockedSiteIds = await getUnlockedSiteIdsFast(req.user?.id);
+      if (!siteId || !unlockedSiteIds.includes(siteId)) {
+        return res.status(402).json({
+          error: 'Unlock this property or choose Unlimited to view owner and sale data.',
+          access,
+        });
+      }
+      ownerQuery = await unlockedOwnerQuery(siteId);
+      if (!ownerQuery) return res.status(404).json({ error: 'Unlocked property record not found.' });
     }
-    const { address, addresses, lat, lng, apn, apns, siteId, zipCode, locality } = req.query;
+    const { address, addresses, lat, lng, apn, apns, siteId, zipCode, locality } = ownerQuery;
     const parcelApns = normalizeApns(apns, apn);
     if (!address && !parcelApns.length && (!lat || !lng)) {
       return res.status(400).json({ error: 'address, apn, or lat/lng is required' });

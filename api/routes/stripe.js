@@ -1,17 +1,15 @@
 /**
- * ParceLLA — Stripe Subscriptions Router
+ * ParceLLA — Stripe Billing Router
  *
  * Plans:
- *   free        — 10 searches/day, no PDF, no alerts
- *   pro         — $49/mo — unlimited search, PDF, alerts, AI narrative
- *   enterprise  — $199/mo — team seats, API access, white-label
+ *   free        — redacted browsing and sample exports
+ *   property    — $10 one-time unlock for one property
+ *   pro         — $49/mo unlimited full-property access
  *
  * Setup:
  *   npm install stripe
  *   STRIPE_SECRET_KEY=sk_live_xxx
  *   STRIPE_WEBHOOK_SECRET=whsec_xxx
- *   STRIPE_PRO_PRICE_ID=price_xxx
- *   STRIPE_ENTERPRISE_PRICE_ID=price_xxx
  *
  * Routes:
  *   POST /api/stripe/checkout     — create Stripe checkout session
@@ -23,7 +21,7 @@
 import { Router }      from 'express';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
-import { requireAuth }  from '../middleware/auth.js';
+import { requireAuth, getUnlockedSiteIdsFast } from '../middleware/auth.js';
 
 const router = Router();
 function sb() {
@@ -44,25 +42,109 @@ const PLANS = {
   free: {
     name:        'Free',
     price:       0,
-    features:    ['Public preview', '24 hours of full address access after sign-in', 'Basic filters', 'Upgrade for ongoing access'],
-    limits:      { sitesPerDay: 10, modelsPerDay: 5, pdf: false, alerts: 1, aiNarrative: false, trialHours: 24 },
+    billing:      'free',
+    features:    ['Redacted property browsing', 'Core underwriting preview', 'Sample PDF and Excel downloads'],
+    limits:      { sitesPerDay: 20, modelsPerDay: 10, pdf: 'sample', alerts: 1, aiNarrative: false },
+  },
+  property: {
+    name:        'Single Property Unlock',
+    price:       10,
+    billing:     'one_time',
+    features:    ['Full address for one property', 'Owner and sale records', 'Planning documents', 'Full PDF and Excel exports'],
+    limits:      { sitesPerDay: 20, modelsPerDay: 10, pdf: true, alerts: 1, aiNarrative: true },
   },
   pro: {
-    name:        'Intro Pro',
-    price:       29.99,
-    priceId:     process.env.STRIPE_PRO_PRICE_ID,
-    trialDays:   3,
+    name:        'Unlimited',
+    price:       49,
+    billing:     'monthly',
     features:    ['Full addresses and maps', 'Owner/sale data when available', 'Unlimited searches', 'PDF deal memos', 'Excel export', 'Deal sharing'],
     limits:      { sitesPerDay: Infinity, modelsPerDay: Infinity, pdf: true, alerts: 20, aiNarrative: true },
   },
-  enterprise: {
-    name:        'Enterprise',
-    price:       199,
-    priceId:     process.env.STRIPE_ENTERPRISE_PRICE_ID,
-    features:    ['Everything in Pro', 'Team seats (5)', 'API access', 'White-label', 'Priority support', 'Custom data feeds'],
-    limits:      { sitesPerDay: Infinity, modelsPerDay: Infinity, pdf: true, alerts: 100, aiNarrative: true, api: true, teamSeats: 5 },
-  },
 };
+
+const CHECKOUT_PAYMENT_METHODS = ['card', 'us_bank_account'];
+
+function appUrl() {
+  return String(process.env.APP_URL || 'https://parcel-la.vercel.app').replace(/\/$/, '');
+}
+
+function returnUrlForRequest(req) {
+  const origin = String(req.get('origin') || '').replace(/\/$/, '');
+  if (/^https:\/\/parcel-la(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(origin)) return origin;
+  if (/^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(origin)) return origin;
+  return appUrl();
+}
+
+async function customerForUser(user) {
+  const { data: profile } = await sb()
+    .from('profiles').select('stripe_customer_id, email').eq('id', user.id).single();
+
+  if (profile?.stripe_customer_id) return profile.stripe_customer_id;
+  const customer = await stripe().customers.create({
+    email: user.email,
+    metadata: { supabase_uid: user.id },
+  });
+  const { error } = await sb()
+    .from('profiles').update({ stripe_customer_id: customer.id }).eq('id', user.id);
+  if (error) throw error;
+  return customer.id;
+}
+
+async function billableSiteExists(siteId) {
+  const id = Number.parseInt(siteId, 10);
+  if (!id) return false;
+  const [{ data: site }, { data: permit }] = await Promise.all([
+    sb().from('sites').select('id').eq('id', id).maybeSingle(),
+    sb().from('permits').select('id').eq('id', id).maybeSingle(),
+  ]);
+  return !!(site || permit);
+}
+
+async function recordBillingEvent({ id, type, data }, userId = null) {
+  const { error } = await sb().from('subscription_events').upsert({
+    stripe_event_id: id,
+    event_type: type,
+    user_id: userId || data?.object?.metadata?.user_id || null,
+    stripe_data: data?.object || {},
+  }, { onConflict: 'stripe_event_id', ignoreDuplicates: true });
+  if (error) throw error;
+}
+
+async function fulfillCheckoutSession(session) {
+  const metadata = session?.metadata || {};
+  const userId = metadata.user_id;
+  const purchaseKind = metadata.purchase_kind || metadata.kind;
+  if (!userId) return { fulfilled: false, status: 'missing_user' };
+
+  if (purchaseKind === 'property') {
+    const paid = String(session.payment_status || '').toLowerCase() === 'paid';
+    return {
+      fulfilled: paid,
+      status: paid ? 'unlocked' : 'payment_pending',
+      siteId: String(metadata.site_id || ''),
+    };
+  }
+
+  if (purchaseKind === 'subscription' || metadata.plan === 'pro') {
+    const subscription = typeof session.subscription === 'string'
+      ? await stripe().subscriptions.retrieve(session.subscription)
+      : session.subscription;
+    const subscriptionStatus = subscription?.status || 'incomplete';
+    if (['active', 'trialing'].includes(subscriptionStatus)) {
+      const { error } = await sb().from('profiles').update({
+        plan: 'pro',
+        stripe_subscription_id: subscription.id,
+        subscription_status: subscriptionStatus,
+        trial_ends_at: null,
+      }).eq('id', userId);
+      if (error) throw error;
+      return { fulfilled: true, status: subscriptionStatus };
+    }
+    return { fulfilled: false, status: subscriptionStatus };
+  }
+
+  return { fulfilled: false, status: 'unknown_purchase' };
+}
 
 // GET /api/stripe/plans
 router.get('/plans', (req, res) => {
@@ -72,49 +154,106 @@ router.get('/plans', (req, res) => {
 // POST /api/stripe/checkout — create Stripe checkout session
 router.post('/checkout', requireAuth, async (req, res, next) => {
   try {
-    const { plan = 'pro' } = req.body;
-    if (!PLANS[plan]?.priceId) {
-      return res.status(400).json({ error: `Invalid plan: ${plan}` });
+    const purchaseKind = req.body?.kind === 'property' ? 'property' : 'subscription';
+    const siteId = purchaseKind === 'property' ? String(req.body?.siteId || '').trim() : '';
+    if (purchaseKind === 'property' && !siteId) {
+      return res.status(400).json({ error: 'A property is required for a single-property unlock.' });
+    }
+    if (purchaseKind === 'property') {
+      if (!await billableSiteExists(siteId)) {
+        return res.status(404).json({ error: 'The selected property is no longer available.' });
+      }
+      const unlocked = await getUnlockedSiteIdsFast(req.user.id);
+      if (unlocked.includes(siteId)) {
+        return res.status(409).json({ error: 'This property is already unlocked.' });
+      }
+    } else {
+      const { data: profile } = await sb()
+        .from('profiles').select('plan,subscription_status').eq('id', req.user.id).maybeSingle();
+      if (['pro', 'enterprise'].includes(profile?.plan) && ['active', 'trialing'].includes(profile?.subscription_status)) {
+        return res.status(409).json({ error: 'Unlimited access is already active for this account.' });
+      }
     }
 
-    const APP_URL = process.env.APP_URL ?? 'https://parcella.com';
-
-    // Get or create Stripe customer
-    const { data: profile } = await sb()
-      .from('profiles').select('stripe_customer_id, email').eq('id', req.user.id).single();
-
-    let customerId = profile?.stripe_customer_id;
-    if (!customerId) {
-      const customer = await stripe().customers.create({
-        email:    req.user.email,
-        metadata: { supabase_uid: req.user.id },
-      });
-      customerId = customer.id;
-      await sb().from('profiles').update({ stripe_customer_id: customerId }).eq('id', req.user.id);
-    }
-
+    const customerId = await customerForUser(req.user);
+    const metadata = {
+      user_id: req.user.id,
+      purchase_kind: purchaseKind,
+      plan: purchaseKind === 'subscription' ? 'pro' : 'property',
+      ...(siteId ? { site_id: siteId } : {}),
+    };
+    const offer = purchaseKind === 'property' ? PLANS.property : PLANS.pro;
+    const lineItem = {
+      price_data: {
+        currency: 'usd',
+        unit_amount: Math.round(offer.price * 100),
+        product_data: {
+          name: purchaseKind === 'property' ? 'ParcelLA Single Property Unlock' : 'ParcelLA Unlimited',
+          description: purchaseKind === 'property'
+            ? 'Permanent full-data access for one selected property.'
+            : 'Unlimited full-data access to ParcelLA properties.',
+        },
+        ...(purchaseKind === 'subscription' ? { recurring: { interval: 'month' } } : {}),
+      },
+      quantity: 1,
+    };
+    const successParams = new URLSearchParams({
+      checkout: 'success',
+      session_id: '{CHECKOUT_SESSION_ID}',
+      ...(siteId ? { site: siteId } : {}),
+    });
+    const successQuery = successParams.toString().replace('%7BCHECKOUT_SESSION_ID%7D', '{CHECKOUT_SESSION_ID}');
+    const returnUrl = returnUrlForRequest(req);
     const session = await stripe().checkout.sessions.create({
-      customer:             customerId,
-      payment_method_types: ['card'],
-      line_items: [{
-        price:    PLANS[plan].priceId,
-        quantity: 1,
-      }],
-      mode:               'subscription',
-      success_url:        `${APP_URL}/?upgraded=true`,
-      cancel_url:         `${APP_URL}/?checkout=cancelled`,
-      metadata:           { user_id: req.user.id, plan },
-      subscription_data:  { trial_period_days: PLANS[plan].trialDays || 3 },
+      customer: customerId,
+      client_reference_id: req.user.id,
+      payment_method_types: CHECKOUT_PAYMENT_METHODS,
+      line_items: [lineItem],
+      mode: purchaseKind === 'property' ? 'payment' : 'subscription',
+      success_url: `${returnUrl}/?${successQuery}`,
+      cancel_url: `${returnUrl}/?checkout=cancelled${siteId ? `&site=${encodeURIComponent(siteId)}` : ''}`,
+      metadata,
+      allow_promotion_codes: true,
+      ...(purchaseKind === 'property'
+        ? {
+          invoice_creation: { enabled: true },
+          payment_intent_data: { metadata },
+        }
+        : { subscription_data: { metadata } }),
     });
 
     res.json({ url: session.url, sessionId: session.id });
   } catch (err) { next(err); }
 });
 
+// GET /api/stripe/checkout-session/:sessionId — verify a return from hosted Checkout
+router.get('/checkout-session/:sessionId', requireAuth, async (req, res, next) => {
+  try {
+    const session = await stripe().checkout.sessions.retrieve(req.params.sessionId, {
+      expand: ['subscription'],
+    });
+    if (session.metadata?.user_id !== req.user.id) {
+      return res.status(403).json({ error: 'This checkout belongs to another account.' });
+    }
+
+    const result = await fulfillCheckoutSession(session);
+    await recordBillingEvent({
+      id: `checkout_session_verified_${session.id}`,
+      type: 'checkout.session.verified',
+      data: { object: session },
+    }, req.user.id);
+    res.json({
+      ...result,
+      paymentStatus: session.payment_status,
+      purchaseKind: session.metadata?.purchase_kind,
+      siteId: session.metadata?.site_id || null,
+    });
+  } catch (err) { next(err); }
+});
+
 // POST /api/stripe/portal — customer billing portal
 router.post('/portal', requireAuth, async (req, res, next) => {
   try {
-    const APP_URL = process.env.APP_URL ?? 'https://parcella.com';
     const { data: profile } = await sb()
       .from('profiles').select('stripe_customer_id').eq('id', req.user.id).single();
 
@@ -124,7 +263,7 @@ router.post('/portal', requireAuth, async (req, res, next) => {
 
     const session = await stripe().billingPortal.sessions.create({
       customer:   profile.stripe_customer_id,
-      return_url: `${APP_URL}/account`,
+      return_url: `${returnUrlForRequest(req)}/`,
     });
 
     res.json({ url: session.url });
@@ -148,20 +287,22 @@ router.post('/webhook', async (req, res) => {
   console.log(`[stripe] Event: ${event.type}`);
 
   try {
+    const eventUserId = event.data.object?.metadata?.user_id || null;
+    await recordBillingEvent(event, eventUserId);
+
     switch (event.type) {
       case 'checkout.session.completed': {
-        const session  = event.data.object;
-        const userId   = session.metadata?.user_id;
-        const plan     = session.metadata?.plan ?? 'pro';
-        if (userId) {
-          await sb().from('profiles').update({
-            plan,
-            stripe_subscription_id: session.subscription,
-            subscription_status:    'active',
-          }).eq('id', userId);
-        }
+        await fulfillCheckoutSession(event.data.object);
         break;
       }
+      case 'checkout.session.async_payment_succeeded': {
+        await fulfillCheckoutSession(event.data.object);
+        break;
+      }
+      case 'checkout.session.async_payment_failed':
+        console.warn('[stripe] Delayed payment failed:', event.data.object.id);
+        break;
+      case 'customer.subscription.created':
       case 'customer.subscription.updated': {
         const sub    = event.data.object;
         const { data: profile } = await sb()
@@ -188,15 +329,9 @@ router.post('/webhook', async (req, res) => {
       }
     }
 
-    // Log event
-    await sb().from('subscription_events').insert({
-      stripe_event_id: event.id,
-      event_type:      event.type,
-      stripe_data:     event.data.object,
-    }).onConflict('stripe_event_id').ignore();
-
   } catch (err) {
     console.error('[stripe] Webhook handler error:', err.message);
+    return res.status(500).json({ error: 'Webhook processing failed' });
   }
 
   res.json({ received: true });
