@@ -227,6 +227,7 @@ body.dashboard-mode #dashboard-shell { display: block; }
 
 .featured .price-action { background: #0f1f3d; color: #fff; }
 .pricing-note { margin-top: 18px; color: #738093; font-size: 11px; line-height: 1.5; }
+.pricing-note a { color: #304f79; font-weight: 800; }
 .landing-final { padding: 54px 24px; background: #0f1f3d; color: #fff; }
 .landing-final .landing-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .landing-final h2 { color: #fff; font-size: 30px; letter-spacing: 0; }
@@ -234,6 +235,7 @@ body.dashboard-mode #dashboard-shell { display: block; }
 .landing-footer { padding: 22px 24px; background: #091429; color: rgba(255, 255, 255, .6); }
 .landing-footer .landing-inner { display: flex; justify-content: space-between; gap: 20px; font-size: 11px; }
 .landing-footer a { color: rgba(255, 255, 255, .78); text-decoration: none; }
+.landing-footer .landing-inner div { display: flex; gap: 18px; }
 
 @media (max-width: 700px) {
   .landing-nav { height: 60px; padding: 0 18px; }

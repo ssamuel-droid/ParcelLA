@@ -11,6 +11,8 @@ const SOCRATA_BASE  = 'https://data.lacity.org/resource';
 const SITE_PAGE_LIMIT = 20;
 const SITE_FIRST_PAGE_TIMEOUT_MS = 18000;
 const SITE_RETRY_TIMEOUT_MS = 45000;
+const TERMS_VERSION = '2026-09-03';
+const TERMS_STORAGE_KEY = 'parcella_terms_acceptance';
 
 let authClient = null;
 let authSession = null;
@@ -21,6 +23,8 @@ let accountState = {
   profile: null,
   access: { active: false, plan: 'free', reason: 'free_preview', trialSecondsRemaining: 0 },
   unlockedSiteIds: [],
+  termsAccepted: false,
+  terms: { currentVersion: TERMS_VERSION, accepted: false, acceptedAt: null },
 };
 
 async function fetchLACityData(datasetId, params = {}) {
@@ -833,9 +837,58 @@ function paywallHTML(title = 'Unlock the full property record', siteId = null) {
 }
 
 function renderExperience() {
-  const signedIn = !!accountState.user;
+  const termsGateReady = !termsGateEnabled() || accountState.termsAccepted === true;
+  const signedIn = !!accountState.user && termsGateReady;
   document.body.classList.toggle('landing-mode', !signedIn);
   document.body.classList.toggle('dashboard-mode', signedIn);
+}
+
+function termsGateEnabled() {
+  return authConfig?.termsEnforcementEnabled === true;
+}
+
+function termsAcknowledgmentPayload() {
+  return {
+    termsVersion: authConfig?.termsVersion || TERMS_VERSION,
+    underwritingProjectionAcknowledged: true,
+    independentVerificationAcknowledged: true,
+  };
+}
+
+function authConsentReady() {
+  return !!g('auth-terms')?.checked && !!g('auth-projection')?.checked;
+}
+
+function syncAuthConsent() {
+  const ready = authConsentReady();
+  document.querySelectorAll('[data-consent-required]').forEach(button => {
+    button.disabled = !ready;
+  });
+}
+
+function rememberTermsAcceptance() {
+  localStorage.setItem(TERMS_STORAGE_KEY, JSON.stringify({
+    ...termsAcknowledgmentPayload(),
+    acknowledgedAt: new Date().toISOString(),
+  }));
+}
+
+function pendingTermsAcceptance() {
+  try {
+    const pending = JSON.parse(localStorage.getItem(TERMS_STORAGE_KEY) || 'null');
+    return pending?.termsVersion === (authConfig?.termsVersion || TERMS_VERSION) &&
+      pending?.underwritingProjectionAcknowledged === true &&
+      pending?.independentVerificationAcknowledged === true;
+  } catch {
+    return false;
+  }
+}
+
+function consentHTML() {
+  return `<div class="authconsent">
+    <label><input id="auth-terms" type="checkbox" onchange="syncAuthConsent()"><span>I have read and agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Use, Risk Disclosure, and Liability Disclaimer</a>.</span></label>
+    <label><input id="auth-projection" type="checkbox" onchange="syncAuthConsent()"><span>I understand that all underwriting and property data are automated projections or third-party records, not verified facts or professional advice, and I must independently verify every material fact before acting.</span></label>
+  </div>`;
 }
 
 function renderAuthUI() {
@@ -860,15 +913,28 @@ function renderAuthUI() {
   }
 
   if (!accountState.user) {
-    const googleButton = '<button class="authprimary" onclick="signInWithGoogle()">Continue with Google</button><div class="authsplit"><span></span><em>or</em><span></span></div>';
+    const googleButton = '<button class="authprimary" data-consent-required disabled onclick="signInWithGoogle()">Agree and continue with Google</button><div class="authsplit"><span></span><em>or</em><span></span></div>';
     body.innerHTML = `<div class="authcopy">
-      <h3>Log in to ParcelLA</h3>
+      <h3>Log in or create your account</h3>
       <p>Create a free account to browse redacted opportunities and download sample underwriting. Upgrade only when you need the underlying property data.</p>
       ${authMessage ? `<div class="authmsg">${escapeText(authMessage)}</div>` : ''}
+      ${consentHTML()}
       ${googleButton}
       <label>Email</label>
-      <div class="authrow"><input id="auth-email" type="email" placeholder="you@example.com"><button onclick="sendMagicLink()">Send link</button></div>
+      <div class="authrow"><input id="auth-email" type="email" placeholder="you@example.com"><button data-consent-required disabled onclick="sendMagicLink()">Agree and send link</button></div>
       <div class="authfine">Free preview. Single-property access is $10; unlimited access is $49/month during the current launch promotion.</div>
+    </div>`;
+    return;
+  }
+
+  if (termsGateEnabled() && !accountState.termsAccepted) {
+    body.innerHTML = `<div class="authcopy">
+      <h3>Accept the Terms to continue</h3>
+      <p>ParcelLA is a research and screening tool. Its underwriting is an automated projection, and its property records require independent verification.</p>
+      ${authMessage ? `<div class="authmsg">${escapeText(authMessage)}</div>` : ''}
+      ${consentHTML()}
+      <button class="authprimary" data-consent-required disabled onclick="acceptCurrentTerms()">Accept and enter ParcelLA</button>
+      <button class="authsecondary" onclick="signOut()">Sign out</button>
     </div>`;
     return;
   }
@@ -897,6 +963,8 @@ async function refreshAccount() {
       profile: null,
       access: { active: false, plan: 'free', reason: 'free_preview', trialSecondsRemaining: 0 },
       unlockedSiteIds: [],
+      termsAccepted: false,
+      terms: { currentVersion: TERMS_VERSION, accepted: false, acceptedAt: null },
     };
     renderAuthUI();
     renderExperience();
@@ -909,17 +977,27 @@ async function refreshAccount() {
       profile: data.profile || null,
       access: data.access || { active: false, plan: 'free', reason: 'free_preview' },
       unlockedSiteIds: Array.isArray(data.unlockedSiteIds) ? data.unlockedSiteIds : [],
+      termsAccepted: authConfig?.termsVersion ? data.terms?.accepted === true : true,
+      terms: data.terms || { currentVersion: TERMS_VERSION, accepted: false, acceptedAt: null },
     };
+    if (!accountState.termsAccepted && pendingTermsAcceptance()) {
+      await persistTermsAcceptance(false);
+    }
   } catch {
     accountState = {
       user: null,
       profile: null,
       access: { active: false, plan: 'free', reason: 'free_preview', trialSecondsRemaining: 0 },
       unlockedSiteIds: [],
+      termsAccepted: false,
+      terms: { currentVersion: TERMS_VERSION, accepted: false, acceptedAt: null },
     };
   }
   renderAuthUI();
   renderExperience();
+  if (accountState.user && termsGateEnabled() && !accountState.termsAccepted) {
+    g('auth-modal')?.classList.add('open');
+  }
 }
 
 async function initAuth() {
@@ -938,7 +1016,7 @@ async function initAuth() {
     authClient.auth.onAuthStateChange(async (_event, session) => {
       authSession = session || null;
       await refreshAccount();
-      if (authBooted && authSession) loadSites();
+      if (authBooted && authSession && (!termsGateEnabled() || accountState.termsAccepted)) loadSites();
     });
   } catch {
     renderAuthUI();
@@ -971,6 +1049,8 @@ function friendlyAuthError(message = '') {
 
 async function signInWithGoogle() {
   if (!authClient) return openAuthDialog('Login is not configured yet.');
+  if (!authConsentReady()) return;
+  rememberTermsAcceptance();
   const { error } = await authClient.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: window.location.origin + window.location.pathname },
@@ -980,17 +1060,60 @@ async function signInWithGoogle() {
 
 async function sendMagicLink() {
   if (!authClient) return openAuthDialog('Login is not configured yet.');
+  if (!authConsentReady()) return;
   const email = (g('auth-email')?.value || '').trim();
   if (!email) return openAuthDialog('Enter your email first.');
+  rememberTermsAcceptance();
   try {
     const { error } = await authClient.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: window.location.origin + window.location.pathname },
+      options: {
+        emailRedirectTo: window.location.origin + window.location.pathname,
+        shouldCreateUser: true,
+        data: {
+          terms_version: authConfig?.termsVersion || TERMS_VERSION,
+          underwriting_projection_acknowledged: true,
+          independent_verification_acknowledged: true,
+        },
+      },
     });
     openAuthDialog(error ? friendlyAuthError(error.message) : 'Check your email for the sign-in link.');
   } catch (e) {
     openAuthDialog(friendlyAuthError(e.message || e));
   }
+}
+
+async function persistTermsAcceptance(showError = true) {
+  if (!authSession?.access_token) return false;
+  try {
+    const result = await fetchJSONWithTimeout(API + '/api/auth/terms/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(termsAcknowledgmentPayload()),
+    }, 12000);
+    accountState.termsAccepted = result?.accepted === true;
+    accountState.terms = {
+      currentVersion: result?.termsVersion || TERMS_VERSION,
+      accepted: accountState.termsAccepted,
+      acceptedAt: result?.acceptedAt || null,
+    };
+    if (accountState.termsAccepted) localStorage.removeItem(TERMS_STORAGE_KEY);
+    return accountState.termsAccepted;
+  } catch (e) {
+    if (showError) openAuthDialog('Could not record your acceptance. Please try again.');
+    return false;
+  }
+}
+
+async function acceptCurrentTerms() {
+  if (!authConsentReady()) return;
+  rememberTermsAcceptance();
+  const accepted = await persistTermsAcceptance(true);
+  if (!accepted) return;
+  renderAuthUI();
+  renderExperience();
+  closeAuthDialog();
+  loadSites();
 }
 
 async function signOut() {
@@ -1092,7 +1215,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .empty{text-align:center;padding:34px 16px;color:#7f8a9a;font-size:12px}.sw{text-align:center;padding:34px;color:#7f8a9a;font-size:12px}.spin{width:26px;height:26px;border:3px solid #e7edf4;border-top-color:var(--navy);border-radius:50%;animation:sp 0.8s linear infinite;margin:0 auto 9px}@keyframes sp{to{transform:rotate(360deg)}}
 .detail{position:fixed;right:0;top:48px;width:min(560px,46vw);max-width:100vw;height:calc(100vh - 48px);background:#fff;border-left:1px solid var(--line);overflow-y:auto;overflow-x:hidden;transform:translateX(100%);transition:transform 0.2s;z-index:50;box-shadow:-10px 0 30px rgba(15,31,61,0.14)}.detail.open{transform:translateX(0)}
 .settings,.authmodal{position:fixed;inset:0;background:rgba(15,31,61,.42);display:none;align-items:flex-start;justify-content:center;padding:70px 16px 16px;z-index:200;overflow:auto}.settings.open,.authmodal.open{display:flex}.settings-panel,.authpanel{width:min(820px,100%);background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 50px rgba(15,31,61,.25);overflow:hidden}.authpanel{width:min(430px,100%)}.settings-head,.authhead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);background:#f8fafc}.settings-head h3,.authhead h3{font-size:14px;color:var(--navy)}.settings-head p,.authhead p{font-size:10px;color:#6f7b8c;margin-top:2px}.settings-body,.authbody{padding:12px 14px}.settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.setfield{border:1px solid var(--line);border-radius:8px;padding:8px;background:#fbfcfd}.setfield label{display:block;font-size:8px;font-weight:900;text-transform:uppercase;color:#7f8a9a;margin-bottom:5px}.setfield .mfr input{font-size:12px}.setnote{font-size:10px;color:#6f7b8c;line-height:1.35;margin:10px 0 0}.setactions{display:flex;justify-content:flex-end;gap:7px;padding:10px 14px;border-top:1px solid var(--line);background:#f8fafc}.setactions button{border:1px solid var(--line);background:#fff;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:800;cursor:pointer;color:#536071}.setactions button.primary{background:var(--navy);border-color:var(--navy);color:#fff}.setactions button.warn{color:#8a5b06;background:#fffaf0;border-color:#ead7a6}
-.authcopy{display:grid;gap:9px}.authcopy h3{font-size:16px;color:var(--navy)}.authcopy p{font-size:12px;color:#536071;line-height:1.4}.authcopy label{font-size:9px;font-weight:900;color:#7f8a9a;text-transform:uppercase}.authprimary,.authsecondary,.authrow button{border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:7px;padding:9px 10px;font-size:12px;font-weight:900;cursor:pointer}.authsecondary{background:#fff;color:var(--navy)}.authrow{display:flex;gap:6px}.authrow input{flex:1;border:1px solid var(--line);border-radius:7px;padding:8px;font-size:12px}.authmsg{border:1px solid #e8d6a7;background:#fffaf0;color:#7a5108;border-radius:7px;padding:8px;font-size:12px;font-weight:800}.authfine{font-size:11px;color:#6f7b8c;line-height:1.35}.authsplit{display:flex;align-items:center;gap:8px;color:#9aa4b2;font-size:10px;text-transform:uppercase;font-weight:900}.authsplit span{height:1px;background:var(--line);flex:1}.paywall{border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;background:#fffaf0;padding:12px;margin:6px 0 10px}.paywall h3{font-size:15px;color:var(--navy);margin-bottom:5px}.paywall p{font-size:12px;color:#536071;line-height:1.45}.paygrid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}.paygrid.one{grid-template-columns:1fr}.paygrid div{background:#fff;border:1px solid #ead7a6;border-radius:7px;padding:8px}.paygrid b{display:block;font-size:12px;color:#7a5108}.paygrid span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.paygrid .authprimary{width:100%;margin-top:8px}
+.authcopy{display:grid;gap:9px}.authcopy h3{font-size:16px;color:var(--navy)}.authcopy p{font-size:12px;color:#536071;line-height:1.4}.authcopy>label{font-size:9px;font-weight:900;color:#7f8a9a;text-transform:uppercase}.authprimary,.authsecondary,.authrow button{border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:7px;padding:9px 10px;font-size:12px;font-weight:900;cursor:pointer}.authsecondary{background:#fff;color:var(--navy)}.authprimary:disabled,.authrow button:disabled{border-color:#ccd4de;background:#e7ebef;color:#8994a3;cursor:not-allowed}.authrow{display:flex;gap:6px}.authrow input{flex:1;border:1px solid var(--line);border-radius:7px;padding:8px;font-size:12px}.authmsg{border:1px solid #e8d6a7;background:#fffaf0;color:#7a5108;border-radius:7px;padding:8px;font-size:12px;font-weight:800}.authfine{font-size:11px;color:#6f7b8c;line-height:1.35}.authconsent{display:grid;gap:8px;padding:10px;border:1px solid #e5d5a8;border-left:4px solid var(--gold);border-radius:7px;background:#fffaf0}.authconsent label{display:flex;align-items:flex-start;gap:8px;color:#3f4a5a;font-size:11px;font-weight:600;line-height:1.4;text-transform:none}.authconsent input{width:16px;height:16px;flex:0 0 16px;margin-top:1px;accent-color:var(--navy)}.authconsent a{color:#173f73;font-weight:900}.authsplit{display:flex;align-items:center;gap:8px;color:#9aa4b2;font-size:10px;text-transform:uppercase;font-weight:900}.authsplit span{height:1px;background:var(--line);flex:1}.paywall{border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;background:#fffaf0;padding:12px;margin:6px 0 10px}.paywall h3{font-size:15px;color:var(--navy);margin-bottom:5px}.paywall p{font-size:12px;color:#536071;line-height:1.45}.paygrid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}.paygrid.one{grid-template-columns:1fr}.paygrid div{background:#fff;border:1px solid #ead7a6;border-radius:7px;padding:8px}.paygrid b{display:block;font-size:12px;color:#7a5108}.paygrid span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.paygrid .authprimary{width:100%;margin-top:8px}
 .dh{padding:9px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#fff;z-index:2}.dht{font-size:12px;font-weight:800;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px}.dha{display:flex;gap:5px;flex-shrink:0}.da{padding:5px 8px;font-size:9px;font-weight:800;border:1px solid var(--line);border-radius:5px;cursor:pointer;background:#fff;color:#536071}.da.p{background:var(--navy);color:#fff;border-color:var(--navy)}.dhx{background:none;border:none;font-size:18px;cursor:pointer;color:#8792a2;padding:0 2px;flex-shrink:0}
 .db{padding:10px 12px}.sh{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0;color:#8390a2;margin:10px 0 5px}.sh:first-child{margin-top:0}.ig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:6px}.ic{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:6px 8px}.icl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.icv{font-size:11px;font-weight:800;overflow-wrap:anywhere}
 .mbg{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:5px}.mb{background:#f7f9fb;border:1px solid #edf1f4;border-radius:6px;padding:7px 8px;border-left:3px solid #ddd}.mbl{font-size:8px;color:#7f8a9a;margin-bottom:2px;text-transform:uppercase;font-weight:800}.mbv{font-size:15px;font-weight:900}.mbs{font-size:8px;color:#7f8a9a;margin-top:1px;line-height:1.15}
@@ -1160,12 +1283,12 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <article class="price-card"><div class="price-label">Unlock one deal</div><h3>Property</h3><div class="price">$10 <small>once</small></div><ul class="price-list"><li>Full address + available records</li><li>Plans, Excel, and PDF memo</li></ul><button class="price-action" onclick="openAuthDialog('Log in free, then choose the property you want to unlock.')">Browse properties</button></article>
         <article class="price-card featured"><div class="price-label">Launch special</div><h3>Unlimited</h3><div class="price">$49 <small>/ month</small></div><ul class="price-list"><li>Every available property record</li><li>Unlimited search + full exports</li></ul><button class="price-action" onclick="startCheckout('subscription')">Get unlimited access</button></article>
       </div>
-      <p class="pricing-note">Payments are processed by Stripe. Card and US bank account payments are supported. Parcel and planning records vary by property and source availability.</p>
+      <p class="pricing-note">Payments are processed by Stripe. Card and US bank account payments are supported. Parcel and planning records vary by property and source availability. Use is subject to the <a href="/terms.html" target="_blank" rel="noopener">Terms and Underwriting Risk Disclaimer</a>.</p>
     </div>
   </section>
 
   <section class="landing-final"><div class="landing-inner"><div><h2>Find your next LA development deal.</h2><p>Search the pipeline for free.</p></div><button class="landing-cta" onclick="openAuthDialog()">Open ParcelLA</button></div></section>
-  <footer class="landing-footer"><div class="landing-inner"><span>ParcelLA · Los Angeles development intelligence</span><a href="#pricing">Pricing</a></div></footer>
+  <footer class="landing-footer"><div class="landing-inner"><span>ParcelLA · Los Angeles development intelligence</span><div><a href="/terms.html">Terms &amp; Risk Disclaimer</a><a href="#pricing">Pricing</a></div></div></footer>
 </main>
 <dialog class="landing-demo-dialog" id="landing-demo-dialog" onclick="if(event.target===this)closeLandingDemo()">
   <div class="landing-demo-bar"><strong id="landing-demo-caption"></strong><button type="button" aria-label="Close full-screen product demo" onclick="closeLandingDemo()">&times;</button></div>
@@ -1350,6 +1473,7 @@ async function boot() {
     g('albl').textContent = 'API waking up';
   }
   if (!authSession?.access_token) return;
+  if (termsGateEnabled() && !accountState.termsAccepted) return;
   const checkoutResult = await confirmCheckoutReturn();
   if (!checkoutResult && await resumeCheckoutIntent()) return;
   await loadSites();

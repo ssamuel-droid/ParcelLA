@@ -63,12 +63,16 @@ import { ensureUserProfile, accessForProfile, getUnlockedSiteIdsFast } from '../
 
 const authRouter = Router();
 
+const CURRENT_TERMS_VERSION = '2026-09-03';
+const CURRENT_TERMS_DIGEST = '1ea1c5127923b6e191d03fa9d7db554f85616e05621a7a06d64e4765c16e5bb0';
+
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 }
 
 authRouter.get('/config', (req, res) => {
   const googleProviderReady = process.env.GOOGLE_AUTH_ENABLED !== 'false';
+  const termsEnforcementEnabled = process.env.TERMS_ENFORCEMENT_ENABLED === 'true';
   res.json({
     supabaseUrl: process.env.SUPABASE_URL || '',
     supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
@@ -78,20 +82,45 @@ authRouter.get('/config', (req, res) => {
     propertyPrice: 10,
     introPrice: 49,
     checkoutTrialDays: 0,
+    termsVersion: CURRENT_TERMS_VERSION,
+    termsUrl: '/terms.html',
+    underwritingAcknowledgmentRequired: true,
+    termsEnforcementEnabled,
   });
 });
 
 authRouter.post('/signup', async (req, res, next) => {
   try {
-    const { email, password, name } = req.body;
+    const {
+      email,
+      password,
+      name,
+      termsVersion,
+      underwritingProjectionAcknowledged,
+      independentVerificationAcknowledged,
+    } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password required' });
+    }
+    if (
+      termsVersion !== CURRENT_TERMS_VERSION ||
+      underwritingProjectionAcknowledged !== true ||
+      independentVerificationAcknowledged !== true
+    ) {
+      return res.status(400).json({ error: 'Current Terms and underwriting-risk acknowledgments are required' });
     }
 
     const sb = getSupabase();
     const { data, error } = await sb.auth.signUp({
       email, password,
-      options: { data: { name } },
+      options: {
+        data: {
+          name,
+          terms_version: CURRENT_TERMS_VERSION,
+          underwriting_projection_acknowledged: true,
+          independent_verification_acknowledged: true,
+        },
+      },
     });
 
     if (error) return res.status(400).json({ error: error.message });
@@ -100,6 +129,50 @@ authRouter.post('/signup', async (req, res, next) => {
       session: data.session,
       message: 'Check your email to confirm your account',
     });
+  } catch (err) { next(err); }
+});
+
+authRouter.post('/terms/accept', async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.slice(7);
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+
+    const {
+      termsVersion,
+      underwritingProjectionAcknowledged,
+      independentVerificationAcknowledged,
+    } = req.body || {};
+
+    if (
+      termsVersion !== CURRENT_TERMS_VERSION ||
+      underwritingProjectionAcknowledged !== true ||
+      independentVerificationAcknowledged !== true
+    ) {
+      return res.status(400).json({ error: 'Current Terms and both risk acknowledgments are required' });
+    }
+
+    const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const { data: { user }, error: userError } = await sb.auth.getUser(token);
+    if (userError || !user) return res.status(401).json({ error: 'Invalid token' });
+
+    await ensureUserProfile(user);
+    const { data, error } = await sb
+      .from('terms_acceptances')
+      .upsert({
+        user_id: user.id,
+        terms_version: CURRENT_TERMS_VERSION,
+        terms_digest: CURRENT_TERMS_DIGEST,
+        underwriting_projection_acknowledged: true,
+        independent_verification_acknowledged: true,
+        acceptance_method: 'registration_clickwrap',
+        user_agent: String(req.get('user-agent') || '').slice(0, 500) || null,
+        accepted_at: new Date().toISOString(),
+      }, { onConflict: 'user_id,terms_version' })
+      .select('terms_version,accepted_at')
+      .single();
+
+    if (error) throw error;
+    res.json({ accepted: true, termsVersion: data.terms_version, acceptedAt: data.accepted_at });
   } catch (err) { next(err); }
 });
 
@@ -160,12 +233,30 @@ authRouter.get('/me', async (req, res, next) => {
 
     const unlockedSiteIds = await getUnlockedSiteIdsFast(user.id);
 
+    let termsAcceptance = null;
+    const { data: acceptedTerms, error: termsError } = await sb
+      .from('terms_acceptances')
+      .select('terms_version,accepted_at')
+      .eq('user_id', user.id)
+      .eq('terms_version', CURRENT_TERMS_VERSION)
+      .maybeSingle();
+    if (termsError) {
+      console.warn('[auth] Terms acceptance lookup failed:', termsError.message);
+    } else {
+      termsAcceptance = acceptedTerms;
+    }
+
     res.json({
       user,
       profile,
       access,
       unlockedSiteIds,
       savedSiteIds: saved?.map(s => s.site_id) ?? [],
+      terms: {
+        currentVersion: CURRENT_TERMS_VERSION,
+        accepted: !!termsAcceptance,
+        acceptedAt: termsAcceptance?.accepted_at || null,
+      },
     });
   } catch (err) { next(err); }
 });

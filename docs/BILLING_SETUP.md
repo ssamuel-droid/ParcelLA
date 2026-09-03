@@ -6,6 +6,12 @@ Prices are created by the API at checkout time:
 - Single Property Unlock: $10 one time
 - Unlimited: $49 per month
 
+## Before enabling checkout
+
+1. Run `supabase/migrations/019_terms_acceptance_audit.sql` in the Supabase SQL editor, then set `TERMS_ENFORCEMENT_ENABLED=true` on the Railway API service.
+2. Have qualified California counsel review `public/terms.html`, identify the correct legal entity, and confirm the liability, venue, renewal, and refund language for the business.
+3. Complete Stripe account activation, identity/business verification, tax details, and payout bank setup.
+
 ## Railway variables
 
 Set these variables on the ParcelLA API service:
@@ -23,6 +29,9 @@ Use test-mode keys together or live-mode keys together. Never mix modes.
 In Stripe, enable both Cards and ACH Direct Debit under Payment methods. Checkout
 then offers card payment or a US bank account for both property unlocks and the
 monthly subscription.
+
+Use Stripe test mode first. Confirm both the $10 property unlock and the $49
+monthly subscription before adding live-mode keys to Railway.
 
 ## Webhook
 
