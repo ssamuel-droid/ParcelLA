@@ -1088,66 +1088,64 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 </style>
 <main class="landing-page" id="landing-page">
   <section class="landing-hero">
-    <img src="/assets/parcella-dashboard.png?v=2026090202" alt="ParcelLA development site dashboard with underwriting and planning documents">
+    <img src="/assets/parcella-dashboard.png?v=2026090203" alt="ParcelLA development pipeline, underwriting, and planning document screen">
     <div class="landing-scrim"></div>
     <header class="landing-nav">
       <a class="landing-brand" href="#">PARCEL<span>LA</span></a>
-      <nav class="landing-navlinks" aria-label="Landing page navigation"><a href="#platform">Platform</a><a href="#capabilities">Data</a><a href="#pricing">Pricing</a></nav>
+      <nav class="landing-navlinks" aria-label="Landing page navigation"><a href="#platform">See it</a><a href="#pricing">Pricing</a></nav>
       <button class="landing-login" onclick="openAuthDialog()">Log in</button>
     </header>
     <div class="landing-hero-inner">
       <div class="landing-eyebrow">Los Angeles development intelligence</div>
       <h1>ParcelLA</h1>
-      <p class="landing-hero-copy">Find permitted and entitled opportunities, test the underwriting, and move from city records to a deal decision in one place.</p>
+      <p class="landing-hero-copy">Find LA development sites. See the plans, ownership, sales, debt, and underwriting before you chase the deal.</p>
       <div class="landing-actions">
-        <button class="landing-cta" onclick="openAuthDialog()">Explore free</button>
-        <a class="landing-link" href="#platform">See the platform</a>
+        <button class="landing-cta" onclick="openAuthDialog()">Search for free</button>
+        <a class="landing-link" href="#platform">See what you get</a>
       </div>
       <div class="landing-hero-proof">
-        <div><b>Permit pipeline</b><span>Multifamily, mixed-use, condo and new homes</span></div>
-        <div><b>Live underwriting</b><span>Costs, comps, returns and scenarios</span></div>
-        <div><b>Source documents</b><span>Planning cases, PDFs and property records</span></div>
+        <div><b>Find it</b><span>Permits + entitlements</span></div>
+        <div><b>Underwrite it</b><span>Live deal assumptions</span></div>
+        <div><b>Verify it</b><span>Records + source PDFs</span></div>
       </div>
     </div>
   </section>
 
-  <section class="landing-band" id="platform">
+  <section class="landing-band product-story" id="platform">
     <div class="landing-inner">
-      <div class="landing-kicker">The working screen</div>
-      <h2 class="landing-title">One view from site discovery to the planning file.</h2>
-      <p class="landing-lead">Search the active development pipeline, compare opportunities, adjust construction and financing assumptions, and inspect the documents behind the project.</p>
-      <img class="product-shot" src="/assets/parcella-dashboard.png?v=2026090202" alt="ParcelLA property list, underwriting metrics, and planning PDF links">
-    </div>
-  </section>
-
-  <section class="landing-band landing-capabilities" id="capabilities">
-    <div class="landing-inner">
-      <div class="landing-kicker">Built for acquisition work</div>
-      <h2 class="landing-title">The facts that shape a development decision.</h2>
-      <div class="cap-grid">
-        <article class="cap-item"><span class="cap-number">01</span><h3>Search the permit pipeline</h3><p>Filter multifamily, mixed-use, condo, ED1, and single-family projects by status, size, neighborhood, and economics.</p></article>
-        <article class="cap-item"><span class="cap-number">02</span><h3>Re-underwrite instantly</h3><p>Adjust hard costs, land basis, financing, construction type, rents, and exit assumptions without rebuilding a model.</p></article>
-        <article class="cap-item"><span class="cap-number">03</span><h3>Open the underlying record</h3><p>Review available planning cases, direct PDFs, owner evidence, APNs, sale history, mortgage records, and local comps.</p></article>
-        <article class="cap-item"><span class="cap-number">04</span><h3>Evaluate houses correctly</h3><p>New homes use completed-home sales per building square foot, lot-based land assumptions, and residential return metrics.</p></article>
-        <article class="cap-item"><span class="cap-number">05</span><h3>Model affordable housing</h3><p>ED1 underwriting carries applicable rent limitations into revenue assumptions and exported analysis.</p></article>
-        <article class="cap-item"><span class="cap-number">06</span><h3>Take the work with you</h3><p>Generate consistent Excel workbooks, PDF deal memos, and shareable property views from the same underwriting state.</p></article>
-      </div>
+      <div class="landing-kicker">See the whole deal</div>
+      <h2 class="landing-title">Less searching. More underwriting.</h2>
+      <p class="landing-lead">The pipeline, the numbers, and the proof in one place.</p>
+      <article class="story-row story-wide">
+        <div class="story-copy"><span>01</span><h3>Spot the opportunity</h3><p>Filter active projects, compare returns, open plans, and stress-test the deal from one screen.</p><div class="story-tags"><b>Underwriting</b><b>Planning PDFs</b><b>Permit search</b></div></div>
+        <div class="story-visual"><img src="/assets/parcella-dashboard.png?v=2026090203" alt="ParcelLA screen showing development underwriting and direct links to floor plans, cover sheets, site plans, and determinations"></div>
+      </article>
+      <article class="story-row reverse">
+        <div class="story-copy"><span>02</span><h3>Know who owns it</h3><p>See matched ownership evidence, related APNs, recorded mortgage, sale history, and local comps.</p><div class="story-tags"><b>Ownership</b><b>Sales</b><b>Mortgage</b></div></div>
+        <div class="story-visual"><img src="/assets/parcella-records.png?v=2026090203" alt="ParcelLA record screen showing owner, multiple APNs, original mortgage, sale history, underwriting, and planning PDFs"></div>
+      </article>
+      <article class="story-row">
+        <div class="story-copy"><span>03</span><h3>Walk in ready</h3><p>Take the current model into Excel or send a clean PDF deal memo without rebuilding the analysis.</p><div class="story-tags"><b>Excel model</b><b>PDF memo</b><b>Share-ready</b></div></div>
+        <div class="story-visual"><img src="/assets/parcella-exports.png?v=2026090203" alt="ParcelLA Excel underwriting model and PDF development deal memo"></div>
+      </article>
     </div>
   </section>
 
   <section class="landing-band pricing-band" id="pricing">
     <div class="landing-inner">
-      <div class="promo-row"><strong>Launch promotion</strong><span>Choose free research, one deal, or unlimited access. Cancel the monthly plan any time.</span></div>
+      <div class="landing-kicker">Launch pricing</div>
+      <h2 class="landing-title">Start free. Pay when a deal matters.</h2>
+      <div class="promo-row"><strong>Special promotion</strong><span>$49 unlimited access while launch pricing is available.</span></div>
       <div class="pricing-grid">
-        <article class="price-card"><div class="price-label">Free research</div><h3>Preview</h3><div class="price">$0</div><p class="price-copy">Understand the opportunity set before paying for identifying data.</p><ul class="price-list"><li>Redacted property browsing</li><li>Core underwriting metrics</li><li>Sample Excel and PDF exports</li></ul><button class="price-action" onclick="openAuthDialog()">Create free account</button></article>
-        <article class="price-card"><div class="price-label">Pay as you go</div><h3>One property</h3><div class="price">$10 <small>once</small></div><p class="price-copy">Unlock the full record for one property you select.</p><ul class="price-list"><li>Full property address</li><li>Available owner, sale and mortgage data</li><li>Planning PDFs and full exports</li></ul><button class="price-action" onclick="openAuthDialog('Log in free, then choose the property you want to unlock.')">Browse properties</button></article>
-        <article class="price-card featured"><div class="price-label">Best for active searches</div><h3>Unlimited</h3><div class="price">$49 <small>/ month</small></div><p class="price-copy">Open every available property record with no per-property charge.</p><ul class="price-list"><li>Unlimited addresses and map access</li><li>Full records and source documents</li><li>Full Excel, PDF, sharing and analysis</li></ul><button class="price-action" onclick="startCheckout('subscription')">Get unlimited access</button></article>
+        <article class="price-card"><div class="price-label">Explore</div><h3>Free</h3><div class="price">$0</div><ul class="price-list"><li>Browse redacted opportunities</li><li>Preview underwriting + exports</li></ul><button class="price-action" onclick="openAuthDialog()">Start searching</button></article>
+        <article class="price-card"><div class="price-label">Unlock one deal</div><h3>Property</h3><div class="price">$10 <small>once</small></div><ul class="price-list"><li>Full address + available records</li><li>Plans, Excel, and PDF memo</li></ul><button class="price-action" onclick="openAuthDialog('Log in free, then choose the property you want to unlock.')">Browse properties</button></article>
+        <article class="price-card featured"><div class="price-label">Launch special</div><h3>Unlimited</h3><div class="price">$49 <small>/ month</small></div><ul class="price-list"><li>Every available property record</li><li>Unlimited search + full exports</li></ul><button class="price-action" onclick="startCheckout('subscription')">Get unlimited access</button></article>
       </div>
       <p class="pricing-note">Payments are processed by Stripe. Card and US bank account payments are supported. Parcel and planning records vary by property and source availability.</p>
     </div>
   </section>
 
-  <section class="landing-final"><div class="landing-inner"><div><h2>Start with the pipeline. Unlock the deals that matter.</h2><p>Create a free account and see how ParcelLA fits your acquisition process.</p></div><button class="landing-cta" onclick="openAuthDialog()">Explore ParcelLA</button></div></section>
+  <section class="landing-final"><div class="landing-inner"><div><h2>Find your next LA development deal.</h2><p>Search the pipeline for free.</p></div><button class="landing-cta" onclick="openAuthDialog()">Open ParcelLA</button></div></section>
   <footer class="landing-footer"><div class="landing-inner"><span>ParcelLA · Los Angeles development intelligence</span><a href="#pricing">Pricing</a></div></footer>
 </main>
 <div id="dashboard-shell">

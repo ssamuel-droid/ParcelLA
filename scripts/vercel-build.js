@@ -5,6 +5,8 @@ const requiredFiles = [
   'public/app.js',
   'public/landing.css',
   'public/assets/parcella-dashboard.png',
+  'public/assets/parcella-records.png',
+  'public/assets/parcella-exports.png',
 ];
 
 const missing = requiredFiles.filter((file) => !existsSync(file));
