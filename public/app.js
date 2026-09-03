@@ -1007,6 +1007,12 @@ async function startCheckout(kind = 'subscription', siteId = null) {
   }
   if (kind === 'property' && !siteId) return;
   try {
+    const plans = await fetchJSONWithTimeout(API + '/api/stripe/plans', {}, 8000);
+    const expected = kind === 'property' ? { key: 'property', price: 10 } : { key: 'pro', price: 49 };
+    const liveOffer = Array.isArray(plans) ? plans.find(plan => plan.key === expected.key) : null;
+    if (!liveOffer || Number(liveOffer.price) !== expected.price) {
+      throw new Error('The billing update is still deploying. Please try again in a few minutes.');
+    }
     const data = await fetchJSONWithTimeout(API + '/api/stripe/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
