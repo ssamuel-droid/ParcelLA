@@ -1043,6 +1043,25 @@ function requireFullAccess(action = 'view this deal') {
   return false;
 }
 
+function openLandingDemo(src, alt, label) {
+  const dialog = document.getElementById('landing-demo-dialog');
+  const image = document.getElementById('landing-demo-image');
+  const caption = document.getElementById('landing-demo-caption');
+  if (!dialog || !image) return;
+  image.src = src;
+  image.alt = alt || 'ParcelLA product screen';
+  if (caption) caption.textContent = label || '';
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+}
+
+function closeLandingDemo() {
+  const dialog = document.getElementById('landing-demo-dialog');
+  if (!dialog) return;
+  if (typeof dialog.close === 'function') dialog.close();
+  else dialog.removeAttribute('open');
+}
+
 document.body.className = 'landing-mode';
 document.getElementById('app').innerHTML = `<style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -1116,17 +1135,17 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <div class="landing-kicker">See the whole deal</div>
       <h2 class="landing-title">Less searching. More underwriting.</h2>
       <p class="landing-lead">The pipeline, the numbers, and the proof in one place.</p>
-      <article class="story-row story-wide">
-        <div class="story-copy"><span>01</span><h3>Spot the opportunity</h3><p>Filter active projects, compare returns, open plans, and stress-test the deal from one screen.</p><div class="story-tags"><b>Underwriting</b><b>Planning PDFs</b><b>Permit search</b></div></div>
-        <div class="story-visual"><img src="/assets/parcella-dashboard.png?v=2026090203" alt="ParcelLA screen showing development underwriting and direct links to floor plans, cover sheets, site plans, and determinations"></div>
+      <article class="demo-block">
+        <div class="demo-head"><div><span>01</span><h3>Spot and underwrite the opportunity</h3><p>Filter projects, compare returns, stress-test assumptions, and open the actual plans.</p></div><div class="story-tags"><b>Underwriting</b><b>Plans + PDFs</b><b>Permit search</b></div></div>
+        <button class="demo-screen" type="button" aria-label="Open the underwriting and planning screen full size" onclick="openLandingDemo('/assets/parcella-dashboard.png?v=2026090203', this.querySelector('img').alt, 'Underwriting, permit search, and planning PDFs')"><img src="/assets/parcella-dashboard.png?v=2026090203" alt="ParcelLA screen showing development underwriting and direct links to floor plans, cover sheets, site plans, and determinations"><span>View full screen</span></button>
       </article>
-      <article class="story-row reverse">
-        <div class="story-copy"><span>02</span><h3>Know who owns it</h3><p>See matched ownership evidence, related APNs, recorded mortgage, sale history, and local comps.</p><div class="story-tags"><b>Ownership</b><b>Sales</b><b>Mortgage</b></div></div>
-        <div class="story-visual"><img src="/assets/parcella-records.png?v=2026090203" alt="ParcelLA record screen showing owner, multiple APNs, original mortgage, sale history, underwriting, and planning PDFs"></div>
+      <article class="demo-block">
+        <div class="demo-head"><div><span>02</span><h3>Know who owns it and what traded</h3><p>Review ownership evidence, related APNs, mortgage records, sale history, and comps.</p></div><div class="story-tags"><b>Ownership</b><b>Sales</b><b>Mortgage</b></div></div>
+        <button class="demo-screen" type="button" aria-label="Open the ownership and recorded history screen full size" onclick="openLandingDemo('/assets/parcella-records.png?v=2026090203', this.querySelector('img').alt, 'Ownership, APNs, mortgage, sale history, and comps')"><img src="/assets/parcella-records.png?v=2026090203" alt="ParcelLA record screen showing owner, multiple APNs, original mortgage, sale history, underwriting, and planning PDFs"><span>View full screen</span></button>
       </article>
-      <article class="story-row">
-        <div class="story-copy"><span>03</span><h3>Walk in ready</h3><p>Take the current model into Excel or send a clean PDF deal memo without rebuilding the analysis.</p><div class="story-tags"><b>Excel model</b><b>PDF memo</b><b>Share-ready</b></div></div>
-        <div class="story-visual"><img src="/assets/parcella-exports.png?v=2026090203" alt="ParcelLA Excel underwriting model and PDF development deal memo"></div>
+      <article class="demo-block">
+        <div class="demo-head"><div><span>03</span><h3>Walk into the deal meeting ready</h3><p>Export the live underwriting into Excel or a clean, shareable PDF deal memo.</p></div><div class="story-tags"><b>Excel model</b><b>PDF memo</b><b>Share-ready</b></div></div>
+        <button class="demo-screen" type="button" aria-label="Open the Excel and PDF export screen full size" onclick="openLandingDemo('/assets/parcella-exports.png?v=2026090203', this.querySelector('img').alt, 'Excel underwriting model and PDF deal memo')"><img src="/assets/parcella-exports.png?v=2026090203" alt="ParcelLA Excel underwriting model and PDF development deal memo"><span>View full screen</span></button>
       </article>
     </div>
   </section>
@@ -1148,6 +1167,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
   <section class="landing-final"><div class="landing-inner"><div><h2>Find your next LA development deal.</h2><p>Search the pipeline for free.</p></div><button class="landing-cta" onclick="openAuthDialog()">Open ParcelLA</button></div></section>
   <footer class="landing-footer"><div class="landing-inner"><span>ParcelLA · Los Angeles development intelligence</span><a href="#pricing">Pricing</a></div></footer>
 </main>
+<dialog class="landing-demo-dialog" id="landing-demo-dialog" onclick="if(event.target===this)closeLandingDemo()">
+  <div class="landing-demo-bar"><strong id="landing-demo-caption"></strong><button type="button" aria-label="Close full-screen product demo" onclick="closeLandingDemo()">&times;</button></div>
+  <img id="landing-demo-image" alt="">
+</dialog>
 <div id="dashboard-shell">
 <nav class="nav">
   <div class="logo">PARCEL<span>LA</span></div>
