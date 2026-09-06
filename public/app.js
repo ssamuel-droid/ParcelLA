@@ -1238,36 +1238,36 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <button class="landing-login" onclick="openAuthDialog()">Log in</button>
     </header>
     <div class="landing-hero-inner">
-      <div class="landing-eyebrow">Los Angeles development intelligence</div>
+      <div class="landing-eyebrow">Listings + the citywide development pipeline</div>
       <h1>ParcelLA</h1>
-      <p class="landing-hero-copy">Find LA development sites. See the plans, ownership, sales, debt, and underwriting before you chase the deal.</p>
+      <p class="landing-hero-copy">Don&rsquo;t just view development listings. Underwrite every listing, then go beyond the market to the development projects filed across Los Angeles&mdash;with ownership, sales, debt, plans, permits, and source records ready in one place.</p>
       <div class="landing-actions">
-        <button class="landing-cta" onclick="openAuthDialog()">Search for free</button>
-        <a class="landing-link" href="#platform">See what you get</a>
+        <button class="landing-cta" onclick="openAuthDialog()">Underwrite LA for free</button>
+        <a class="landing-link" href="#platform">See the full deal</a>
       </div>
       <div class="landing-hero-proof">
-        <div><b>Find it</b><span>Permits + entitlements</span></div>
-        <div><b>Underwrite it</b><span>Live deal assumptions</span></div>
-        <div><b>Verify it</b><span>Records + source PDFs</span></div>
+        <div><b>Marketed deals</b><span>Underwrite every listing</span></div>
+        <div><b>Citywide pipeline</b><span>Permits + planning cases</span></div>
+        <div><b>Instant diligence</b><span>Records + source PDFs</span></div>
       </div>
     </div>
   </section>
 
   <section class="landing-band product-story" id="platform">
     <div class="landing-inner">
-      <div class="landing-kicker">See the whole deal</div>
-      <h2 class="landing-title">Less searching. More underwriting.</h2>
-      <p class="landing-lead">The pipeline, the numbers, and the proof in one place.</p>
+      <div class="landing-kicker">More than a listing site</div>
+      <h2 class="landing-title">Underwrite what is listed. Find what is not.</h2>
+      <p class="landing-lead">ParcelLA turns marketed opportunities and city-filed projects into decision-ready underwriting, backed by the records available for each property.</p>
       <article class="demo-block">
-        <div class="demo-head"><div><span>01</span><h3>Spot and underwrite the opportunity</h3><p>Filter projects, compare returns, stress-test assumptions, and open the actual plans.</p></div><div class="story-tags"><b>Underwriting</b><b>Plans + PDFs</b><b>Permit search</b></div></div>
+        <div class="demo-head"><div><span>01</span><h3>Turn every opportunity into live underwriting</h3><p>Search listings and the citywide development pipeline, compare returns, and stress-test the assumptions immediately.</p></div><div class="story-tags"><b>Underwriting</b><b>City pipeline</b><b>Permit search</b></div></div>
         <button class="demo-screen" type="button" aria-label="Open the underwriting and planning screen full size" onclick="openLandingDemo('/assets/parcella-dashboard.png?v=2026090203', this.querySelector('img').alt, 'Underwriting, permit search, and planning PDFs')"><img src="/assets/parcella-dashboard.png?v=2026090203" alt="ParcelLA screen showing development underwriting and direct links to floor plans, cover sheets, site plans, and determinations"><span>View full screen</span></button>
       </article>
       <article class="demo-block">
-        <div class="demo-head"><div><span>02</span><h3>Know who owns it and what traded</h3><p>Review ownership evidence, related APNs, mortgage records, sale history, and comps.</p></div><div class="story-tags"><b>Ownership</b><b>Sales</b><b>Mortgage</b></div></div>
+        <div class="demo-head"><div><span>02</span><h3>Go beyond the listing to the property record</h3><p>Review available ownership evidence, related APNs, mortgage records, sale history, comps, plans, and determinations.</p></div><div class="story-tags"><b>Ownership</b><b>Sales</b><b>Source PDFs</b></div></div>
         <button class="demo-screen" type="button" aria-label="Open the ownership and recorded history screen full size" onclick="openLandingDemo('/assets/parcella-records.png?v=2026090203', this.querySelector('img').alt, 'Ownership, APNs, mortgage, sale history, and comps')"><img src="/assets/parcella-records.png?v=2026090203" alt="ParcelLA record screen showing owner, multiple APNs, original mortgage, sale history, underwriting, and planning PDFs"><span>View full screen</span></button>
       </article>
       <article class="demo-block">
-        <div class="demo-head"><div><span>03</span><h3>Walk into the deal meeting ready</h3><p>Export the live underwriting into Excel or a clean, shareable PDF deal memo.</p></div><div class="story-tags"><b>Excel model</b><b>PDF memo</b><b>Share-ready</b></div></div>
+        <div class="demo-head"><div><span>03</span><h3>Deliver the decision, not a stack of tabs</h3><p>Export the live underwriting into Excel or a clean PDF deal memo ready to review and share.</p></div><div class="story-tags"><b>Excel model</b><b>PDF memo</b><b>Share-ready</b></div></div>
         <button class="demo-screen" type="button" aria-label="Open the Excel and PDF export screen full size" onclick="openLandingDemo('/assets/parcella-exports.png?v=2026090203', this.querySelector('img').alt, 'Excel underwriting model and PDF deal memo')"><img src="/assets/parcella-exports.png?v=2026090203" alt="ParcelLA Excel underwriting model and PDF development deal memo"><span>View full screen</span></button>
       </article>
     </div>
@@ -1276,7 +1276,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
   <section class="landing-band pricing-band" id="pricing">
     <div class="landing-inner">
       <div class="landing-kicker">Launch pricing</div>
-      <h2 class="landing-title">Start free. Pay when a deal matters.</h2>
+      <h2 class="landing-title">See the pipeline free. Unlock the deal when it matters.</h2>
       <div class="promo-row"><strong>Special promotion</strong><span>$49 unlimited access while launch pricing is available.</span></div>
       <div class="pricing-grid">
         <article class="price-card"><div class="price-label">Explore</div><h3>Free</h3><div class="price">$0</div><ul class="price-list"><li>Browse redacted opportunities</li><li>Preview underwriting + exports</li></ul><button class="price-action" onclick="openAuthDialog()">Start searching</button></article>
@@ -1287,7 +1287,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
     </div>
   </section>
 
-  <section class="landing-final"><div class="landing-inner"><div><h2>Find your next LA development deal.</h2><p>Search the pipeline for free.</p></div><button class="landing-cta" onclick="openAuthDialog()">Open ParcelLA</button></div></section>
+  <section class="landing-final"><div class="landing-inner"><div><h2>Stop browsing listings. Start underwriting Los Angeles.</h2><p>Search marketed deals and the citywide development pipeline for free.</p></div><button class="landing-cta" onclick="openAuthDialog()">Open ParcelLA</button></div></section>
   <footer class="landing-footer"><div class="landing-inner"><span>ParcelLA · Los Angeles development intelligence</span><div><a href="/terms.html">Terms &amp; Risk Disclaimer</a><a href="#pricing">Pricing</a></div></div></footer>
 </main>
 <dialog class="landing-demo-dialog" id="landing-demo-dialog" onclick="if(event.target===this)closeLandingDemo()">
