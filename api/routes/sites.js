@@ -43,6 +43,8 @@ const _landCompCache = new Map();
 const _housePageCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const HOUSE_PAGE_CACHE_TTL = 5 * 60 * 1000;
+const COUNTY_PARCEL_QUERY_URL = 'https://cache.gis.lacounty.gov/cache/rest/services/LACounty_Cache/LACounty_Parcel/FeatureServer/0/query';
+const HOUSE_LOT_BATCH_LIMIT = 50;
 const SITE_PAGE_QUERY_TIMEOUT_MS = 8 * 1000;
 const SITE_PAGE_RETRY_DELAY_MS = 150;
 const SITE_PAGE_RETRY_ATTEMPTS = 3;
@@ -224,17 +226,173 @@ function normalizedNeighborhood(s = {}) {
   return raw;
 }
 
+export function normalizedLotDetails(s = {}) {
+  const raw = s.raw_permit_data || s.rawPermit || s.raw_data || {};
+  const external = s.external_property_record || s.externalPropertyRecord || {};
+  const externalRecords = [
+    external,
+    external.record,
+    external.property,
+    external.parcel,
+    ...(Array.isArray(external.parcelRecords) ? external.parcelRecords : []),
+  ].filter(value => value && typeof value === 'object');
+  const explicitSource = firstText(s.lot_sf_source, raw.lot_sf_source);
+  const candidates = [
+    [s.lot_sf ?? s.lot, explicitSource || null],
+    [raw.lot_sf, explicitSource || 'Permit source field'],
+    [raw.lot_area, 'Permit source field'],
+    [raw.lot_size, 'Permit source field'],
+    [raw.lot_square_footage, 'Permit source field'],
+    [raw.lot_sqft, 'Permit source field'],
+    [raw.site_area, 'Permit source field'],
+    [raw.parcel_area, 'Permit source field'],
+    ...externalRecords.flatMap(record => [
+      [record.lotSize, 'Monthly property record'],
+      [record.lot_sf, 'Monthly property record'],
+      [record.lotSizeSquareFeet, 'Monthly property record'],
+      [record.lotSquareFeet, 'Monthly property record'],
+      [record.sqftLot, 'Monthly property record'],
+      [record.SqftLot, 'LA County Assessor property record'],
+    ]),
+  ];
+
+  for (const [value, sourceValue] of candidates) {
+    const lotSf = numberFromValue(value);
+    if (!Number.isFinite(lotSf) || lotSf < 1000 || lotSf > 2000000) continue;
+    const source = String(sourceValue || '').trim();
+    const hasRealSource = source && !/default|model|assum/i.test(source);
+    const likelyDefault = lotSf === 5000 && !hasRealSource && (
+      String(s.status || '').toLowerCase().includes('off') ||
+      s.permit_source_id ||
+      raw.permit_number
+    );
+    if (!likelyDefault) return { lotSf: Math.round(lotSf), source: source || null };
+  }
+  return { lotSf: null, source: null };
+}
+
 function normalizedLotSf(s = {}) {
-  const lot = Number(s.lot_sf ?? s.lot ?? 0);
-  if (!Number.isFinite(lot) || lot <= 0) return null;
-  const source = String(s.lot_sf_source || s.raw_permit_data?.lot_sf_source || '').trim();
-  const hasRealSource = source && !/default|model|assum/i.test(source);
-  const likelyDefault = lot === 5000 && !hasRealSource && (
-    String(s.status || '').toLowerCase().includes('off') ||
-    s.permit_source_id ||
-    s.raw_permit_data?.permit_number
-  );
-  return likelyDefault ? null : lot;
+  return normalizedLotDetails(s).lotSf;
+}
+
+function countyStreet(value) {
+  const suffixes = {
+    AVENUE: 'AVE', BOULEVARD: 'BLVD', CIRCLE: 'CIR', COURT: 'CT', DRIVE: 'DR',
+    HIGHWAY: 'HWY', LANE: 'LN', PARKWAY: 'PKWY', PLACE: 'PL', ROAD: 'RD',
+    STREET: 'ST', TERRACE: 'TER', TRAIL: 'TRL', WAY: 'WAY',
+  };
+  const words = String(value || '')
+    .toUpperCase()
+    .replace(/[.,#]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  if (words.length && suffixes[words[words.length - 1]]) words[words.length - 1] = suffixes[words[words.length - 1]];
+  return words.join(' ');
+}
+
+export function countyAddressParts(value) {
+  let address = String(value || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  address = address.split(',')[0].trim();
+  address = address.replace(/\s+(?:LOS ANGELES|PACIFIC PALISADES|CALIFORNIA|CA)(?:\s+\d{5}(?:-\d{4})?)?$/i, '').trim();
+  address = address.replace(/\s+(?:APT|UNIT|STE|SUITE)\s+\S+.*$/i, '').trim();
+  const match = address.match(/^(\d+[A-Z]?)(?:-\d+[A-Z]?)?\s+(?:(N|S|E|W|NE|NW|SE|SW)\s+)?(.+)$/i);
+  if (!match) return null;
+  const houseNo = match[1];
+  const street = countyStreet(match[3]);
+  return houseNo && street ? { houseNo, street, key: `${houseNo}|${street}` } : null;
+}
+
+function countyParcelRecord(attributes = {}) {
+  const lotSf = Math.round(numberFromValue(attributes.Shape__Area ?? attributes.SHAPE__AREA ?? attributes.shape__area));
+  if (!Number.isFinite(lotSf) || lotSf < 1000 || lotSf > 2000000) return null;
+  const ain = String(attributes.AIN || '').replace(/\D/g, '');
+  const apn = firstText(attributes.APN, ain.length === 10
+    ? `${ain.slice(0, 4)}-${ain.slice(4, 7)}-${ain.slice(7)}`
+    : null);
+  return {
+    lotSf,
+    ain: ain.length === 10 ? ain : null,
+    apn: apn || null,
+    source: 'LA County Assessor parcel polygon',
+  };
+}
+
+async function countyParcelQuery(params, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const body = new URLSearchParams({ f: 'json', returnGeometry: 'false', ...params });
+    const response = await fetch(COUNTY_PARCEL_QUERY_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body,
+    });
+    if (!response.ok) throw new Error(`LA County parcel lookup HTTP ${response.status}`);
+    const payload = await response.json();
+    if (payload?.error) throw new Error(payload.error.message || 'LA County parcel lookup failed');
+    return Array.isArray(payload?.features) ? payload.features.map(feature => feature?.attributes || {}) : [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function countyParcelsByAddress(records = []) {
+  const partsByKey = new Map();
+  records.forEach(record => {
+    const parts = countyAddressParts(record.address);
+    if (parts) partsByKey.set(parts.key, parts);
+  });
+  const parts = [...partsByKey.values()];
+  if (!parts.length) return new Map();
+  const quote = value => `'${String(value || '').replace(/'/g, "''")}'`;
+  const where = parts.map(part => `(SitusHouseNo=${quote(part.houseNo)} AND SitusStreet=${quote(part.street)})`).join(' OR ');
+  const rows = await countyParcelQuery({
+    where,
+    outFields: 'AIN,APN,SitusHouseNo,SitusStreet,SitusFullAddress,Shape__Area',
+    resultRecordCount: String(Math.max(100, parts.length * 4)),
+  });
+  const matches = new Map();
+  rows.forEach(row => {
+    const key = `${String(row.SitusHouseNo || '').trim().toUpperCase()}|${countyStreet(row.SitusStreet)}`;
+    const parcel = countyParcelRecord(row);
+    if (!partsByKey.has(key) || !parcel) return;
+    const existing = matches.get(key) || [];
+    if (!existing.some(item => item.ain && item.ain === parcel.ain)) existing.push(parcel);
+    matches.set(key, existing);
+  });
+  return matches;
+}
+
+async function countyParcelsAtPoint(record = {}) {
+  const lat = Number(record.lat);
+  const lng = Number(record.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < 32 || lat > 36 || lng < -121 || lng > -116) return [];
+  const rows = await countyParcelQuery({
+    where: '1=1',
+    geometry: `${lng},${lat}`,
+    geometryType: 'esriGeometryPoint',
+    inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    outFields: 'AIN,APN,SitusHouseNo,SitusStreet,SitusFullAddress,Shape__Area',
+    resultRecordCount: '10',
+  });
+  return rows.map(countyParcelRecord).filter(Boolean);
+}
+
+function combineCountyParcels(parcels = []) {
+  const unique = [...new Map(parcels.map(parcel => [parcel.ain || parcel.apn || String(parcel.lotSf), parcel])).values()];
+  if (!unique.length) return null;
+  return {
+    lotSf: unique.reduce((sum, parcel) => sum + parcel.lotSf, 0),
+    source: unique[0].source,
+    apns: unique.map(parcel => parcel.apn).filter(Boolean),
+  };
 }
 
 // Guess project type from permit data
@@ -801,6 +959,7 @@ async function getLandCompBenchmarks(neighborhoods = []) {
 
 function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const rawPermit = s.raw_permit_data || {};
+  const lotDetails = normalizedLotDetails(s);
   const totalCost = s.total_cost || 0;
   const price = s.price || 0;
   const interestCarryPct = 0.65 * 0.065 * 1.5; // 65% LTC, 6.5%, 18 months
@@ -861,13 +1020,13 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const fallbackLandCost = Math.max(0, Math.round(preCarryCost - hardCosts - softCosts));
   const offMarket = /off|not for sale/i.test(String(s.status || '')) || isNewHousePermitPlaceholder(s, rawPermit);
   const doorLand = offMarket ? perDoorLandBasis(type, units) : null;
-  const houseLotLand = offMarket ? houseLotLandBasis(type, normalizedLotSf(s)) : null;
+  const houseLotLand = offMarket ? houseLotLandBasis(type, lotDetails.lotSf) : null;
   const compLand = offMarket ? estimateLandBasisFromComps({
     neighborhood,
     project_type: type,
     units,
     avg_unit_sf: avgUnitSf,
-    lot_sf: normalizedLotSf(s),
+    lot_sf: lotDetails.lotSf,
     totalSF: totalSf,
     lat: s.lat,
     lng: s.lng,
@@ -936,7 +1095,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source || null,
     buildingSfParsed: rawPermit.building_sf_parsed ?? null,
     permitValuation,
-    lotSfSource: rawPermit.lot_sf_source || null,
+    lotSfSource: lotDetails.source,
   };
 }
 
@@ -1609,7 +1768,8 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
   const rawPermit = s.raw_permit_data || {};
   const addressAliases = Array.isArray(rawPermit.address_aliases) ? rawPermit.address_aliases : [];
   const neighborhood = normalizedNeighborhood(s) || 'Neighborhood TBD';
-  const lotSf = normalizedLotSf(s);
+  const lotDetails = normalizedLotDetails(s);
+  const lotSf = lotDetails.lotSf;
   const model = modelFromSupabaseSite(s, landCompBenchmarks);
   const permitDetail = newHousePermitDetail(s, model);
   const status = model.needsLandComp ? 'off-market' : (s.status || 'active');
@@ -1639,7 +1799,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     buildingSfSource: rawPermit.building_sf_source || rawPermit.avg_unit_sf_source || null,
     buildingSfParsed: rawPermit.building_sf_parsed ?? null,
     permitValuation: rawPermit.permit_valuation || model.permitValuation || null,
-    lotSfSource:  rawPermit.lot_sf_source || null,
+    lotSfSource:  lotDetails.source,
     isEd1:        isEd1Project(s, rawPermit),
     ed1Affordability: model.ed1Affordability || resolveEd1Affordability({ ...s, raw_permit_data: rawPermit }),
     stories:      rawPermit.stories || rawPermit.of_stories || rawPermit.number_of_stories || permitDetail.stories || null,
@@ -3132,6 +3292,7 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         permitStatus: s.permitStatus,
         developmentStatus: s.developmentStatus,
         inspectionCheck: s.inspectionCheck,
+        permitSourceId: s.permitSourceId,
         permitNumber:  s.permitNumber,
         workDescription: s.workDescription,
         projectDetailStatus: s.projectDetailStatus,
@@ -3210,6 +3371,152 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
       }, access.active || unlocked.has(String(s.id)))),
     });
   } catch (err) { next(err); }
+});
+
+// Resolve missing house lot areas in one free County GIS request after the
+// first page is visible. Results are cached on the source record so later
+// searches do not repeat the lookup.
+router.post('/house-lots', requireAuth, async (req, res, next) => {
+  try {
+    const [access, unlockedSiteIds] = await Promise.all([
+      getUserAccessFast(req.user),
+      getUnlockedSiteIdsFast(req.user?.id),
+    ]);
+    const unlocked = new Set(unlockedSiteIds.map(String));
+
+    const requested = (Array.isArray(req.body?.sites) ? req.body.sites : [])
+      .map(item => ({
+        id: Number(item?.id),
+        permitSourceId: Number(item?.permitSourceId),
+        permitNumber: String(item?.permitNumber || '').trim(),
+      }))
+      .filter(item => Number.isFinite(item.id) && item.id > 0)
+      .filter(item => access.active || unlocked.has(String(item.id)))
+      .slice(0, HOUSE_LOT_BATCH_LIMIT);
+    if (!requested.length) return res.status(402).json({ error: 'Unlock this property or choose Unlimited for parcel lot enrichment.' });
+
+    const ids = [...new Set(requested.map(item => item.id))];
+    const permitIds = [...new Set(requested.flatMap(item => [item.id, item.permitSourceId]).filter(Number.isFinite))];
+    const [permitResult, siteResult] = await Promise.all([
+      planningDb.from('permits')
+        .select('id,permit_number,address,lat,lng,lot_sf,lot_sf_source,raw_data')
+        .in('id', permitIds),
+      planningDb.from('sites')
+        .select('id,address,lat,lng,lot_sf,permit_source_id,project_type,raw_permit_data,external_property_record')
+        .in('id', ids),
+    ]);
+    if (permitResult.error) throw permitResult.error;
+    if (siteResult.error) throw siteResult.error;
+
+    const permitsById = new Map((permitResult.data || []).map(row => [Number(row.id), row]));
+    const sitesById = new Map((siteResult.data || []).map(row => [Number(row.id), row]));
+    const records = requested.map(item => {
+      const directPermit = permitsById.get(item.id);
+      const site = sitesById.get(item.id);
+      const sourcePermit = permitsById.get(item.permitSourceId);
+      const directPermitMatches = directPermit && (!site || (item.permitNumber && String(directPermit.permit_number || '') === item.permitNumber));
+      const permit = directPermitMatches
+        ? directPermit
+        : sourcePermit || (!site ? directPermit : null);
+      if (permit) return {
+        requestId: item.id,
+        kind: 'permit',
+        dbId: permit.id,
+        ...permit,
+        raw_permit_data: permit.raw_data || {},
+      };
+      if (site) return { requestId: item.id, kind: 'site', dbId: site.id, ...site };
+      return null;
+    }).filter(Boolean);
+
+    const resolved = new Map();
+    records.forEach(record => {
+      const existing = normalizedLotDetails(record);
+      if (existing.lotSf) {
+        resolved.set(record.requestId, {
+          lotSf: existing.lotSf,
+          source: existing.source || 'Source property record',
+          apns: siteParcelApns(record),
+        });
+      }
+    });
+
+    const unresolved = records.filter(record => !resolved.has(record.requestId));
+    if (unresolved.length) {
+      let addressMatches = new Map();
+      try {
+        addressMatches = await countyParcelsByAddress(unresolved);
+      } catch (error) {
+        console.warn('[sites:house-lots] Batch address lookup failed:', error.message);
+      }
+      unresolved.forEach(record => {
+        const parts = countyAddressParts(record.address);
+        const parcel = combineCountyParcels(parts ? addressMatches.get(parts.key) : []);
+        if (parcel) resolved.set(record.requestId, parcel);
+      });
+    }
+
+    const pointCandidates = unresolved.filter(record => !resolved.has(record.requestId));
+    for (let index = 0; index < pointCandidates.length; index += 5) {
+      const batch = pointCandidates.slice(index, index + 5);
+      const pointResults = await Promise.all(batch.map(async record => {
+        try {
+          return [record.requestId, combineCountyParcels(await countyParcelsAtPoint(record))];
+        } catch (error) {
+          console.warn(`[sites:house-lots] Point lookup failed for ${record.requestId}:`, error.message);
+          return [record.requestId, null];
+        }
+      }));
+      pointResults.forEach(([requestId, parcel]) => {
+        if (parcel) resolved.set(requestId, parcel);
+      });
+    }
+
+    const writes = records.flatMap(record => {
+      const parcel = resolved.get(record.requestId);
+      if (!parcel || !record.dbId) return [];
+      if (record.kind === 'permit') {
+        return [planningDb.from('permits').update({
+          lot_sf: parcel.lotSf,
+          lot_sf_source: parcel.source,
+        }).eq('id', record.dbId)];
+      }
+      return [planningDb.from('sites').update({
+        lot_sf: parcel.lotSf,
+        raw_permit_data: {
+          ...(record.raw_permit_data || {}),
+          lot_sf: parcel.lotSf,
+          lot_sf_source: parcel.source,
+          apns: [...new Set([...(record.raw_permit_data?.apns || []), ...(parcel.apns || [])])],
+        },
+      }).eq('id', record.dbId)];
+    });
+    if (writes.length) {
+      const writeResults = await Promise.allSettled(writes);
+      writeResults.filter(result => result.status === 'rejected' || result.value?.error).forEach(result => {
+        console.warn('[sites:house-lots] Could not cache parcel lot result:', result.reason?.message || result.value?.error?.message || result.reason);
+      });
+      _housePageCache.clear();
+      _modelCache.clear();
+      _siteCache = null;
+      _cacheTime = 0;
+    }
+
+    res.set('Cache-Control', 'private, no-store');
+    res.json({
+      results: records.map(record => {
+        const parcel = resolved.get(record.requestId);
+        return {
+          id: record.requestId,
+          lotSf: parcel?.lotSf || null,
+          lotSfSource: parcel?.source || null,
+          apns: parcel?.apns || [],
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ── GET /api/sites/:id ─────────────────────────────────────────────────────────

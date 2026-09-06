@@ -535,6 +535,8 @@ function normalizeRentCastRecord(record) {
     recordingDate: cleanDate(record?.lastSaleDate) || latestSale?.date || null,
     lastSaleAmount: cleanMoney(record?.lastSalePrice) || latestSale?.price || null,
     saleHistory,
+    lotSize: cleanMoney(record?.lotSize || record?.lotSquareFeet || record?.lotSizeSquareFeet),
+    buildingSquareFeet: cleanMoney(record?.squareFootage || record?.buildingSquareFeet),
     originalMortgage: normalizeMortgageRecord(record?.originalMortgage, record?.originalMortgage?.source),
     source: clean(record?.source) || RENTCAST_SOURCE,
   };
@@ -973,6 +975,11 @@ function mergeOwnerResults(current, candidate) {
     recordingDate: latestSale?.date || current.recordingDate || candidate.recordingDate || null,
     lastSaleAmount: latestSale?.price || current.lastSaleAmount || candidate.lastSaleAmount || null,
     saleHistory,
+    lotSize: current.lotSize || candidate.lotSize || null,
+    buildingSquareFeet: current.buildingSquareFeet || candidate.buildingSquareFeet || null,
+    zoning: current.zoning || candidate.zoning || null,
+    useCode: current.useCode || candidate.useCode || null,
+    useDescription: current.useDescription || candidate.useDescription || null,
     originalMortgage: current.originalMortgage || candidate.originalMortgage || null,
     historyRefreshedAt: current.historyRefreshedAt || candidate.historyRefreshedAt || null,
     source: sources.join(' + '),
@@ -1115,6 +1122,15 @@ function normalizeRegridFeature(feature) {
     fields.alt_parcelnumb2,
     fields.alt_parcelnumb3
   );
+  const lotAcres = Number(first(fields.ll_gisacre, fields.gisacre, fields.acres, fields.lot_acres));
+  const lotSize = cleanMoney(first(
+    fields.ll_gissqft,
+    fields.gissqft,
+    fields.lot_size,
+    fields.lot_sqft,
+    fields.sqftlot,
+    Number.isFinite(lotAcres) && lotAcres > 0 ? lotAcres * 43560 : null
+  ));
 
   return {
     found: !!ownerName,
@@ -1133,6 +1149,7 @@ function normalizeRegridFeature(feature) {
       event: 'Sale',
       source: REGRID_SOURCE,
     }] : [],
+    lotSize,
     originalMortgage,
     ownerRecordUpdatedAt: cleanDate(first(
       enhanced.eo_last_refresh,
@@ -1199,7 +1216,7 @@ async function queryRegrid(params) {
       requestCompleted = true;
       const feature = regridFeature(data);
       const normalized = normalizeRegridFeature(feature);
-      if (normalized?.ownerName || normalized?.lastSaleDate || normalized?.lastSaleAmount || normalized?.originalMortgage) {
+      if (normalized?.ownerName || normalized?.lastSaleDate || normalized?.lastSaleAmount || normalized?.originalMortgage || normalized?.lotSize) {
         parcelRecords.push(normalized);
         merged = mergeOwnerResults(merged, normalized);
         if (apns.length <= 1) break;

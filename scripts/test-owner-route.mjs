@@ -135,6 +135,8 @@ assert.deepEqual(
 const rentcast = normalizeRentCastRecord({
   formattedAddress: '267 N Toyopa Dr, Pacific Palisades, CA 90272',
   assessorID: '4412-003-010',
+  lotSize: 6269,
+  squareFootage: 4740,
   owner: {
     names: ['Example Owner LLC'],
     type: 'Organization',
@@ -148,6 +150,8 @@ const rentcast = normalizeRentCastRecord({
 
 assert.equal(rentcast.ownerName, 'Example Owner LLC');
 assert.equal(rentcast.ownerType, 'Organization');
+assert.equal(rentcast.lotSize, 6269);
+assert.equal(rentcast.buildingSquareFeet, 4740);
 assert.equal(rentcast.saleHistory.length, 2);
 assert.deepEqual(
   saleHistoryFromRecord(rentcast).map(sale => [sale.date, sale.price]),

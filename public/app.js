@@ -186,9 +186,26 @@ function knownLotSf(s) {
   return likelyDefault ? 0 : lot;
 }
 
+function lotOverrideForSite(s) {
+  const value = Number(siteLotOverrides[String(s?.id)] || 0);
+  return Number.isFinite(value) && value >= 1000 && value <= 2000000 ? Math.round(value) : 0;
+}
+
+function underwritingLotSf(s) {
+  return knownLotSf(s) || (isHouseSite(s) ? lotOverrideForSite(s) : 0);
+}
+
+function lotSfSourceText(s) {
+  if (knownLotSf(s)) return s?.lotSfSource || 'Permit or parcel source';
+  if (lotOverrideForSite(s)) return 'User lot-size assumption';
+  return 'Not provided by permit or parcel source';
+}
+
 function siteLotText(s) {
   const lot = knownLotSf(s);
-  return lot > 0 ? `Lot ${Math.round(lot).toLocaleString()} SF` : 'Lot TBD';
+  if (lot > 0) return `Lot ${Math.round(lot).toLocaleString()} SF`;
+  const assumed = lotOverrideForSite(s);
+  return assumed > 0 ? `Lot ${assumed.toLocaleString()} SF assumed` : 'Lot SF pending';
 }
 
 function siteUnitsText(s) {
@@ -685,11 +702,14 @@ function calcIRR(cashflows, guess = 0.15) {
 }
 const irrC = v => v >= 18 ? '#1d9e75' : v >= 12 ? '#ef9f27' : '#e24b4a';
 const irrL = v => v >= 18 ? 'Strong' : v >= 12 ? 'Moderate' : 'Weak';
-let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null;
+const SITE_LOT_OVERRIDE_KEY = 'parcella_site_lot_overrides';
+let allSites = [], filtered = [], openId = null, activeView = 'list', mapBaseLayer = 'roadmap', watchlist = loadWatchlist(), userMetrics = null, siteLotOverrides = loadSiteLotOverrides();
 let detailRenderRevision = 0;
 let ownerHydrationRevision = 0;
 const houseCompBenchmarks = new Map();
 const houseCompBenchmarkPending = new Set();
+const houseLotLookupPending = new Set();
+const houseLotLookupAttempted = new Set();
 const underwritingSnapshots = new Map();
 let siteLoadRunId = 0;
 let sitePageTotal = 0, sitePageLimit = SITE_PAGE_LIMIT, currentSiteQuery = '';
@@ -1223,6 +1243,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .nb{background:#fffbf0;border:1px solid #f0e0b0;border-left:3px solid var(--gold);border-radius:7px;padding:9px 11px;font-size:11px;line-height:1.55;color:#3f4a5a;margin-top:6px}.gb{padding:7px 12px;background:var(--gold);color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;margin-top:5px}.ab{width:100%;padding:8px;border:none;border-radius:7px;font-size:12px;font-weight:800;cursor:pointer;margin-top:6px}.ap{background:var(--navy);color:#fff}.as{background:#fff;color:var(--navy);border:1px solid var(--navy)}
 .maptabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:5px}.mapbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 4px;font-size:9px;font-weight:800;cursor:pointer}.mapbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.mapcard{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:5px;background:#fff;text-decoration:none}.mapcard img{width:100%;height:152px;object-fit:cover;display:block}.mapcap{padding:5px 8px;font-size:9px;color:#536071;background:#f8fafc;border-top:1px solid var(--line)}.maplinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:6px}.maplinks a,.maplinks button{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff;cursor:pointer}.maplinks a:hover,.maplinks button:hover{border-color:var(--gold);background:#fffdf7}
 .viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:fill;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:5;transform:translate(-50%,-50%) scale(1.12)}.pin:after{display:none!important}.pintip{position:absolute;left:21px;top:-18px;width:224px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;box-shadow:0 10px 25px rgba(15,31,61,.2);text-align:left;color:var(--ink);font-size:10px;line-height:1.25;display:none;pointer-events:none}.pin:hover .pintip{display:block}.pintip b{display:block;font-size:11px;margin-bottom:2px;overflow-wrap:anywhere}.pintip em{display:block;font-style:normal;color:#6f7b8c;margin-bottom:6px}.pintip span{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #edf1f4;padding-top:4px;margin-top:4px}.pintip strong{font-size:10px}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}.ownerbox{border:1px solid var(--line);border-left:3px solid var(--navy);border-radius:7px;padding:9px 10px;background:#f8fafc;color:#3f4a5a;display:grid;gap:3px;font-size:12px;line-height:1.35}.ownerbox b{color:var(--navy);font-size:13px}.ownerbox span{color:#657184}.ownerct td:first-child{color:#6f7b8c;font-weight:800;text-transform:uppercase;font-size:11px}.ownerct td:last-child{text-align:right;overflow-wrap:anywhere}
+.lot-assumption{display:flex;align-items:center;gap:6px;border:1px solid #ead7a6;border-left:3px solid var(--gold);border-radius:7px;padding:7px 8px;margin:6px 0;background:#fffaf1}.lot-assumption label{font-size:10px;font-weight:800;color:#76550f;flex:1}.lot-assumption input{width:105px;border:1px solid #d8c58f;border-radius:5px;padding:5px 6px;text-align:right;font-size:11px}.lot-assumption button{border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:5px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.lot-assumption button.clear{background:#fff;color:#536071;border-color:var(--line)}
 .logo{font-size:18px}.navbtn,.albl,.ntag{font-size:12px}.cb,.sbs,.sb2 input,.bp,.br,.ss,.cm,.ct,.nb,.gb,.readitem,.ownerbox{font-size:12px}.ca{font-size:15px}.cp{font-size:14px}.tbl,.dht{font-size:14px}.kpv{font-size:14px}.mbv{font-size:17px}.sh,.sb h4,.mfl,.kpl,.icl,.mbl,.bdg,.mapbtn,.mapcap,.maplinks a,.maplinks button,.viewbtn,.watchbtn,.layerbtn,.topdeal span,.sourcelinks a{font-size:10px}.icv{font-size:13px}.da{font-size:10px}
 @media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.settings-grid{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}}
 @media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}}
@@ -1716,12 +1737,12 @@ function imputedLandFromDoorSetting(s) {
 }
 
 function canUseHouseLotLandBasis(s) {
-  return s?.type === 'New House' && knownLotSf(s) > 0 && houseLandPerLotSf() > 0;
+  return s?.type === 'New House' && underwritingLotSf(s) > 0 && houseLandPerLotSf() > 0;
 }
 
 function imputedHouseLandFromLotSetting(s) {
   if (!canUseHouseLotLandBasis(s)) return 0;
-  return Math.round(houseLandPerLotSf() * knownLotSf(s));
+  return Math.round(houseLandPerLotSf() * underwritingLotSf(s));
 }
 
 function imputedLandFromUserSetting(s) {
@@ -1734,7 +1755,9 @@ function hasPermitValuationEstimate(s) {
 
 function landValueSourceNote(s) {
   if (canUseHouseLotLandBasis(s)) {
-    return `User house land setting: ${fmtD(houseLandPerLotSf())}/lot SF x ${Math.round(knownLotSf(s)).toLocaleString()} lot SF.`;
+    const lotSf = underwritingLotSf(s);
+    const assumption = knownLotSf(s) ? '' : ' (user lot-size assumption)';
+    return `User house land setting: ${fmtD(houseLandPerLotSf())}/lot SF x ${Math.round(lotSf).toLocaleString()} lot SF${assumption}.`;
   }
   if (!isOffMarketSite(s)) return 'Listing ask price used as land basis.';
   if (canUseDoorLandBasis(s)) {
@@ -1754,6 +1777,9 @@ function landValueSourceNote(s) {
   }
   if (s?.landValueSource === 'permit_valuation_fallback') {
     return 'Model placeholder only. No active asking price or recent matching land comps were available.';
+  }
+  if (isHouseSite(s) && !underwritingLotSf(s)) {
+    return 'A verified or user-supplied lot area is required to calculate the house land basis.';
   }
   return 'Fallback land basis. No asking price or recent matching land comps were available.';
 }
@@ -1851,6 +1877,43 @@ function loadWatchlist() {
 
 function saveWatchlist() {
   localStorage.setItem('parcella_watchlist', JSON.stringify(watchlist));
+}
+
+function loadSiteLotOverrides() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SITE_LOT_OVERRIDE_KEY) || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSiteLotOverrides() {
+  localStorage.setItem(SITE_LOT_OVERRIDE_KEY, JSON.stringify(siteLotOverrides));
+}
+
+function applyHouseLotOverride(id) {
+  const site = allSites.find(item => String(item.id) === String(id));
+  const input = g('lot-override-' + id);
+  const lotSf = Math.round(Number(input?.value || 0));
+  if (!site || !Number.isFinite(lotSf) || lotSf < 1000 || lotSf > 2000000) {
+    alert('Enter a lot area between 1,000 and 2,000,000 square feet.');
+    input?.focus();
+    return;
+  }
+  siteLotOverrides = { ...siteLotOverrides, [String(id)]: lotSf };
+  saveSiteLotOverrides();
+  underwritingSnapshots.clear();
+  refreshUnderwritingViews();
+}
+
+function clearHouseLotOverride(id) {
+  const next = { ...siteLotOverrides };
+  delete next[String(id)];
+  siteLotOverrides = next;
+  saveSiteLotOverrides();
+  underwritingSnapshots.clear();
+  refreshUnderwritingViews();
 }
 
 function isWatched(id) {
@@ -1980,15 +2043,18 @@ function selectedScenarioKey() {
 
 function scenarioComparisonHTML(s) {
   const selected = selectedScenarioKey();
+  const house = isHouseSite(s);
+  const needsLand = house && !hasReliableLandBasis(s);
   return `<table class="ct scn">
-    <tr><td>Plan</td><td>Hard/SF</td><td>${isHouseSite(s) ? 'Total/SF' : 'Total/unit'}</td><td>Net profit</td></tr>
+    <tr><td>Plan</td><td>Hard/SF</td><td>${house ? (needsLand ? 'Before land/SF' : 'Total/SF') : 'Total/unit'}</td><td>Net profit</td></tr>
     ${scenarioListForSite(s).map(row => {
-      const pc = row.valuation.netProfit >= 0 ? '#1d9e75' : '#e24b4a';
+      const pendingLand = house && row.valuation.needsLandComp;
+      const pc = pendingLand ? '#697789' : row.valuation.netProfit >= 0 ? '#1d9e75' : '#e24b4a';
       return `<tr class="${row.key===selected?'selrow':''}">
         <td>${row.plan.label}</td>
         <td>${fmtD(row.costs.hardPerSf)}</td>
-        <td>${fmtD(isHouseSite(s) ? row.costs.totalPerSf : row.costs.totalPerUnit)}</td>
-        <td style="color:${pc}">${fmtM(row.valuation.netProfit)}</td>
+        <td>${fmtD(house ? row.costs.totalPerSf : row.costs.totalPerUnit)}</td>
+        <td style="color:${pc}">${pendingLand ? 'n/a' : fmtM(row.valuation.netProfit)}</td>
       </tr>`;
     }).join('')}
   </table>`;
@@ -1997,6 +2063,23 @@ function scenarioComparisonHTML(s) {
 function pencilReadItems(s, costs, income, valuation) {
   const items = [];
   if (isHouseSite(s)) {
+    if (valuation.needsLandComp) {
+      items.push({
+        status: 'Watch',
+        text: 'Lot square footage is required before net profit and return metrics can be calculated.',
+      });
+      items.push({
+        status: valuation.exitValueMetricValue ? 'Pass' : 'Watch',
+        text: valuation.exitValueMetricValue
+          ? `Completed-home value uses ${fmtD(valuation.exitValueMetricValue)}/building SF across ${Math.round(valuation.exitValueBasisQuantity || 0).toLocaleString()} SF.`
+          : 'A usable completed-home sales $/SF benchmark is still needed.',
+      });
+      items.push({
+        status: costs.hardPerSf <= 325 ? 'Pass' : costs.hardPerSf <= 380 ? 'Watch' : 'Risk',
+        text: `Hard cost is ${fmtD(costs.hardPerSf)}/SF under the ${costs.planLabel} plan.`,
+      });
+      return items;
+    }
     const returnOnCost = Number(valuation.returnOnCost || 0) * 100;
     const grossMargin = Number(valuation.grossMarginPct || 0) * 100;
     items.push({
@@ -2196,6 +2279,7 @@ function mergeOwnerInfo(localOwner, providerOwner, s = {}) {
     situsAddress: localOwner.situsAddress || providerOwner.situsAddress || s.addr || null,
     apn: apns[0] || null,
     apns,
+    lotSize: Number(localOwner.lotSize || providerOwner.lotSize || 0) || null,
     originalMortgage: localOwner.originalMortgage || providerOwner.originalMortgage || null,
     historyRefreshedAt: localOwner.historyRefreshedAt || providerOwner.historyRefreshedAt || null,
     source: sources.join(' + '),
@@ -2270,6 +2354,7 @@ function siteOwnerInfo(s = {}) {
     recordingDate: saleHistory[0]?.date || null,
     lastSaleAmount: saleHistory[0]?.price || null,
     saleHistory,
+    lotSize: Number(external.lotSize || external.lotSquareFeet || 0) || null,
     originalMortgage,
     historyRefreshedAt: s.externalEnrichedAt || planningOwner?.historyRefreshedAt || null,
   };
@@ -2386,6 +2471,15 @@ async function hydrateOwnerInfo(s) {
     const owner = await fetchOwnerInfo(s);
     if (revision !== ownerHydrationRevision || openId !== s.id || el !== g('owner-' + s.id)) return;
     el.innerHTML = ownerInfoHTML(owner, s);
+    const ownerLotSf = Math.round(Number(owner?.lotSize || 0));
+    if (isHouseSite(s) && !knownLotSf(s) && ownerLotSf >= 1000 && ownerLotSf <= 2000000) {
+      s.lot = ownerLotSf;
+      s.lotSf = ownerLotSf;
+      s.lotSfSource = owner?.source ? `${owner.source} parcel area` : 'Property record parcel area';
+      underwritingSnapshots.clear();
+      applyFilters();
+      if (openId === s.id) renderDetail(s);
+    }
   } catch (e) {
     if (revision !== ownerHydrationRevision || openId !== s.id || el !== g('owner-' + s.id)) return;
     el.innerHTML = `<div class="ownerbox"><b>Owner lookup failed</b><span>${escapeText(e.message || 'Could not load owner data.')}</span></div>`;
@@ -2504,6 +2598,57 @@ async function fetchSitePage(qs) {
   };
 }
 
+async function hydrateHouseLots(sites, loadRunId = siteLoadRunId) {
+  const candidates = (sites || []).filter(site =>
+    hasSiteAccess(site) && isHouseSite(site) && !site.locked && !knownLotSf(site) &&
+    !houseLotLookupPending.has(String(site.id)) && !houseLotLookupAttempted.has(String(site.id))
+  );
+  if (!candidates.length) return;
+  candidates.forEach(site => {
+    houseLotLookupPending.add(String(site.id));
+    houseLotLookupAttempted.add(String(site.id));
+  });
+  try {
+    const data = await fetchJSONWithTimeout(API + '/api/sites/house-lots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        sites: candidates.map(site => ({
+          id: site.id,
+          permitSourceId: site.permitSourceId,
+          permitNumber: site.permitNumber,
+        })),
+      }),
+    }, 30000);
+    if (loadRunId !== siteLoadRunId) return;
+    let changed = false;
+    (data.results || []).forEach(result => {
+      const site = allSites.find(item => String(item.id) === String(result.id));
+      const lotSf = Math.round(Number(result.lotSf || 0));
+      if (!site || lotSf < 1000) return;
+      site.lot = lotSf;
+      site.lotSf = lotSf;
+      site.lotSfSource = result.lotSfSource || 'LA County Assessor parcel polygon';
+      const apns = normalizeApnValues(site.apns, site.apn, result.apns);
+      site.apns = apns;
+      site.apn = apns[0] || site.apn || null;
+      changed = true;
+    });
+    if (changed) {
+      underwritingSnapshots.clear();
+      applyFilters();
+      if (openId) {
+        const openSite = allSites.find(site => String(site.id) === String(openId));
+        if (openSite) renderDetail(openSite);
+      }
+    }
+  } catch (error) {
+    console.warn('[ParceLLA] House lot enrichment unavailable:', error.message || error);
+  } finally {
+    candidates.forEach(site => houseLotLookupPending.delete(String(site.id)));
+  }
+}
+
 async function loadSites(autoRetry = 0) {
   clearTimeout(siteSearchDebounceTimer);
   siteSearchDebounceTimer = null;
@@ -2538,6 +2683,7 @@ async function loadSites(autoRetry = 0) {
     console.log('[ParceLLA] Loaded first page', allSites.length, 'of', sitePageTotal, 'sites in', Date.now() - startedAt, 'ms');
     g('albl').textContent = 'Loaded';
     applyFilters();
+    void hydrateHouseLots(allSites, runId);
     void warmHouseCompBenchmarks(allSites, runId);
   } catch (e) {
     if (runId !== siteLoadRunId) return;
@@ -2569,6 +2715,7 @@ async function loadMoreSites() {
     siteNotice = data.notice || siteNotice;
     refreshZoneOptions();
     applyFilters();
+    void hydrateHouseLots(data.results, siteLoadRunId);
     void warmHouseCompBenchmarks(allSites, siteLoadRunId);
   } catch (e) {
     alert('Could not load more sites: ' + (e.message || e));
@@ -2781,16 +2928,18 @@ function renderCards() {
     const offMarket = isOffMarketSite(s);
     const devStatus = developmentStatusLabel(s);
     const priceMain = isForSaleSite(s) ? fmtM(ask) : 'Not for sale';
+    const house = isHouseSite(s);
     const reliableLand = hasReliableLandBasis(s);
     const needsLand = valuation.needsLandComp || !reliableLand;
+    const needsLot = house && needsLand && !underwritingLotSf(s);
+    const missingBasisLabel = needsLot ? 'Needs lot SF' : 'Needs land';
     const barColor = needsLand ? '#b98b2f' : pc;
     const priceSub = offMarket
       ? (reliableLand
         ? (canUseHouseLotLandBasis(s) ? fmtD(houseLandPerLotSf()) + '/lot SF basis' : 'land basis ' + fmtM(landBasis))
-        : 'land basis unavailable')
+        : (needsLot ? 'lot SF needed for land basis' : 'land basis unavailable'))
       : (ask ? 'asking price / land basis' : 'asking price missing');
     const watched = isWatched(s.id);
-    const house = isHouseSite(s);
     const displayAddr = gatedDisplayAddress(s);
     const addrNote = siteAddressNote(s);
     return `<div class="card${openId===s.id?' sel':''}" onclick="openDetail(${s.id})">
@@ -2800,18 +2949,18 @@ function renderCards() {
       </div>
       <div class="bdgs">
         ${offMarket?'<span class="bdg b4">Off-market</span>':s.rti?'<span class="bdg b1">RTI</span>':'<span class="bdg b2">For sale</span>'}
-        <span class="bdg b3">${s.type}</span>${isEd1Site(s)?'<span class="bdg b1">ED1</span>':''}<span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${!reliableLand?'<span class="bdg b4">Land comp needed</span>':''}${inspectionStatusBadgeHTML(s)}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
+        <span class="bdg b3">${s.type}</span>${isEd1Site(s)?'<span class="bdg b1">ED1</span>':''}<span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${!reliableLand?'<span class="bdg b4">' + (needsLot ? 'Lot SF needed' : 'Land comp needed') + '</span>':''}${inspectionStatusBadgeHTML(s)}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
-        <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${barColor}">${needsLand?'Needs land':fmtM(prof)}</div></div>
+        <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${barColor}">${needsLand?missingBasisLabel:fmtM(prof)}</div></div>
         <div class="kp"><div class="kpl">IRR</div><div class="kpv" style="color:${needsLand?'#b98b2f':irrC(irr)}">${needsLand?'n/a':Math.round(irr*10)/10 + '%'}</div></div>
         <div class="kp"><div class="kpl">${house ? 'Return on cost' : 'Dev spread'}</div><div class="kpv">${needsLand?'n/a':(house ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : spd) + '%'}</div></div>
-        <div class="kp"><div class="kpl">${house ? 'Resale $/SF' : 'Cap on cost'}</div><div class="kpv">${needsLand?'n/a':house ? fmtD(valuation.exitValueMetricValue || 0) : (valuation.capOnCost||0) + '%'}</div></div>
+        <div class="kp"><div class="kpl">${house ? 'Resale $/SF' : 'Cap on cost'}</div><div class="kpv">${house ? (valuation.exitValueMetricValue ? fmtD(valuation.exitValueMetricValue) : 'n/a') : (needsLand ? 'n/a' : (valuation.capOnCost||0) + '%')}</div></div>
       </div>
       <div class="pb">
         <span class="pbl">Exit ${fmtM(valuation.exitValue)}</span>
         <div class="pbt"><div class="pbf" style="width:${needsLand?4:pp}%;background:${barColor}"></div></div>
-        <span class="pbv" style="color:${barColor}">${needsLand?'Needs land':fmtM(prof)}</span>
+        <span class="pbv" style="color:${barColor}">${needsLand?missingBasisLabel:fmtM(prof)}</span>
       </div>
     </div>`;
   }).join('') + loadMoreHTML();
@@ -3493,7 +3642,9 @@ function renderDetail(s) {
   const offMarket = isOffMarketSite(s);
   const landLabel=landBasisLabel(s);
   const landNote=landValueSourceNote(s);
-  const landDisplay = hasReliableLandBasis(s) ? fmtD(land) : 'Not provided';
+  const needsLotSf = house && valuation.needsLandComp && !underwritingLotSf(s);
+  const missingBasisLabel = needsLotSf ? 'Needs lot SF' : 'Needs land';
+  const landDisplay = hasReliableLandBasis(s) ? fmtD(land) : (needsLotSf ? 'Lot SF needed' : 'Not provided');
   const metrics = currentUserMetrics();
   const vacancyLabel = Math.round(metrics.vacancyPct * 10) / 10;
   const totalSF=siteBuildingSf(s)||((s.units||0)*(s.usf||800));
@@ -3547,11 +3698,12 @@ function renderDetail(s) {
       const rocSupportEl = g('roc-kpi-support-' + s.id);
       const compProfit = Number(compValuation.netProfit || 0);
       const compIrr = Number(compValuation.leveragedIRR || 0);
+      const compMissingBasisLabel = house && compValuation.needsLandComp && !underwritingLotSf(s) ? 'Needs lot SF' : 'Needs land';
       const compProfitColor = compProfit >= 0 ? '#1d9e75' : '#e24b4a';
       if (valuationEl) valuationEl.innerHTML = valuationTableHTML(compValuation, costs, appraisal.capRateSource);
       if (pencilEl) pencilEl.innerHTML = pencilReadHTML(s, costs, income, compValuation);
       if (profitKpiEl) {
-        profitKpiEl.textContent = compValuation.needsLandComp ? 'Needs land' : fmtM(compProfit);
+        profitKpiEl.textContent = compValuation.needsLandComp ? compMissingBasisLabel : fmtM(compProfit);
         profitKpiEl.style.color = compValuation.needsLandComp ? '#b98b2f' : compProfitColor;
       }
       if (profitSupportEl) profitSupportEl.textContent = compValuation.needsLandComp ? 'land basis required' : 'exit minus all-in cost';
@@ -3579,11 +3731,17 @@ function renderDetail(s) {
       <div class="ic"><div class="icl">Neighborhood</div><div class="icv">${siteNeighborhood(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${siteLocationSourceNote(s)}</span></div></div>
       <div class="ic"><div class="icl">Listing status</div><div class="icv">${listingStatus}</div></div>
       <div class="ic"><div class="icl">Development status</div><div class="icv">${devStatus}</div></div>
-      <div class="ic"><div class="icl">${s.type === 'New House' ? 'Lot / Home size' : 'Units / Avg SF'}</div><div class="icv">${s.type === 'New House' ? escapeText(siteLotText(s) + ' / ' + siteProjectSfText(s)) : escapeText(siteUnitsText(s)) + ' / ' + siteAvgUnitSfText(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${s.type === 'New House' ? 'Permit/source measurements; TBD means the city did not publish that field.' : siteUnitSourceNote(s)}</span></div></div>
+      <div class="ic"><div class="icl">${s.type === 'New House' ? 'Lot / Home size' : 'Units / Avg SF'}</div><div class="icv">${s.type === 'New House' ? escapeText(siteLotText(s) + ' / ' + siteProjectSfText(s)) : escapeText(siteUnitsText(s)) + ' / ' + siteAvgUnitSfText(s)} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${s.type === 'New House' ? escapeText(lotSfSourceText(s)) : siteUnitSourceNote(s)}</span></div></div>
       ${isEd1Site(s)?`<div class="ic"><div class="icl">Program</div><div class="icv">ED1 - restricted rents <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${escapeText(ed1AffordabilityForSite(s).scheduleYear + ' ' + ed1AffordabilityForSite(s).schedule + ' at ' + ed1AffordabilityForSite(s).amiPct + '% AMI.')}</span></div></div>`:''}
       <div class="ic"><div class="icl">${landLabel}</div><div class="icv">${landDisplay} <span style="display:block;font-size:8px;color:#7f8a9a;font-weight:600;margin-top:1px">${landNote}</span></div></div>
-      <div class="ic"><div class="icl">All-in cost</div><div class="icv">${fmtM(tc)}</div></div>
+      <div class="ic"><div class="icl">All-in cost</div><div class="icv">${valuation.needsLandComp ? 'Pending land basis' : fmtM(tc)}</div></div>
     </div>
+    ${house && !knownLotSf(s) ? `<div class="lot-assumption">
+      <label for="lot-override-${s.id}">${lotOverrideForSite(s) ? 'Lot SF assumption' : 'County lot match pending or unavailable'}</label>
+      <input type="number" id="lot-override-${s.id}" min="1000" max="2000000" step="100" value="${lotOverrideForSite(s) || ''}" placeholder="Lot SF">
+      <button type="button" onclick="applyHouseLotOverride(${s.id})">Use lot SF</button>
+      ${lotOverrideForSite(s) ? `<button type="button" class="clear" onclick="clearHouseLotOverride(${s.id})">Clear</button>` : ''}
+    </div>` : ''}
     <button class="ab as" onclick="toggleWatch(${s.id}, event)">${isWatched(s.id)?'Remove from watchlist':'Save to watchlist'}</button>
     <div class="sh">Parcels</div>
     <div class="ownerbox">
@@ -3598,14 +3756,14 @@ function renderDetail(s) {
     ${renderMapPanel(s)}
     <div class="sh">Returns</div>
     <div class="mbg">
-      <div class="mb" style="border-left-color:${pc}"><div class="mbl">Net profit</div><div class="mbv" id="profit-kpi-${s.id}" style="color:${pc}">${fmtM(prof)}</div><div class="mbs" id="profit-kpi-support-${s.id}">exit minus all-in cost</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Annualized IRR' : 'IRR (5-yr)'}</div><div class="mbv" id="irr-kpi-${s.id}" style="color:${ic}">${Math.round(irr*10)/10}%</div><div class="mbs" id="irr-kpi-support-${s.id}">${house ? `${costs.months || 18}-month build and sale` : irrL(irr)}</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Gross margin' : 'Cap on cost'}</div><div class="mbv" ${house ? `id="gross-kpi-${s.id}"` : ''}>${house ? ((valuation.grossMarginPct || 0) * 100).toFixed(1) : (valuation.capOnCost || 0)}%</div><div class="mbs" id="cap-kpi-source-${s.id}">${house ? 'loading local home sales' : 'loading comp cap'}</div></div>
-      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Return on cost' : 'Dev spread'}</div><div class="mbv" ${house ? `id="roc-kpi-${s.id}"` : ''}>${house ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : spd}%</div><div class="mbs" id="roc-kpi-support-${s.id}">${profitSupportText(prof)}</div></div>
+      <div class="mb" style="border-left-color:${valuation.needsLandComp?'#b98b2f':pc}"><div class="mbl">Net profit</div><div class="mbv" id="profit-kpi-${s.id}" style="color:${valuation.needsLandComp?'#b98b2f':pc}">${valuation.needsLandComp?missingBasisLabel:fmtM(prof)}</div><div class="mbs" id="profit-kpi-support-${s.id}">${valuation.needsLandComp?'land basis required':'exit minus all-in cost'}</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Annualized IRR' : 'IRR (5-yr)'}</div><div class="mbv" id="irr-kpi-${s.id}" style="color:${ic}">${valuation.needsLandComp?'n/a':Math.round(irr*10)/10 + '%'}</div><div class="mbs" id="irr-kpi-support-${s.id}">${house ? `${costs.months || 18}-month build and sale` : irrL(irr)}</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Gross margin' : 'Cap on cost'}</div><div class="mbv" ${house ? `id="gross-kpi-${s.id}"` : ''}>${valuation.needsLandComp?'n/a':(house ? ((valuation.grossMarginPct || 0) * 100).toFixed(1) : (valuation.capOnCost || 0)) + '%'}</div><div class="mbs" id="cap-kpi-source-${s.id}">${house ? (valuation.exitValueMetricValue ? fmtD(valuation.exitValueMetricValue) + '/SF resale benchmark' : 'loading local home sales') : 'loading comp cap'}</div></div>
+      <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Return on cost' : 'Dev spread'}</div><div class="mbv" ${house ? `id="roc-kpi-${s.id}"` : ''}>${valuation.needsLandComp?'n/a':(house ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : spd) + '%'}</div><div class="mbs" id="roc-kpi-support-${s.id}">${valuation.needsLandComp?'land basis required':profitSupportText(prof)}</div></div>
     </div>
     <div class="sh">Cost waterfall</div>
     ${bars.map(([v,c,l])=>`<div class="wfr"><div class="wfl"><span>${l}</span><span>${fmtD(v)}</span></div><div class="wft"><div class="wff" style="width:${Math.round(v/tc*100)}%;background:${c}"></div></div></div>`).join('')}
-    <div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid #e8e8e8;margin-top:4px;font-size:11px;font-weight:600"><span>Total all-in</span><span>${fmtD(tc)}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid #e8e8e8;margin-top:4px;font-size:11px;font-weight:600"><span>${valuation.needsLandComp?'Subtotal before land':'Total all-in'}</span><span>${fmtD(tc)}</span></div>
     <div class="sh">Why this pencils</div>
     <div id="pencil-${s.id}">${pencilReadHTML(s, costs, income, valuation)}</div>
     <div class="sh">Construction budget</div>
@@ -3621,7 +3779,7 @@ function renderDetail(s) {
       <tr><td>Loan / interest assumptions</td><td>${Math.round((costs.loanToCost || 0) * 1000) / 10}% LTC @ ${Math.round((costs.interestRate || 0) * 1000) / 10}%</td></tr>
       <tr><td>Construction period</td><td>${costs.months} months</td></tr>
       ${house ? '' : `<tr><td>Rent impact</td><td>${signedPlanPct(costs.rentPremium)}${isEd1Site(s) && costs.requestedRentPremium > 0 ? ' <span style="color:#b98b2f;font-size:9px">positive premium capped by ED1 rent limit</span>' : ''}</td></tr>`}
-      <tr class="tot"><td>Total cost basis</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/${house ? 'home' : 'unit'}</td></tr>
+      <tr class="tot"><td>${valuation.needsLandComp ? 'Cost basis before land' : 'Total cost basis'}</td><td>${fmtD(totalPerSf)}/SF | ${fmtD(totalPerUnit)}/${house ? 'home' : 'unit'}</td></tr>
     </table>
     <div style="font-size:9px;color:#6f7b8c;line-height:1.35;margin:5px 0 8px">${costs.planNote} ${hardCostRead}${costs.recast && costs.storedHardPsf ? ' Stored hard cost was about ' + fmtD(costs.storedHardPsf) + '/SF, so this view is recast to ' + fmtD(costs.hardPerSf) + '/SF.' : ''} The Excel Construction Costs tab includes detailed hard and soft cost line items.</div>
     <div class="sh">Plan comparison</div>
@@ -4122,8 +4280,9 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
 }
 
 function valuationTableHTML(valuation, costs, sourceNote = '') {
-  const profitColor = (valuation.netProfit || 0) >= 0 ? '#1d9e75' : '#e24b4a';
   const houseValuation = /house|home|external value/i.test(String(valuation.exitValueSource || ''));
+  const needsLand = houseValuation && valuation.needsLandComp;
+  const profitColor = needsLand ? '#697789' : (valuation.netProfit || 0) >= 0 ? '#1d9e75' : '#e24b4a';
   return `<table class="ct">
       ${houseValuation ? `<tr><td>Completed home area</td><td>${Math.round(valuation.exitValueBasisQuantity || 0).toLocaleString()} SF</td></tr>
       <tr><td>Comp-derived resale value / SF</td><td>${valuation.exitValueMetricValue ? fmtD(valuation.exitValueMetricValue) + '/SF' : 'n/a'}</td></tr>
@@ -4136,8 +4295,8 @@ function valuationTableHTML(valuation, costs, sourceNote = '') {
       <tr><td>Exit value</td><td>${fmtD(valuation.exitValue)}</td></tr>
       <tr><td>Valuation source</td><td>${escapeText(valuation.exitValueSource || 'Income cap rate')}</td></tr>
       <tr><td>Valuation formula</td><td>${escapeText(valuation.exitValueFormula || `${fmtD(valuation.year5Noi)} / ${(valuation.exitCap*100).toFixed(2)}%`)}</td></tr>
-      <tr><td style="color:#e24b4a">Less: all-in cost</td><td style="color:#e24b4a">-${fmtD(costs.totalCost || 0)}</td></tr>
-      <tr class="tot"><td style="color:${profitColor}">Net profit</td><td style="color:${profitColor};font-size:14px">${fmtD(valuation.netProfit)}</td></tr>
+      <tr><td style="color:${needsLand ? '#697789' : '#e24b4a'}">${needsLand ? 'Subtotal before land' : 'Less: all-in cost'}</td><td style="color:${needsLand ? '#697789' : '#e24b4a'}">${needsLand ? fmtD(costs.totalCost || 0) : `-${fmtD(costs.totalCost || 0)}`}</td></tr>
+      <tr class="tot"><td style="color:${profitColor}">Net profit</td><td style="color:${profitColor};font-size:14px">${needsLand ? 'n/a' : fmtD(valuation.netProfit)}</td></tr>
     </table>`;
 }
 function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) {
@@ -4403,6 +4562,7 @@ function comparableEvidenceHTML(comps, rentComps, appraisal) {
 
 function appraisalDetailRows(appraisal, s, costs, income, valuation) {
   const v = appraisal.values || {};
+  const needsLand = appraisal.isHouse && valuation?.needsLandComp;
   const rows = [
     xlsTitleRow('Appraisal Detail', s.addr),
     xlsRow(['Conclusion Date', new Date().toISOString().slice(0, 10)]),
@@ -4413,8 +4573,8 @@ function appraisalDetailRows(appraisal, s, costs, income, valuation) {
     xlsRow(['Reconciled Appraised Value', cellMoney(Math.round(v.reconciled || 0)), appraisal.confidence, 'Weighted reconciliation of income, rent-comps, price/unit and price/SF']),
     xlsRow(['Low Value Range', cellMoney(Math.round(v.lowValue || 0)), '92% of reconciled value', 'Preliminary valuation range']),
     xlsRow(['High Value Range', cellMoney(Math.round(v.highValue || 0)), '108% of reconciled value', 'Preliminary valuation range']),
-    xlsRow(['Appraised Profit / Gap', cellMoneySigned(Math.round(v.appraisedProfit || 0)), 'Reconciled value less all-in cost', 'Positive means value above development basis']),
-    xlsRow(['All-In Development Cost', cellMoney(Math.round(costs.totalCost || 0)), 'Current underwriting', costs.planLabel || '']),
+    xlsRow(['Appraised Profit / Gap', needsLand ? '' : cellMoneySigned(Math.round(v.appraisedProfit || 0)), needsLand ? 'Lot SF required' : 'Reconciled value less all-in cost', needsLand ? 'Not calculated until land basis is available' : 'Positive means value above development basis']),
+    xlsRow([needsLand ? 'Cost Subtotal Before Land' : 'All-In Development Cost', cellMoney(Math.round(costs.totalCost || 0)), needsLand ? 'Incomplete underwriting' : 'Current underwriting', costs.planLabel || '']),
     xlsRow([''] ),
     xlsSectionRow('Cap Rate And Rent Evidence'),
     xlsRow(['Comp-Driven Entry Cap', cellPct(Math.round((appraisal.entryCap || 0) * 10000) / 100), appraisal.sales.length + ' scored sales comps', appraisal.source]),
@@ -4618,6 +4778,7 @@ function investmentReadRows(s, costs, income, valuation) {
 }
 
 function scenarioRowsForExport(s) {
+  const house = isHouseSite(s);
   return [
     xlsTitleRow('Construction Plan Scenarios', s.addr),
     xlsHeaderRow(['Plan', 'Hard Cost / SF', 'Soft %', 'Months', 'Rent Impact', 'Total Cost', 'Cost / Unit', 'NOI', 'Exit Value', 'Net Profit', 'Cap on Cost', 'Notes']),
@@ -4631,8 +4792,8 @@ function scenarioRowsForExport(s) {
       cellMoney(row.costs.totalPerUnit),
       cellMoney(row.income.noi),
       cellMoney(row.valuation.exitValue),
-      cellMoneySigned(row.valuation.netProfit),
-      cellPct(row.valuation.capOnCost || 0),
+      house && row.valuation.needsLandComp ? '' : cellMoneySigned(row.valuation.netProfit),
+      house && row.valuation.needsLandComp ? '' : cellPct(row.valuation.capOnCost || 0),
       [row.plan.note || '', 'String', 'note'],
     ])),
   ];
@@ -4909,11 +5070,12 @@ function constructionCostRows(s, tc, land) {
   const hardSchedule = allocateCostSchedule(hardCosts, hardCostLineItems(s));
   const softSchedule = allocateCostSchedule(softCosts, softCostLineItems());
   const carrySchedule = allocateCostSchedule(carryCost, carryCostLineItems());
+  const needsLand = isHouseSite(s) && !hasReliableLandBasis(s);
   const rows = [
     xlsTitleRow('Construction Cost Validation', s.addr),
     xlsRow(['Project Type', s.type || '']),
     xlsRow(['Program', isEd1Site(s) ? 'ED1' : 'Not identified as ED1']),
-    xlsRow(['Lot SF', knownLotSf(s) ? cellNumber(Math.round(knownLotSf(s))) : '', '', '', '', s.lotSfSource || 'Not provided by source record']),
+    xlsRow(['Lot SF', underwritingLotSf(s) ? cellNumber(Math.round(underwritingLotSf(s))) : '', '', '', '', lotSfSourceText(s)]),
     xlsRow([s.type === 'New House' ? 'Home SF' : 'Project SF', totalSF ? cellNumber(Math.round(totalSF)) : '', '', '', '', s.buildingSfSource || 'Source/model data']),
     xlsRow(['Construction Plan', costs.planLabel]),
     xlsRow(['Plan Notes', [costs.planNote || '', 'String', 'note']]),
@@ -4933,7 +5095,7 @@ function constructionCostRows(s, tc, land) {
     xlsRow(['Hard Costs', cellMoney(hardCosts), cellMoney(hardPerSf), cellMoney(hardPerUnit), totalCost ? cellPct(costPct(hardCosts, totalCost)) : '', 'Detailed schedule below: HVAC, framing, plumbing, electrical, etc.']),
     xlsRow(['Soft Costs', cellMoney(softCosts), totalSF ? cellMoney(softPerSf) : '', units ? cellMoney(softPerUnit) : '', totalCost ? cellPct(costPct(softCosts, totalCost)) : '', 'A&E, permits, fees, legal, developer fee, contingency']),
     xlsRow(['Financing Carry', cellMoney(carryCost), totalSF ? cellMoney(carryPerSf) : '', units ? cellMoney(carryPerUnit) : '', totalCost ? cellPct(costPct(carryCost, totalCost)) : '', 'Interest reserve, loan fees, taxes and lease-up carry']),
-    xlsRow(['Total All-In Cost', cellMoney(Math.round(totalCost)), cellMoney(totalPerSf), cellMoney(totalPerUnit), cellPct(100), 'Total underwriting basis'], 'section'),
+    xlsRow([needsLand ? 'Cost Subtotal Before Land' : 'Total All-In Cost', cellMoney(Math.round(totalCost)), cellMoney(totalPerSf), cellMoney(totalPerUnit), cellPct(100), needsLand ? 'Lot SF required to complete land basis' : 'Total underwriting basis'], 'section'),
   ];
 
   pushCostSchedule(rows, 'Hard Cost Schedule', hardCosts, hardSchedule, totalSF, units);
@@ -4950,8 +5112,8 @@ function constructionCostRows(s, tc, land) {
   rows.push(xlsRow(['Hard Cost / Unit', cellMoney(hardPerUnit), '', '', '', hardPerUnit >= 400000 ? 'High because this deal has large units or few units; compare $/SF first.' : 'Useful only when comparing similar unit sizes']));
   rows.push(xlsRow(['Soft Cost / SF', cellMoney(softPerSf), '', '', '', 'Soft-cost basis check']));
   rows.push(xlsRow(['Soft Costs / Hard Costs %', cellPct(softPctHard), '', '', '', 'Soft costs commonly underwritten as a % of hard costs']));
-  rows.push(xlsRow(['Total Cost / SF', cellMoney(totalPerSf), '', '', '', 'All-in basis including land, soft costs, carry']));
-  rows.push(xlsRow(['Total Cost / Unit', cellMoney(totalPerUnit), '', '', '', 'All-in basis per delivered unit']));
+  rows.push(xlsRow([needsLand ? 'Cost Before Land / SF' : 'Total Cost / SF', cellMoney(totalPerSf), '', '', '', needsLand ? 'Incomplete until lot SF is available' : 'All-in basis including land, soft costs, carry']));
+  rows.push(xlsRow([needsLand ? 'Cost Before Land / Unit' : 'Total Cost / Unit', cellMoney(totalPerUnit), '', '', '', needsLand ? 'Incomplete until lot SF is available' : 'All-in basis per delivered unit']));
   return rows;
 }
 
@@ -5061,7 +5223,7 @@ async function exportExcel(id) {
       avgUnitSf: isHouse
         ? (siteBuildingSf(s) ? siteBuildingSf(s) / Math.max(1, Number(s.units || 1)) : Number(s.usf || 0))
         : (s.usf || 800),
-      lotSf: knownLotSf(s),
+      lotSf: underwritingLotSf(s),
       listingStatus: siteListingStatus(s),
       developmentStatus: developmentStatusLabel(s),
       permitStatus: s.permitStatus || '',
@@ -5219,10 +5381,11 @@ async function exportPDF(id) {
     valuation: pdfCompValuation,
   } = snapshot;
   const metrics = currentUserMetrics();
-  const irr  = pdfCompValuation.leveragedIRR || 0;
-  const prof = pdfCompValuation.netProfit ?? 0;
-  const pc   = prof > 0 ? '#1d9e75' : '#e24b4a';
-  const ic   = irrC(irr);
+  const needsLand = house && pdfCompValuation.needsLandComp;
+  const irr  = needsLand ? null : (pdfCompValuation.leveragedIRR || 0);
+  const prof = needsLand ? null : (pdfCompValuation.netProfit ?? 0);
+  const pc   = needsLand ? '#697789' : prof > 0 ? '#1d9e75' : '#e24b4a';
+  const ic   = needsLand ? '#697789' : irrC(irr);
   const tc   = costs.totalCost || 0;
   const land = costs.land || siteAskPrice(s) || 0;
   const noi  = pdfCompValuation.noi || pdfIncome.noi || 0;
@@ -5326,22 +5489,22 @@ async function exportPDF(id) {
 <div class="kpi-grid">
   <div class="kpi" style="border-left-color:${pc}">
     <div class="kpi-l">Net Development Profit</div>
-    <div class="kpi-v" style="color:${pc}">${fmtM(prof)}</div>
-    <div class="kpi-s">exit value minus all-in cost</div>
+    <div class="kpi-v" style="color:${pc}">${needsLand ? 'n/a' : fmtM(prof)}</div>
+    <div class="kpi-s">${needsLand ? 'lot SF required' : 'exit value minus all-in cost'}</div>
   </div>
   <div class="kpi" style="border-left-color:${ic}">
     <div class="kpi-l">${house ? 'Annualized Levered IRR' : 'Levered IRR'}</div>
-    <div class="kpi-v" style="color:${ic}">${Math.round(irr*10)/10}%</div>
+    <div class="kpi-v" style="color:${ic}">${needsLand ? 'n/a' : Math.round(irr*10)/10 + '%'}</div>
     <div class="kpi-s">${house ? `${costs.months || 18}-month construction and sale` : `5-year hold · ${irrL(irr)} return`}</div>
   </div>
   <div class="kpi" style="border-left-color:${ic}">
     <div class="kpi-l">${house ? 'Gross Margin' : 'Cap Rate on Cost'}</div>
-    <div class="kpi-v">${house ? ((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1) : capoc}%</div>
+    <div class="kpi-v">${house ? (needsLand ? 'n/a' : ((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1) + '%') : capoc + '%'}</div>
     <div class="kpi-s">${house ? 'profit / completed-home value' : `vs ${(entryCap*100).toFixed(2)}% market cap rate`}</div>
   </div>
   <div class="kpi" style="border-left-color:${ic}">
     <div class="kpi-l">${house ? 'Return on Cost' : 'Development Spread'}</div>
-    <div class="kpi-v">${house ? ((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1) : spread}%</div>
+    <div class="kpi-v">${house ? (needsLand ? 'n/a' : ((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1) + '%') : spread + '%'}</div>
     <div class="kpi-s">${house ? 'profit / all-in cost' : 'value created above cost'}</div>
   </div>
 </div>
@@ -5350,9 +5513,9 @@ async function exportPDF(id) {
   <strong>Investment Summary:</strong> This analysis presents a ${escapeText(siteUnitsText(s))} ${escapeText(s.type || 'multifamily')} development opportunity located at ${displayAddr} in ${siteNeighborhood(s)}, CA.
   ${escapeText(siteLotText(s))}.
   ${developmentStatusKey(s) === 'city_approved_not_started' ? 'The project is city-approved / Ready-to-Issue and appears not yet started based on permit status.' : developmentStatusKey(s) === 'submitted' ? 'The project has been submitted to the city and is awaiting plan check or approval.' : developmentStatusKey(s) === 'plan_check' ? 'The project is in plan check and has not yet reached city approval.' : developmentStatusKey(s) === 'permit_issued' ? 'The project has an issued building permit; construction start should be verified.' : 'The project status should be field-verified because permit data does not prove whether work has started.'}
-  The projected all-in development cost is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/${house ? 'home' : 'unit'}; ${fmtD(pdfTotalPerSf)}/SF).
+  The projected ${needsLand ? 'cost subtotal before land' : 'all-in development cost'} is <strong>${fmtD(tc)}</strong> (${fmtD(pdfTotalPerUnit)}/${house ? 'home' : 'unit'}; ${fmtD(pdfTotalPerSf)}/SF).
   ${house
-    ? `The completed-home value is <strong>${fmtD(exitV)}</strong>, based on ${Math.round(pdfCompValuation.exitValueBasisQuantity || pdfTotalSF).toLocaleString()} building SF at <strong>${fmtD(pdfCompValuation.exitValueMetricValue || 0)}/SF</strong> from recent comparable home sales${pdfAppraisal.sales.length ? '' : ' (neighborhood fallback benchmark)'}, yielding net development profit of <strong>${fmtD(prof)}</strong>.`
+    ? `The completed-home value is <strong>${fmtD(exitV)}</strong>, based on ${Math.round(pdfCompValuation.exitValueBasisQuantity || pdfTotalSF).toLocaleString()} building SF at <strong>${fmtD(pdfCompValuation.exitValueMetricValue || 0)}/SF</strong> from recent comparable home sales${pdfAppraisal.sales.length ? '' : ' (neighborhood fallback benchmark)'}.${needsLand ? ' Lot SF is required before land cost, net profit, and return metrics can be calculated.' : ` This yields net development profit of <strong>${fmtD(prof)}</strong>.`}`
     : `The stabilized exit value is <strong>${fmtD(exitV)}</strong> at a ${(exitCap*100).toFixed(2)}% exit cap rate, yielding net development profit of <strong>${fmtD(prof)}</strong>.`}
 </div>
 
@@ -5368,7 +5531,7 @@ async function exportPDF(id) {
     <h3>Construction Plan Scenario Snapshot</h3>
     <table>
       <tr><th>Plan</th><th>Hard/SF</th><th>Net Profit</th></tr>
-      ${scenarioListForSite(s).map(row => `<tr><td>${row.plan.label}</td><td>${fmtD(row.costs.hardPerSf)}</td><td class="${row.valuation.netProfit >= 0 ? 'green' : 'red'}">${fmtM(row.valuation.netProfit)}</td></tr>`).join('')}
+      ${scenarioListForSite(s).map(row => `<tr><td>${row.plan.label}</td><td>${fmtD(row.costs.hardPerSf)}</td><td class="${row.valuation.needsLandComp ? '' : row.valuation.netProfit >= 0 ? 'green' : 'red'}">${row.valuation.needsLandComp ? 'n/a' : fmtM(row.valuation.netProfit)}</td></tr>`).join('')}
     </table>
   </div>
 </div>
@@ -5482,15 +5645,15 @@ ${house ? `<div class="two-col">
 </div>`}
 
 <!-- COST APPROACH -->
-<h2>IV. Cost Approach — All-In Development Budget</h2>
+<h2>IV. Cost Approach — ${needsLand ? 'Budget Before Land' : 'All-In Development Budget'}</h2>
 <div class="two-col">
   <div>
     <table>
       <tr><th colspan="2">LAND & ACQUISITION</th></tr>
-      <tr><td>${isOffMarketSite(s)?'Imputed Land Value':'Asking Price / Land Basis'}</td><td>${fmtD(land)}${isOffMarketSite(s)?' (estimated)':''}</td></tr>
+      <tr><td>${isOffMarketSite(s)?'Imputed Land Value':'Asking Price / Land Basis'}</td><td>${needsLand ? 'Pending lot SF' : `${fmtD(land)}${isOffMarketSite(s)?' (estimated)':''}`}</td></tr>
       <tr><td>Land Basis Source</td><td>${escapeText(landValueSourceNote(s))}</td></tr>
-      <tr><td>Title, Escrow & Legal (est.)</td><td>${fmtD(land*0.015+25000)}</td></tr>
-      <tr class="tot"><td>Land Subtotal</td><td>${fmtD(land*1.015+25000)}</td></tr>
+      <tr><td>Title, Escrow & Legal (est.)</td><td>${needsLand ? 'Pending' : fmtD(land*0.015+25000)}</td></tr>
+      <tr class="tot"><td>Land Subtotal</td><td>${needsLand ? 'Pending' : fmtD(land*1.015+25000)}</td></tr>
 
       <tr><th colspan="2" style="padding-top:10px">HARD COSTS</th></tr>
       <tr><td>Construction Plan</td><td>${costs.planLabel}</td></tr>
@@ -5518,12 +5681,12 @@ ${house ? `<div class="two-col">
   </div>
 </div>
 <div class="note">
-  <strong>Selected plan:</strong> ${costs.planLabel}. ${costs.planNote || ''} ${house ? 'The construction budget, completed-home value, and net profit are recalculated from this selected plan.' : `Rent impact: ${pdfRentImpact}. The construction budget, income statement, exit value, and net profit are recalculated from this selected plan.`}
+  <strong>Selected plan:</strong> ${costs.planLabel}. ${costs.planNote || ''} ${house ? (needsLand ? 'Construction cost and completed-home value are shown; net profit awaits lot SF and land basis.' : 'The construction budget, completed-home value, and net profit are recalculated from this selected plan.') : `Rent impact: ${pdfRentImpact}. The construction budget, income statement, exit value, and net profit are recalculated from this selected plan.`}
 </div>
 
 <table style="background:#0f1f3d;color:white">
   <tr>
-    <td style="font-weight:700;font-size:11px;color:white;border:none">TOTAL ALL-IN DEVELOPMENT COST</td>
+    <td style="font-weight:700;font-size:11px;color:white;border:none">${needsLand ? 'COST SUBTOTAL BEFORE LAND' : 'TOTAL ALL-IN DEVELOPMENT COST'}</td>
     <td style="font-weight:700;font-size:13px;color:#c49a3c;border:none;text-align:right">${fmtD(tc)}</td>
   </tr>
   <tr>
@@ -5541,8 +5704,8 @@ ${house ? `<div class="two-col">
   <tr><td>Hard Cost / ${house ? 'Home' : 'Unit'}</td><td>${fmtD(pdfHardPerUnit)}/${house ? 'home' : 'unit'}</td><td>Comparable ${house ? 'completed-home' : 'unit-count'} benchmark</td></tr>
   <tr><td>Soft Cost / SF</td><td>${fmtD(pdfSoftPerSf)}/SF</td><td>Permits, A&E, legal, contingency, fees</td></tr>
   <tr><td>Carry Cost / SF</td><td>${fmtD(pdfCarryPerSf)}/SF</td><td>Interest, loan fees, taxes during construction</td></tr>
-  <tr><td>Total Cost / SF</td><td>${fmtD(pdfTotalPerSf)}/SF</td><td>All-in basis including land, soft costs, carry</td></tr>
-  <tr><td>Total Cost / ${house ? 'Home' : 'Unit'}</td><td>${fmtD(pdfTotalPerUnit)}/${house ? 'home' : 'unit'}</td><td>All-in delivered ${house ? 'home' : 'unit'} basis</td></tr>
+  <tr><td>${needsLand ? 'Cost Before Land / SF' : 'Total Cost / SF'}</td><td>${fmtD(pdfTotalPerSf)}/SF</td><td>${needsLand ? 'Incomplete until lot SF is available' : 'All-in basis including land, soft costs, carry'}</td></tr>
+  <tr><td>${needsLand ? `Cost Before Land / ${house ? 'Home' : 'Unit'}` : `Total Cost / ${house ? 'Home' : 'Unit'}`}</td><td>${fmtD(pdfTotalPerUnit)}/${house ? 'home' : 'unit'}</td><td>${needsLand ? 'Incomplete until lot SF is available' : `All-in delivered ${house ? 'home' : 'unit'} basis`}</td></tr>
   <tr><td>Soft Costs / Hard Costs</td><td>${pdfSoftPctHard}%</td><td>Soft-cost reasonableness check</td></tr>
   <tr><td>Construction Period</td><td>${costs.months || 18} months</td><td>Carry-cost timing assumption</td></tr>
   ${house
@@ -5569,10 +5732,10 @@ ${house ? `<div class="two-col">
     <h3>${house ? 'Development Profitability' : 'Operating Statement'}</h3>
     <table>
       ${house ? `<tr><td>Estimated completed-home value</td><td>${fmtD(exitV)}</td></tr>
-      <tr><td>All-in development cost</td><td>${fmtD(tc)}</td></tr>
-      <tr class="tot"><td>Net development profit</td><td>${fmtD(prof)}</td></tr>
-      <tr><td>Gross margin</td><td>${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}%</td></tr>
-      <tr><td>Return on cost</td><td>${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}%</td></tr>
+      <tr><td>${needsLand ? 'Cost subtotal before land' : 'All-in development cost'}</td><td>${fmtD(tc)}</td></tr>
+      <tr class="tot"><td>Net development profit</td><td>${needsLand ? 'n/a' : fmtD(prof)}</td></tr>
+      <tr><td>Gross margin</td><td>${needsLand ? 'n/a' : ((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1) + '%'}</td></tr>
+      <tr><td>Return on cost</td><td>${needsLand ? 'n/a' : ((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1) + '%'}</td></tr>
       <tr><td>Valuation method</td><td>Building SF x local comp $/SF</td></tr>` : `<tr><td>Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>
       <tr><td>Less: Vacancy (${metrics.vacancyPct}%)</td><td style="color:#e24b4a">(${fmtD(pdfIncome.vacancyLoss)})</td></tr>
       <tr><td>Plus: Other Income</td><td>${fmtD(pdfIncome.otherIncome)}</td></tr>
@@ -5598,8 +5761,8 @@ ${house ? `<div class="two-col">
       ${house ? `<tr><td>Completed home building SF</td><td>${Math.round(pdfCompValuation.exitValueBasisQuantity || pdfTotalSF).toLocaleString()} SF</td></tr>
       <tr><td>Comp-derived resale value / SF</td><td>${fmtD(pdfCompValuation.exitValueMetricValue || 0)}/SF</td></tr>
       <tr><td>Completed-home value</td><td>${fmtD(exitV)}</td></tr>
-      <tr><td>All-in development cost</td><td>${fmtD(tc)}</td></tr>
-      <tr class="tot" style="background:${prof>0?'#e8f5ee':'#fdecea'}"><td style="color:${pc};font-weight:700">NET DEVELOPMENT PROFIT</td><td style="color:${pc};font-weight:700;font-size:12px">${fmtD(prof)}</td></tr>
+      <tr><td>${needsLand ? 'Cost subtotal before land' : 'All-in development cost'}</td><td>${fmtD(tc)}</td></tr>
+      <tr class="tot" style="background:${needsLand ? '#f0f2f5' : prof>0?'#e8f5ee':'#fdecea'}"><td style="color:${pc};font-weight:700">NET DEVELOPMENT PROFIT</td><td style="color:${pc};font-weight:700;font-size:12px">${needsLand ? 'n/a' : fmtD(prof)}</td></tr>
       <tr><td>Formula</td><td>${escapeText(pdfAppraisal.valuationFormula)}</td></tr>
       <tr><td>Source</td><td>${escapeText(pdfAppraisal.valuationSource)}</td></tr>` : `<tr><td>NOI (stabilized)</td><td>${fmtD(noi)}</td></tr>
       <tr><td>Entry Cap Rate</td><td>${(entryCap*100).toFixed(2)}%</td></tr>
@@ -5620,9 +5783,9 @@ ${house ? `<div class="two-col">
 
     <h3>${house ? 'SFR Return Benchmarks' : 'Cap Rate Benchmarking'}</h3>
     ${house ? `<table>
-      <tr><td>Gross margin</td><td>${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}%</td></tr>
-      <tr><td>Return on cost</td><td>${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}%</td></tr>
-      <tr><td>Annualized levered IRR</td><td>${Math.round(irr * 10) / 10}%</td></tr>
+      <tr><td>Gross margin</td><td>${needsLand ? 'n/a' : ((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1) + '%'}</td></tr>
+      <tr><td>Return on cost</td><td>${needsLand ? 'n/a' : ((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1) + '%'}</td></tr>
+      <tr><td>Annualized levered IRR</td><td>${needsLand ? 'n/a' : Math.round(irr * 10) / 10 + '%'}</td></tr>
       <tr><td>Construction period</td><td>${costs.months || 18} months</td></tr>
     </table>` : `<div>
     <div class="chart-bar">
@@ -5725,7 +5888,7 @@ ${house ? `<div class="two-col">
 
 <div class="sfr-only">
 <h2>VI. SFR Construction & Sale Cash Flow</h2>
-<table>
+${needsLand ? `<div class="note"><strong>Land basis pending:</strong> Lot SF is required before financing, equity cash flow, profit, and return metrics can be calculated. Completed-home value and construction costs remain available above.</div>` : `<table>
   <tr><th>Line Item</th><th>Initial Funding</th><th>At Completion</th></tr>
   <tr><td>Equity required</td><td style="color:#e24b4a">(${fmtD(pdfEquity)})</td><td>—</td></tr>
   <tr><td>Completed-home sale value</td><td>—</td><td>${fmtD(exitV)}</td></tr>
@@ -5738,7 +5901,7 @@ ${house ? `<div class="two-col">
   <div class="kpi"><div class="kpi-l">Return on Cost</div><div class="kpi-v">${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}%</div><div class="kpi-s">profit / all-in cost</div></div>
   <div class="kpi"><div class="kpi-l">Gross Margin</div><div class="kpi-v">${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}%</div><div class="kpi-s">profit / sale value</div></div>
 </div>
-<div class="note">Financing carry is already included in all-in project cost, so it is not deducted a second time in the SFR equity cash flow.</div>
+<div class="note">Financing carry is already included in all-in project cost, so it is not deducted a second time in the SFR equity cash flow.</div>`}
 </div>
 
 <!-- RISK FACTORS -->
@@ -5764,10 +5927,10 @@ ${house ? `<div class="two-col">
       ${[-0.15, -0.10, -0.05, 0, 0.05, 0.10].map(delta => {
         const psf = (pdfCompValuation.exitValueMetricValue || 0) * (1 + delta);
         const ev = psf * (pdfCompValuation.exitValueBasisQuantity || pdfTotalSF);
-        const np = ev - tc;
-        const roc = tc ? np / tc * 100 : 0;
-        const color = roc >= 20 ? '#1d9e75' : roc >= 10 ? '#ef9f27' : '#e24b4a';
-        return `<tr><td>${fmtD(psf)}/SF</td><td>${fmtM(ev)}</td><td style="color:${color}">${fmtM(np)}</td><td style="color:${color}">${roc.toFixed(1)}%</td></tr>`;
+        const np = needsLand ? null : ev - tc;
+        const roc = needsLand ? null : tc ? np / tc * 100 : 0;
+        const color = needsLand ? '#697789' : roc >= 20 ? '#1d9e75' : roc >= 10 ? '#ef9f27' : '#e24b4a';
+        return `<tr><td>${fmtD(psf)}/SF</td><td>${fmtM(ev)}</td><td style="color:${color}">${needsLand ? 'n/a' : fmtM(np)}</td><td style="color:${color}">${needsLand ? 'n/a' : roc.toFixed(1) + '%'}</td></tr>`;
       }).join('')}` : `<tr><th>Exit Cap</th><th>Exit Value</th><th>Net Profit</th><th>IRR (est)</th></tr>
       ${[0.045, 0.0475, 0.05, 0.0525, 0.055, 0.0575].map(cap => {
         const ev = noi/cap;
@@ -5786,14 +5949,18 @@ ${pdfAppraisalReportHTML(pdfAppraisal)}
 <h2>IX. Conclusion & Recommendation</h2>
 <div class="note">
   <strong>Analyst Conclusion:</strong> Based on our underwriting analysis, the subject property at ${displayAddr} represents
-  a ${irr >= 15 ? 'compelling' : irr >= 10 ? 'moderate' : 'marginal'} development opportunity in the ${siteNeighborhood(s)} submarket.
+  a ${needsLand ? 'partially underwritten' : irr >= 15 ? 'compelling' : irr >= 10 ? 'moderate' : 'marginal'} development opportunity in the ${siteNeighborhood(s)} submarket.
   
   ${house
-    ? `The project is projected to generate a ${Math.round(irr * 10) / 10}% annualized levered IRR through the ${costs.months || 18}-month construction period, a ${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}% return on cost, a ${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}% gross margin, and net development profit of ${fmtD(prof)}. The completed-home value is driven by recent local sale price per building square foot.`
+    ? (needsLand
+      ? `The completed-home value is driven by recent local sale price per building square foot. Lot SF is still required to calculate land cost, net profit, return on cost, gross margin, and IRR.`
+      : `The project is projected to generate a ${Math.round(irr * 10) / 10}% annualized levered IRR through the ${costs.months || 18}-month construction period, a ${((pdfCompValuation.returnOnCost || 0) * 100).toFixed(1)}% return on cost, a ${((pdfCompValuation.grossMarginPct || 0) * 100).toFixed(1)}% gross margin, and net development profit of ${fmtD(prof)}. The completed-home value is driven by recent local sale price per building square foot.`)
     : `The project is projected to generate a ${Math.round(irr*10)/10}% levered IRR on a 5-year hold basis, a ${capoc}% cap rate on cost (vs. ${(entryCap*100).toFixed(2)}% market entry cap), and a net development profit of ${fmtD(prof)}.`}
   
   ${house
-    ? (irr >= 15
+    ? (needsLand
+      ? `Complete the land basis using the County parcel match or the property-level lot SF assumption before relying on return metrics.`
+      : irr >= 15
       ? `The indicated return clears the model's development threshold. Confirm the subject building area, land basis, construction bids, and each comparable sale before proceeding.`
       : irr >= 10
         ? `The indicated return is moderate for ground-up SFR risk. The primary upside levers are land-price reduction, value engineering, and support for a higher completed-home sale price per SF.`

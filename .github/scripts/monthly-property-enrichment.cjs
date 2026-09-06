@@ -905,6 +905,9 @@ async function enrichSite(site) {
   }
   if (propertyRecord?.lastSaleDate) patch.owner_last_sale_date = propertyRecord.lastSaleDate;
   if (propertyRecord?.lastSalePrice) patch.owner_last_sale_amount = propertyRecord.lastSalePrice;
+  if (propertyRecord?.lotSize >= 1000 && propertyRecord.lotSize <= 2000000) {
+    patch.lot_sf = Math.round(propertyRecord.lotSize);
+  }
 
   if (INCLUDE_SITE_AVM) {
     const rentAvm = await pullRentcastAvm(site, 'rent/long-term', 'rent_avm').catch(err => {
