@@ -11,7 +11,7 @@ const SOCRATA_BASE  = 'https://data.lacity.org/resource';
 const SITE_PAGE_LIMIT = 20;
 const SITE_FIRST_PAGE_TIMEOUT_MS = 18000;
 const SITE_RETRY_TIMEOUT_MS = 45000;
-const TERMS_VERSION = '2026-09-03';
+const TERMS_VERSION = '2026-09-07';
 const TERMS_STORAGE_KEY = 'parcella_terms_acceptance';
 
 let authClient = null;
@@ -906,7 +906,7 @@ function pendingTermsAcceptance() {
 
 function consentHTML() {
   return `<div class="authconsent">
-    <label><input id="auth-terms" type="checkbox" onchange="syncAuthConsent()"><span>I have read and agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Use, Risk Disclosure, and Liability Disclaimer</a>.</span></label>
+    <label><input id="auth-terms" type="checkbox" onchange="syncAuthConsent()"><span>I have read and agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Use, Risk Disclosure, and Liability Disclaimer</a> and acknowledge the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
     <label><input id="auth-projection" type="checkbox" onchange="syncAuthConsent()"><span>I understand that all underwriting and property data are automated projections or third-party records, not verified facts or professional advice, and I must independently verify every material fact before acting.</span></label>
   </div>`;
 }
@@ -1304,12 +1304,12 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <article class="price-card"><div class="price-label">Unlock one deal</div><h3>Property</h3><div class="price">$10 <small>once</small></div><ul class="price-list"><li>Full address + available records</li><li>Plans, Excel, and PDF memo</li></ul><button class="price-action" onclick="openAuthDialog('Log in free, then choose the property you want to unlock.')">Browse properties</button></article>
         <article class="price-card featured"><div class="price-label">Launch special</div><h3>Unlimited</h3><div class="price">$49 <small>/ month</small></div><ul class="price-list"><li>Every available property record</li><li>Unlimited search + full exports</li></ul><button class="price-action" onclick="startCheckout('subscription')">Get unlimited access</button></article>
       </div>
-      <p class="pricing-note">Payments are processed by Stripe. Card and US bank account payments are supported. Parcel and planning records vary by property and source availability. Use is subject to the <a href="/terms.html" target="_blank" rel="noopener">Terms and Underwriting Risk Disclaimer</a>.</p>
+      <p class="pricing-note">Payments are processed by Stripe. Card and US bank account payments are supported. Parcel and planning records vary by property and source availability. Use is subject to the <a href="/terms.html" target="_blank" rel="noopener">Terms and Underwriting Risk Disclaimer</a> and <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</p>
     </div>
   </section>
 
   <section class="landing-final"><div class="landing-inner"><div><h2>Stop browsing listings. Start underwriting Los Angeles.</h2><p>Search marketed deals and the citywide development pipeline for free.</p></div><button class="landing-cta" onclick="openAuthDialog()">Open ParcelLA</button></div></section>
-  <footer class="landing-footer"><div class="landing-inner"><span>ParcelLA · Los Angeles development intelligence</span><div><a href="/terms.html">Terms &amp; Risk Disclaimer</a><a href="#pricing">Pricing</a></div></div></footer>
+  <footer class="landing-footer"><div class="landing-inner"><span>ParcelLA · Los Angeles development intelligence</span><div><a href="/terms.html">Terms &amp; Risk Disclaimer</a><a href="/privacy.html">Privacy</a><a href="#pricing">Pricing</a></div></div></footer>
 </main>
 <dialog class="landing-demo-dialog" id="landing-demo-dialog" onclick="if(event.target===this)closeLandingDemo()">
   <div class="landing-demo-bar"><strong id="landing-demo-caption"></strong><button type="button" aria-label="Close full-screen product demo" onclick="closeLandingDemo()">&times;</button></div>

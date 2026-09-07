@@ -63,8 +63,8 @@ import { ensureUserProfile, accessForProfile, getUnlockedSiteIdsFast } from '../
 
 const authRouter = Router();
 
-const CURRENT_TERMS_VERSION = '2026-09-03';
-const CURRENT_TERMS_DIGEST = '1ea1c5127923b6e191d03fa9d7db554f85616e05621a7a06d64e4765c16e5bb0';
+const CURRENT_TERMS_VERSION = '2026-09-07';
+const CURRENT_TERMS_DIGEST = 'c64719e2665f129dcb76fdca3d22dfe0f01e91638f70a631095b3d21dd519079';
 
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);

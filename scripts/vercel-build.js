@@ -6,6 +6,7 @@ const requiredFiles = [
   'public/landing.css',
   'public/legal.css',
   'public/terms.html',
+  'public/privacy.html',
   'public/assets/parcella-dashboard.png',
   'public/assets/parcella-records.png',
   'public/assets/parcella-exports.png',

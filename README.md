@@ -94,6 +94,10 @@ POST /api/stripe/checkout
 ## Database setup
 Run `supabase/schema.sql` in Supabase SQL editor. Seeds 27 sites, 40 rent comps, 10 sold comps.
 
+For an existing deployment, run `supabase/migrations/020_lock_down_public_data.sql`
+before public launch. ParcelLA's browser client uses Supabase for authentication
+only; full application records are served through the API after access checks.
+
 ### City Planning case engine
 
 1. Run `supabase/migrations/014_planning_case_engine.sql` once in the Supabase SQL editor.

@@ -8,9 +8,14 @@ Prices are created by the API at checkout time:
 
 ## Before enabling checkout
 
-1. Run `supabase/migrations/019_terms_acceptance_audit.sql` in the Supabase SQL editor, then set `TERMS_ENFORCEMENT_ENABLED=true` on the Railway API service.
+1. Run `supabase/migrations/019_terms_acceptance_audit.sql` and `supabase/migrations/020_lock_down_public_data.sql` in the Supabase SQL editor, then set `TERMS_ENFORCEMENT_ENABLED=true` on the Railway API service.
 2. Have qualified California counsel review `public/terms.html`, identify the correct legal entity, and confirm the liability, venue, renewal, and refund language for the business.
 3. Complete Stripe account activation, identity/business verification, tax details, and payout bank setup.
+
+The API reads application records with the Supabase service role. Migration 020
+removes direct browser access to full property and billing records; do not add
+public-read policies back to these tables. Add each production frontend origin
+to the comma-separated Railway `ALLOWED_ORIGINS` variable.
 
 ## Railway variables
 

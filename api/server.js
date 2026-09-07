@@ -29,6 +29,7 @@ import express      from 'express';
 import cors         from 'cors';
 import helmet       from 'helmet';
 import compression  from 'compression';
+import { createCorsOptions } from './lib/cors.js';
 
 import {
   requestLogger, apiLimiter, pdfLimiter,
@@ -62,12 +63,7 @@ const PORT = process.env.PORT ?? 3001;
 // ── Security & parsing ─────────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(compression());
-app.use(cors({
-  origin:      true,   // allow all origins — restrict after launch
-  credentials: true,
-  methods:     ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization','stripe-signature'],
-}));
+app.use(cors(createCorsOptions()));
 
 // Raw body for Stripe webhook (must come before express.json)
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
