@@ -369,6 +369,40 @@ async function countyParcelsByAddress(records = []) {
   return matches;
 }
 
+async function countyParcelsByApn(records = []) {
+  const ainsByRecord = new Map();
+  const requestedAins = new Set();
+  records.forEach(record => {
+    const ains = siteParcelApns(record)
+      .map(value => String(value || '').replace(/\D/g, ''))
+      .filter(value => value.length === 10);
+    if (!ains.length) return;
+    const key = String(record.requestId ?? record.id);
+    ainsByRecord.set(key, [...new Set(ains)]);
+    ains.forEach(ain => requestedAins.add(ain));
+  });
+  if (!requestedAins.size) return new Map();
+
+  const quote = value => `'${String(value || '').replace(/'/g, "''")}'`;
+  const rows = await countyParcelQuery({
+    where: `AIN IN (${[...requestedAins].map(quote).join(',')})`,
+    outFields: 'AIN,APN,SitusHouseNo,SitusStreet,SitusFullAddress,Shape__Area',
+    resultRecordCount: String(Math.max(100, requestedAins.size * 2)),
+  });
+  const parcelsByAin = new Map();
+  rows.forEach(row => {
+    const parcel = countyParcelRecord(row);
+    if (parcel?.ain) parcelsByAin.set(parcel.ain, parcel);
+  });
+
+  const matches = new Map();
+  ainsByRecord.forEach((ains, key) => {
+    const parcels = ains.map(ain => parcelsByAin.get(ain)).filter(Boolean);
+    if (parcels.length) matches.set(key, parcels);
+  });
+  return matches;
+}
+
 async function countyParcelsAtPoint(record = {}) {
   const lat = Number(record.lat);
   const lng = Number(record.lng);
@@ -393,6 +427,89 @@ function combineCountyParcels(parcels = []) {
     source: unique[0].source,
     apns: unique.map(parcel => parcel.apn).filter(Boolean),
   };
+}
+
+export async function enrichPermitHouseLots(sites = [], { persist = true, includePointLookup = false } = {}) {
+  const candidates = sites
+    .filter(site => !normalizedLotDetails(site).lotSf)
+    .slice(0, HOUSE_LOT_BATCH_LIMIT);
+  if (!candidates.length) return sites;
+
+  const resolved = new Map();
+  const saveMatch = (site, parcels) => {
+    const parcel = combineCountyParcels(parcels);
+    if (parcel) resolved.set(String(site.id), parcel);
+  };
+
+  try {
+    const apnMatches = await countyParcelsByApn(candidates);
+    candidates.forEach(site => saveMatch(site, apnMatches.get(String(site.id)) || []));
+  } catch (error) {
+    console.warn('[sites:new-house] County APN lot lookup failed:', error.message);
+  }
+
+  const addressCandidates = candidates.filter(site => !resolved.has(String(site.id)));
+  if (addressCandidates.length) {
+    try {
+      const addressMatches = await countyParcelsByAddress(addressCandidates);
+      addressCandidates.forEach(site => {
+        const parts = countyAddressParts(site.address);
+        saveMatch(site, parts ? addressMatches.get(parts.key) || [] : []);
+      });
+    } catch (error) {
+      console.warn('[sites:new-house] County address lot lookup failed:', error.message);
+    }
+  }
+
+  if (includePointLookup) {
+    const pointCandidates = addressCandidates.filter(site => !resolved.has(String(site.id)));
+    for (let index = 0; index < pointCandidates.length; index += 5) {
+      const batch = pointCandidates.slice(index, index + 5);
+      const pointResults = await Promise.all(batch.map(async site => {
+        try {
+          return [site, await countyParcelsAtPoint(site)];
+        } catch (error) {
+          console.warn(`[sites:new-house] County point lot lookup failed for ${site.id}:`, error.message);
+          return [site, []];
+        }
+      }));
+      pointResults.forEach(([site, parcels]) => saveMatch(site, parcels));
+    }
+  }
+
+  if (!resolved.size) return sites;
+  const hydrated = sites.map(site => {
+    const parcel = resolved.get(String(site.id));
+    if (!parcel) return site;
+    return {
+      ...site,
+      lot_sf: parcel.lotSf,
+      lot_sf_source: parcel.source,
+      raw_permit_data: {
+        ...(site.raw_permit_data || {}),
+        lot_sf: parcel.lotSf,
+        lot_sf_source: parcel.source,
+        apns: planningApns(siteParcelApns(site), parcel.apns),
+      },
+    };
+  });
+
+  const writes = persist ? hydrated.flatMap(site => {
+    const parcel = resolved.get(String(site.id));
+    const id = Number(site.id);
+    if (!parcel || !Number.isFinite(id)) return [];
+    return [planningDb.from('permits').update({
+      lot_sf: parcel.lotSf,
+      lot_sf_source: parcel.source,
+    }).eq('id', id)];
+  }) : [];
+  if (writes.length) {
+    const results = await Promise.allSettled(writes);
+    results.filter(result => result.status === 'rejected' || result.value?.error).forEach(result => {
+      console.warn('[sites:new-house] Could not persist County lot result:', result.reason?.message || result.value?.error?.message || result.reason);
+    });
+  }
+  return hydrated;
 }
 
 // Guess project type from permit data
@@ -2531,11 +2648,13 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
   const hoodName = String(queryParams.hood || '').trim();
   const hoodBox = NEIGHBORHOOD_BOXES.find(box => box.h === hoodName);
   const target = requestedOffset + requestedLimit;
+  const enrichLots = queryParams._enrichHouseLots === true;
 
   try {
     const combined = await fetchCombinedNewHouseSearchRows(queryParams, hoodBox, requestedLimit, requestedOffset);
     if (combined) {
-      const permitSites = combined.rows.map(permitRowAsHouseSite);
+      const rawPermitSites = combined.rows.map(permitRowAsHouseSite);
+      const permitSites = enrichLots ? await enrichPermitHouseLots(rawPermitSites) : rawPermitSites;
       const compHoods = [...new Set([
         hoodName,
         ...permitSites.map(site => normalizedNeighborhood(site)),
@@ -2621,7 +2740,8 @@ async function fetchNewHousePermitPage(queryParams, requestedLimit, requestedOff
       break;
     }
 
-    const permitSites = rows.map(permitRowAsHouseSite);
+    const rawPermitSites = rows.map(permitRowAsHouseSite);
+    const permitSites = enrichLots ? await enrichPermitHouseLots(rawPermitSites) : rawPermitSites;
     const compHoods = [...new Set([
       hoodName,
       ...permitSites.map(site => normalizedNeighborhood(site)),
@@ -3135,7 +3255,10 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
 
     if (process.env.SUPABASE_URL) {
       try {
-        const fastPage = await fetchSupabaseSitePageWithRetry(req.query, requestedLimit, requestedOffset);
+        const fastPage = await fetchSupabaseSitePageWithRetry({
+          ...req.query,
+          _enrichHouseLots: Boolean(req.user),
+        }, requestedLimit, requestedOffset);
         if (fastPage) {
           sites = fastPage.sites;
           fastTotal = fastPage.total;
@@ -3443,20 +3566,33 @@ router.post('/house-lots', requireAuth, async (req, res, next) => {
 
     const unresolved = records.filter(record => !resolved.has(record.requestId));
     if (unresolved.length) {
+      try {
+        const apnMatches = await countyParcelsByApn(unresolved);
+        unresolved.forEach(record => {
+          const parcel = combineCountyParcels(apnMatches.get(String(record.requestId)) || []);
+          if (parcel) resolved.set(record.requestId, parcel);
+        });
+      } catch (error) {
+        console.warn('[sites:house-lots] APN lookup failed:', error.message);
+      }
+    }
+
+    const addressCandidates = unresolved.filter(record => !resolved.has(record.requestId));
+    if (addressCandidates.length) {
       let addressMatches = new Map();
       try {
-        addressMatches = await countyParcelsByAddress(unresolved);
+        addressMatches = await countyParcelsByAddress(addressCandidates);
       } catch (error) {
         console.warn('[sites:house-lots] Batch address lookup failed:', error.message);
       }
-      unresolved.forEach(record => {
+      addressCandidates.forEach(record => {
         const parts = countyAddressParts(record.address);
         const parcel = combineCountyParcels(parts ? addressMatches.get(parts.key) : []);
         if (parcel) resolved.set(record.requestId, parcel);
       });
     }
 
-    const pointCandidates = unresolved.filter(record => !resolved.has(record.requestId));
+    const pointCandidates = addressCandidates.filter(record => !resolved.has(record.requestId));
     for (let index = 0; index < pointCandidates.length; index += 5) {
       const batch = pointCandidates.slice(index, index + 5);
       const pointResults = await Promise.all(batch.map(async record => {
@@ -3487,7 +3623,7 @@ router.post('/house-lots', requireAuth, async (req, res, next) => {
           ...(record.raw_permit_data || {}),
           lot_sf: parcel.lotSf,
           lot_sf_source: parcel.source,
-          apns: [...new Set([...(record.raw_permit_data?.apns || []), ...(parcel.apns || [])])],
+          apns: planningApns(record.raw_permit_data?.apns, parcel.apns),
         },
       }).eq('id', record.dbId)];
     });

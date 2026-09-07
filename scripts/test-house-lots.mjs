@@ -4,7 +4,7 @@ process.env.SUPABASE_URL ||= 'http://localhost:54321';
 process.env.SUPABASE_SERVICE_KEY ||= 'house-lot-test-key';
 process.env.SUPABASE_ANON_KEY ||= 'house-lot-test-anon-key';
 
-const { countyAddressParts, normalizedLotDetails } = await import('../api/routes/sites.js');
+const { countyAddressParts, enrichPermitHouseLots, normalizedLotDetails } = await import('../api/routes/sites.js');
 
 assert.deepEqual(countyAddressParts('16821 W Livorno Dr, Los Angeles, CA 90272'), {
   houseNo: '16821',
@@ -39,5 +39,33 @@ assert.deepEqual(normalizedLotDetails({
   lotSf: 5000,
   source: 'LA County Assessor parcel polygon',
 });
+
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async (_url, options) => {
+  const params = new URLSearchParams(options?.body);
+  assert.match(params.get('where') || '', /4415014008/);
+  return new Response(JSON.stringify({
+    features: [{
+      attributes: {
+        AIN: '4415014008',
+        APN: '4415-014-008',
+        SitusFullAddress: '16821 LIVORNO DR LOS ANGELES CA 90272',
+        Shape__Area: 6269.74825,
+      },
+    }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+};
+try {
+  const [enriched] = await enrichPermitHouseLots([{
+    id: 2290280,
+    address: '16821 W LIVORNO DR',
+    raw_permit_data: { apn: '4415-014-008' },
+  }], { persist: false });
+  assert.equal(enriched.lot_sf, 6270);
+  assert.equal(enriched.lot_sf_source, 'LA County Assessor parcel polygon');
+  assert.deepEqual(enriched.raw_permit_data.apns, ['4415014008']);
+} finally {
+  globalThis.fetch = originalFetch;
+}
 
 console.log('House lot normalization tests passed.');
