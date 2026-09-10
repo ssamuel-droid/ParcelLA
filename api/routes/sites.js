@@ -9,7 +9,6 @@
  */
 
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
 import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel, runScenarios } from '../../src/model/financialModel.js';
 import { RENTS } from '../../src/data/submarkets.js';
@@ -18,7 +17,7 @@ import { enrichSite }    from '../../src/data/laOpenData.js';
 import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/DemandScore.js';
 import { requireAuth, optionalAuth, getUserAccessFast, getUnlockedSiteIdsFast } from '../middleware/auth.js';
 import { validateSiteFilters, validateModelOverrides } from '../middleware/middleware.js';
-import { supabase } from '../../src/data/supabase.js';
+import { supabaseAdmin as supabase } from '../lib/supabase-admin.js';
 import {
   LAND_COMP_RECENCY_DAYS,
   buildLandCompBenchmarks,
@@ -29,11 +28,7 @@ import { extractPlanningPartiesFromDocuments } from '../lib/planning-parties.js'
 const { resolveEd1Affordability, rentsForSite: underwritingRentsForSite } = affordableRents;
 
 const router = Router();
-const planningDb = process.env.SUPABASE_SERVICE_KEY
-  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
-  : supabase;
+const planningDb = supabase;
 
 // Cache computed model results (refreshed every 5 min)
 let _siteCache = null;

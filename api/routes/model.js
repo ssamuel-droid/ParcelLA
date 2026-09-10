@@ -13,7 +13,7 @@ import { runModel, runScenarios } from '../../src/model/financialModel.js';
 import { runWaterfall, compareWaterfalls, WATERFALL_PRESETS } from '../../src/waterfall/Waterfall.js';
 import { requireAuth } from '../middleware/auth.js';
 import { validateModelOverrides, modelLimiter } from '../middleware/middleware.js';
-import { supabase } from '../../src/data/supabase.js';
+import { supabaseAdmin as supabase } from '../lib/supabase-admin.js';
 
 const router = Router();
 

@@ -26,6 +26,9 @@ const privacy = readFileSync(new URL('../public/privacy.html', import.meta.url),
 const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const authRoute = readFileSync(new URL('../api/routes/other.js', import.meta.url), 'utf8');
 const migration = readFileSync(new URL('../supabase/migrations/020_lock_down_public_data.sql', import.meta.url), 'utf8');
+const sitesRoute = readFileSync(new URL('../api/routes/sites.js', import.meta.url), 'utf8');
+const modelRoute = readFileSync(new URL('../api/routes/model.js', import.meta.url), 'utf8');
+const adminClient = readFileSync(new URL('../api/lib/supabase-admin.js', import.meta.url), 'utf8');
 const termsDigest = createHash('sha256').update(terms).digest('hex');
 
 assert.match(authRoute, new RegExp(`CURRENT_TERMS_DIGEST = '${termsDigest}'`));
@@ -44,5 +47,11 @@ for (const table of [
 }
 assert.match(migration, /REVOKE ALL PRIVILEGES[\s\S]+anon, authenticated/);
 assert.match(migration, /ALTER DEFAULT PRIVILEGES/);
+assert.match(sitesRoute, /supabaseAdmin as supabase/);
+assert.match(modelRoute, /supabaseAdmin as supabase/);
+assert.doesNotMatch(sitesRoute, /src\/data\/supabase/);
+assert.doesNotMatch(modelRoute, /src\/data\/supabase/);
+assert.doesNotMatch(adminClient, /SUPABASE_ANON_KEY/);
+assert.match(adminClient, /process\.env\.SUPABASE_SERVICE_KEY/);
 
 console.log('Launch security and legal-page consistency tests passed.');
