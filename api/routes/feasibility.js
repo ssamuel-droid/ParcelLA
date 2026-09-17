@@ -255,7 +255,14 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
     if (!FEASIBILITY_USES[use]) return res.status(400).json({ error: 'Select a supported proposed use.' });
 
     const verifiedProject = VERIFIED_PROJECTS.find(project => project.match(address)) || null;
-    const geo = await geocode(address);
+    let geo;
+    try {
+      geo = await geocode(verifiedProject?.displayAddress || address);
+    } catch (error) {
+      const hasLocality = address.split(',').length >= 2;
+      if (verifiedProject || hasLocality) throw error;
+      geo = await geocode(`${address}, Los Angeles, CA`);
+    }
     const [parcelResult, siteResult] = await Promise.allSettled([
       verifiedProject ? parcelLookupByApns(verifiedProject.apns) : parcelLookup(geo.formattedAddress || address),
       existingSite(address),

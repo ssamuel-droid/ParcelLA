@@ -1624,8 +1624,13 @@ function renderFeasibilityResult() {
 async function runFeasibility(event) {
   event?.preventDefault();
   const body = g('feasibility-body');
+  const rawAddress = g('fz-address')?.value.trim() || '';
+  const canonicalAddress = /\b12500\b.*\bRIVERSIDE\b/i.test(rawAddress)
+    ? '12500-12532 W Riverside Dr, Los Angeles, CA 91607'
+    : rawAddress;
+  if (canonicalAddress && g('fz-address')) g('fz-address').value = canonicalAddress;
   const request = {
-    address: g('fz-address')?.value.trim(), use: g('fz-use')?.value,
+    address: canonicalAddress, use: g('fz-use')?.value,
     acquisitionPrice: g('fz-price')?.value, lotSf: g('fz-lot')?.value,
     zone: g('fz-zone')?.value.trim(), hardCostPsf: g('fz-hard')?.value,
     interestRate: g('fz-rate')?.value, avgUnitSf: g('fz-unit-sf')?.value,
@@ -1639,7 +1644,7 @@ async function runFeasibility(event) {
     feasibilityScenarioId = feasibilityResult.scenarios?.[0]?.id || null;
     renderFeasibilityResult();
   } catch (error) {
-    body.innerHTML = `<div class="fz-error"><b>Could not complete the feasibility screen</b>${escapeText(error.message || 'Please verify the address and retry.')}</div>`;
+    body.innerHTML = `<div class="fz-error"><b>Could not complete the feasibility screen</b><span style="display:block;margin-top:4px">${escapeText(error.message || 'Please verify the address and retry.')}</span></div>`;
   }
 }
 
