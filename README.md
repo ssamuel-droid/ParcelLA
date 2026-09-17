@@ -6,6 +6,8 @@ Pre-underwriting search engine for LA development sites. Every listing is automa
 
 ### Search & Underwriting
 - Pre-underwriting on all 27 listings (22 for-sale + 5 off-market comps)
+- Address feasibility analysis with proposed-use selection, parcel/APN lookup, by-right capacity, State Density Bonus, MIIP, ED1/AHIP, AB 2011, SB 35, and SB 9/ADU screening
+- Side-by-side concept programs with estimated units, floor area, stories, parking, development costs, stabilized value, returns, local sales evidence, and rent evidence
 - IRR, net profit, dev spread %, and cap rate on cost as filter inputs
 - Land imputation for off-market sites ($/unit and $/SF methods)
 - Exit cap with submarket defaults (+25bps spread) + global override
@@ -83,6 +85,8 @@ GET  /api/sites?minIRR=15&hood=Koreatown&sort=profit
 GET  /api/sites/:id
 GET  /api/sites/:id/demand
 GET  /api/sites/:id/enrich
+GET  /api/feasibility/uses
+POST /api/feasibility/analyze
 POST /api/model/:id/waterfall
 POST /api/pdf/:id
 POST /api/narrative/:id

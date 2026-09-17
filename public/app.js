@@ -1244,10 +1244,12 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .maptabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:5px}.mapbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 4px;font-size:9px;font-weight:800;cursor:pointer}.mapbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.mapcard{display:block;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:5px;background:#fff;text-decoration:none}.mapcard img{width:100%;height:152px;object-fit:cover;display:block}.mapcap{padding:5px 8px;font-size:9px;color:#536071;background:#f8fafc;border-top:1px solid var(--line)}.maplinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:6px}.maplinks a,.maplinks button{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff;cursor:pointer}.maplinks a:hover,.maplinks button:hover{border-color:var(--gold);background:#fffdf7}
 .viewtabs{display:flex;gap:4px;margin-left:auto}.viewbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.viewbtn.on{background:var(--navy);border-color:var(--navy);color:#fff}.watchbtn{border:1px solid var(--line);background:#fff;color:#536071;border-radius:6px;padding:4px 6px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}.watchbtn.on{background:#fff7df;border-color:var(--gold);color:#7a5108}.mapview{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;min-height:100%;padding-bottom:8px}.mapstage{position:relative;min-height:560px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#dce5ed}.mapstage img{width:100%;height:100%;min-height:560px;object-fit:fill;display:block;filter:saturate(.95) contrast(.98)}.pin{position:absolute;width:18px;height:18px;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 9px rgba(15,31,61,.35);transform:translate(-50%,-50%);cursor:pointer}.pin:hover{z-index:5;transform:translate(-50%,-50%) scale(1.12)}.pin:after{display:none!important}.pintip{position:absolute;left:21px;top:-18px;width:224px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;box-shadow:0 10px 25px rgba(15,31,61,.2);text-align:left;color:var(--ink);font-size:10px;line-height:1.25;display:none;pointer-events:none}.pin:hover .pintip{display:block}.pintip b{display:block;font-size:11px;margin-bottom:2px;overflow-wrap:anywhere}.pintip em{display:block;font-style:normal;color:#6f7b8c;margin-bottom:6px}.pintip span{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #edf1f4;padding-top:4px;margin-top:4px}.pintip strong{font-size:10px}.transitdot{position:absolute;width:10px;height:10px;border-radius:50%;background:#0f1f3d;border:2px solid #fff;box-shadow:0 1px 5px rgba(15,31,61,.3);transform:translate(-50%,-50%)}.maplegend{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;color:#4d5969;display:grid;gap:4px}.maplegend span{display:flex;align-items:center;gap:5px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block}.mapside{display:flex;flex-direction:column;gap:8px}.layerbox,.topbox{background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px}.layerbox h4,.topbox h4{font-size:9px;text-transform:uppercase;color:#7f8a9a;margin-bottom:7px}.layerbtn{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 7px;margin-bottom:5px;font-size:10px;font-weight:800;color:#536071;cursor:pointer}.layerbtn.on{border-color:var(--navy);color:var(--navy);background:#f6f8fb}.topdeal{border-top:1px solid #edf1f4;padding:7px 0;cursor:pointer}.topdeal:first-of-type{border-top:none}.topdeal b{font-size:11px}.topdeal span{display:block;font-size:10px;color:#6f7b8c;margin-top:2px}.readbox{display:grid;gap:5px;margin:5px 0 8px}.readitem{border:1px solid var(--line);border-left:3px solid #8994a5;border-radius:7px;padding:7px 8px;font-size:11px;line-height:1.35;color:#3f4a5a}.readitem span{font-size:8px;font-weight:900;text-transform:uppercase;margin-right:6px}.readitem.pass{border-left-color:var(--green);background:#f2fbf7}.readitem.watch{border-left-color:var(--amber);background:#fffaf1}.readitem.risk{border-left-color:var(--red);background:#fff6f6}.scn tr.selrow td{background:#fffaf1}.sourcelinks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.sourcelinks a{border:1px solid var(--line);border-radius:6px;padding:5px 6px;font-size:9px;font-weight:800;text-align:center;color:var(--navy);text-decoration:none;background:#fff}.ownerbox{border:1px solid var(--line);border-left:3px solid var(--navy);border-radius:7px;padding:9px 10px;background:#f8fafc;color:#3f4a5a;display:grid;gap:3px;font-size:12px;line-height:1.35}.ownerbox b{color:var(--navy);font-size:13px}.ownerbox span{color:#657184}.ownerct td:first-child{color:#6f7b8c;font-weight:800;text-transform:uppercase;font-size:11px}.ownerct td:last-child{text-align:right;overflow-wrap:anywhere}
 .lot-assumption{display:flex;align-items:center;gap:6px;border:1px solid #ead7a6;border-left:3px solid var(--gold);border-radius:7px;padding:7px 8px;margin:6px 0;background:#fffaf1}.lot-assumption label{font-size:10px;font-weight:800;color:#76550f;flex:1}.lot-assumption input{width:105px;border:1px solid #d8c58f;border-radius:5px;padding:5px 6px;text-align:right;font-size:11px}.lot-assumption button{border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:5px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.lot-assumption button.clear{background:#fff;color:#536071;border-color:var(--line)}
+.feasibility-launch{background:var(--gold)!important;border-color:var(--gold)!important;color:#fff!important}.feasibility{position:fixed;inset:48px 0 0;background:#eef2f6;display:none;z-index:120;overflow:auto}.feasibility.open{display:block}.feasibility-panel{min-height:100%;background:#eef2f6}.feasibility-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:18px clamp(16px,3vw,44px);background:#fff;border-bottom:1px solid var(--line)}.feasibility-head span{font-size:9px;font-weight:900;color:var(--gold);letter-spacing:.08em}.feasibility-head h2{font-size:24px;color:var(--navy);margin:2px 0 3px}.feasibility-head p{font-size:12px;color:#667384}.feasibility-form{display:grid;grid-template-columns:minmax(260px,2fr) minmax(150px,1fr) minmax(150px,1fr) auto auto;gap:8px;align-items:end;padding:12px clamp(16px,3vw,44px);background:#fff;border-bottom:1px solid var(--line)}.feasibility-form label{display:grid;gap:4px;min-width:0}.feasibility-form label>span{font-size:8px;font-weight:900;color:#748195;text-transform:uppercase}.feasibility-form input,.feasibility-form select{width:100%;height:36px;border:1px solid #cfd7e2;border-radius:6px;background:#fff;color:var(--navy);font-size:12px;padding:0 9px}.feasibility-money{display:flex;align-items:center;height:36px;border:1px solid #cfd7e2;border-radius:6px;background:#fff;padding:0 8px}.feasibility-money input{border:0;height:32px;padding:0 5px}.feasibility-money b{font-size:11px;color:#738095}.feasibility-run,.feasibility-advanced-toggle{height:36px;border-radius:6px;padding:0 13px;font-size:11px;font-weight:900;cursor:pointer;white-space:nowrap}.feasibility-run{background:var(--navy);border:1px solid var(--navy);color:#fff}.feasibility-advanced-toggle{background:#fff;border:1px solid var(--line);color:#536071}.feasibility-advanced{display:none;grid-column:1/-1;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px}.feasibility-advanced.open{display:grid}.feasibility-body{padding:14px clamp(16px,3vw,44px) 40px}.feasibility-empty{min-height:360px;display:grid;place-content:center;text-align:center;color:#738095}.feasibility-empty strong{font-size:18px;color:var(--navy);margin-bottom:5px}.feasibility-empty span{font-size:12px}.fz-summary{display:grid;grid-template-columns:minmax(0,2fr) repeat(4,minmax(115px,1fr));gap:7px;margin-bottom:12px}.fz-fact{background:#fff;border:1px solid var(--line);border-radius:7px;padding:10px;min-width:0}.fz-fact span{display:block;font-size:8px;color:#7d8999;text-transform:uppercase;font-weight:900}.fz-fact strong{display:block;color:var(--navy);font-size:13px;overflow-wrap:anywhere}.fz-fact.address strong{font-size:16px}.fz-warnings{display:grid;gap:5px;margin-bottom:12px}.fz-warning{background:#fffaf0;border:1px solid #ead7a6;border-left:3px solid var(--gold);border-radius:6px;padding:7px 9px;color:#6e551e;font-size:10px}.fz-layout{display:grid;grid-template-columns:minmax(300px,.8fr) minmax(520px,1.7fr);gap:12px;align-items:start}.fz-scenarios{display:grid;gap:7px}.fz-scenario{width:100%;text-align:left;border:1px solid var(--line);border-left:4px solid #9ba6b4;background:#fff;border-radius:7px;padding:10px;cursor:pointer;color:var(--ink)}.fz-scenario.on{border-left-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}.fz-scenario-top{display:flex;justify-content:space-between;gap:12px}.fz-scenario h3{font-size:13px;color:var(--navy)}.fz-scenario small{font-size:9px;color:#748195}.fz-tag{font-size:8px;font-weight:900;border-radius:999px;padding:3px 6px;background:#edf1f5;color:#536071}.fz-scenario-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:8px}.fz-scenario-metrics div{background:#f6f8fa;border-radius:5px;padding:5px}.fz-scenario-metrics span{display:block;font-size:7px;color:#7d8999;text-transform:uppercase;font-weight:900}.fz-scenario-metrics b{font-size:11px;color:var(--navy)}.fz-detail{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;position:sticky;top:62px}.fz-detail-head{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid var(--line);padding-bottom:10px}.fz-detail-head h2{font-size:18px;color:var(--navy)}.fz-detail-head p{font-size:11px;color:#667384;line-height:1.45}.fz-confidence{font-size:8px;font-weight:900;text-transform:uppercase;color:#7b8797}.fz-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin:10px 0}.fz-kpi{background:#f6f8fa;border:1px solid #edf1f4;border-radius:6px;padding:7px}.fz-kpi span{display:block;font-size:7px;color:#7d8999;text-transform:uppercase;font-weight:900}.fz-kpi b{display:block;font-size:14px;color:var(--navy)}.fz-section{margin-top:13px}.fz-section h3{font-size:9px;color:#7d8999;text-transform:uppercase}.fz-table{width:100%;border-collapse:collapse;font-size:10px}.fz-table td{border-bottom:1px solid #edf1f4;padding:5px 2px}.fz-table td:last-child{text-align:right;font-weight:800}.fz-columns,.fz-comps{display:grid;grid-template-columns:1fr 1fr;gap:12px}.fz-list{margin:0;padding-left:17px;color:#536071;font-size:10px;line-height:1.55}.fz-source-grid{display:flex;flex-wrap:wrap;gap:5px}.fz-source-grid a{border:1px solid var(--line);border-radius:5px;padding:5px 7px;color:var(--navy);font-size:9px;font-weight:800;text-decoration:none}.fz-comp{border:1px solid var(--line);border-radius:6px;padding:7px;font-size:9px;color:#647083}.fz-comp b{display:block;color:var(--navy);font-size:10px}.fz-loading{min-height:360px;display:grid;place-content:center;color:#748195}.fz-error{background:#fff;border:1px solid #efc5c5;border-left:4px solid var(--red);border-radius:8px;padding:14px;color:#8a2f2f}
 .logo{font-size:18px}.navbtn,.albl,.ntag{font-size:12px}.cb,.sbs,.sb2 input,.bp,.br,.ss,.cm,.ct,.nb,.gb,.readitem,.ownerbox{font-size:12px}.ca{font-size:15px}.cp{font-size:14px}.tbl,.dht{font-size:14px}.kpv{font-size:14px}.mbv{font-size:17px}.sh,.sb h4,.mfl,.kpl,.icl,.mbl,.bdg,.mapbtn,.mapcap,.maplinks a,.maplinks button,.viewbtn,.watchbtn,.layerbtn,.topdeal span,.sourcelinks a{font-size:10px}.icv{font-size:13px}.da{font-size:10px}
-@media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.settings-grid{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}}
-@media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}}
-@media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg,.maplinks,.sourcelinks,.settings-grid{grid-template-columns:1fr}.viewtabs{width:100%;margin-left:0}.viewbtn{flex:1}}
+@media(max-width:1100px){.feasibility-form{grid-template-columns:2fr 1fr 1fr auto}.feasibility-advanced-toggle{grid-column:1/-1;width:max-content}.fz-layout{grid-template-columns:1fr}.fz-detail{position:static}}
+@media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.settings-grid{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}.fz-summary{grid-template-columns:repeat(3,1fr)}.fz-fact.address{grid-column:1/-1}.fz-kpis{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}.feasibility-head{padding:13px 12px}.feasibility-form{grid-template-columns:1fr 1fr;padding:10px 12px}.feasibility-address,.feasibility-run{grid-column:1/-1}.feasibility-advanced{grid-template-columns:1fr 1fr}.feasibility-body{padding:10px 12px 30px}.fz-summary{grid-template-columns:1fr 1fr}.fz-columns,.fz-comps{grid-template-columns:1fr}.fz-kpis{grid-template-columns:1fr 1fr}.feasibility-launch{font-size:9px!important;padding:5px!important}}
+@media(max-width:430px){.mfb{grid-template-columns:1fr}.detail{top:48px}.dh{align-items:flex-start}.dha{max-width:112px}.da{padding:4px 6px}.db{padding:10px}.kpis,.ig,.mbg,.maplinks,.sourcelinks,.settings-grid{grid-template-columns:1fr}.viewtabs{width:100%;margin-left:0}.viewbtn{flex:1}.feasibility-form,.feasibility-advanced,.fz-summary,.fz-scenario-metrics,.fz-kpis{grid-template-columns:1fr}.feasibility-address,.feasibility-run{grid-column:auto}.nav-r .accesspill{display:none}}
 </style>
 <main class="landing-page" id="landing-page">
   <section class="landing-hero">
@@ -1319,7 +1321,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 <nav class="nav">
   <div class="logo">PARCEL<span>LA</span></div>
   <div class="ntag">LA Development Sites</div>
-  <div class="nav-r"><span class="accesspill off" id="access-pill">Preview</span><button class="navbtn primary" onclick="openAuthDialog()" id="auth-btn">Sign in</button><button class="navbtn" onclick="openSettings()">Settings</button><span class="adot" id="adot"></span><span class="albl" id="albl">Connecting...</span></div>
+  <div class="nav-r"><button class="navbtn feasibility-launch" onclick="openFeasibility()">Analyze address</button><span class="accesspill off" id="access-pill">Preview</span><button class="navbtn primary" onclick="openAuthDialog()" id="auth-btn">Sign in</button><button class="navbtn" onclick="openSettings()">Settings</button><span class="adot" id="adot"></span><span class="albl" id="albl">Connecting...</span></div>
 </nav>
 <div class="layout">
   <div class="sb">
@@ -1400,6 +1402,30 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
   </div>
   <div class="db" id="d-body"></div>
 </div>
+<div class="feasibility" id="feasibility" aria-hidden="true">
+  <div class="feasibility-panel">
+    <header class="feasibility-head">
+      <div><span>PARCEL FEASIBILITY</span><h2>Analyze any address</h2><p>Compare by-right development with applicable housing and incentive pathways.</p></div>
+      <button class="dhx" type="button" aria-label="Close feasibility analysis" onclick="closeFeasibility()">×</button>
+    </header>
+    <form class="feasibility-form" id="feasibility-form" onsubmit="runFeasibility(event)">
+      <label class="feasibility-address"><span>Property address</span><input id="fz-address" required autocomplete="street-address" placeholder="12500 Riverside Dr, Los Angeles, CA 91607"></label>
+      <label><span>Proposed use</span><select id="fz-use" required><option value="apartment">Apartments</option><option value="mixed_use">Mixed-use</option><option value="condo">Condominiums</option><option value="townhome">Townhomes</option><option value="single_family">Single-family homes</option><option value="industrial">Industrial / warehouse</option><option value="light_manufacturing">Light manufacturing</option><option value="office">Office</option><option value="retail">Retail</option><option value="hotel">Hotel</option></select></label>
+      <label><span>Acquisition price</span><div class="feasibility-money"><b>$</b><input id="fz-price" type="number" min="0" step="10000" placeholder="Optional"></div></label>
+      <button class="feasibility-run" type="submit">Run feasibility</button>
+      <button class="feasibility-advanced-toggle" type="button" onclick="toggleFeasibilityAdvanced()">Parcel overrides</button>
+      <div class="feasibility-advanced" id="feasibility-advanced">
+        <label><span>Lot area SF</span><input id="fz-lot" type="number" min="500" step="100" placeholder="Auto"></label>
+        <label><span>Base zone</span><input id="fz-zone" placeholder="Auto from zoning GIS"></label>
+        <label><span>Hard cost / SF</span><input id="fz-hard" type="number" min="100" step="5" placeholder="Use default"></label>
+        <label><span>Interest rate</span><div class="feasibility-money"><input id="fz-rate" type="number" min="0" max="30" step="0.1" placeholder="6.5"><b>%</b></div></label>
+      </div>
+    </form>
+    <main class="feasibility-body" id="feasibility-body">
+      <div class="feasibility-empty"><strong>Start with an address and intended use.</strong><span>ParcelLA will assemble the parcel facts, development paths, estimated capacity, underwriting, and available market evidence.</span></div>
+    </main>
+  </div>
+</div>
 <div class="settings" id="settings">
   <div class="settings-panel">
     <div class="settings-head">
@@ -1441,6 +1467,131 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
     <div class="authbody" id="auth-body"></div>
   </div>
 </div>`;
+
+let feasibilityResult = null;
+let feasibilityScenarioId = null;
+
+function openFeasibility() {
+  const panel = g('feasibility');
+  if (!panel) return;
+  panel.classList.add('open');
+  panel.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => g('fz-address')?.focus(), 0);
+}
+
+function closeFeasibility() {
+  const panel = g('feasibility');
+  if (!panel) return;
+  panel.classList.remove('open');
+  panel.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+}
+
+function toggleFeasibilityAdvanced() {
+  g('feasibility-advanced')?.classList.toggle('open');
+}
+
+function feasibilityPct(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? (n * 100).toFixed(1) + '%' : 'n/a';
+}
+
+function feasibilityValue(value, fallback = 'n/a') {
+  return Number.isFinite(Number(value)) ? fmtD(Number(value)) : fallback;
+}
+
+function feasibilityCompHTML(comp, kind) {
+  if (!comp) return '';
+  const detail = kind === 'rent'
+    ? [comp.monthlyRent ? fmtD(comp.monthlyRent) + '/mo' : '', comp.rentPerSf ? '$' + Number(comp.rentPerSf).toFixed(2) + '/SF' : '', comp.squareFeet ? fmtN(comp.squareFeet) + ' SF' : ''].filter(Boolean).join(' · ')
+    : [comp.price ? fmtD(comp.price) : '', comp.pricePerUnit ? fmtD(comp.pricePerUnit) + '/unit' : '', comp.pricePerSf ? fmtD(comp.pricePerSf) + '/SF' : '', comp.saleDate || ''].filter(Boolean).join(' · ');
+  return `<div class="fz-comp"><b>${escapeText(comp.address || 'Comparable')}</b><span>${escapeText(detail || comp.neighborhood || 'Stored market evidence')}</span></div>`;
+}
+
+function selectFeasibilityScenario(id) {
+  feasibilityScenarioId = id;
+  renderFeasibilityResult();
+}
+
+function renderFeasibilityResult() {
+  const data = feasibilityResult;
+  const body = g('feasibility-body');
+  if (!data || !body) return;
+  const selected = data.scenarios.find(item => item.id === feasibilityScenarioId) || data.scenarios[0];
+  feasibilityScenarioId = selected?.id || null;
+  const apns = data.parcel?.apns || [];
+  const warnings = (data.warnings || []).map(item => `<div class="fz-warning">${escapeText(item)}</div>`).join('');
+  const scenarioButtons = (data.scenarios || []).map(item => {
+    const u = item.underwriting || {};
+    return `<button type="button" class="fz-scenario ${item.id === feasibilityScenarioId ? 'on' : ''}" onclick="selectFeasibilityScenario('${escapeText(item.id)}')">
+      <div class="fz-scenario-top"><div><h3>${escapeText(item.label)}</h3><small>${escapeText(item.eligibility.replaceAll('_', ' '))}</small></div><span class="fz-tag">${escapeText(item.category)}</span></div>
+      <div class="fz-scenario-metrics"><div><span>Capacity</span><b>${item.program.units ? fmtN(item.program.units) + (data.use === 'hotel' ? ' rooms' : ' units') : fmtN(item.program.grossSf) + ' SF'}</b></div><div><span>Project SF</span><b>${fmtN(item.program.grossSf)}</b></div><div><span>Profit</span><b>${feasibilityValue(u.profit)}</b></div></div>
+    </button>`;
+  }).join('');
+  const u = selected?.underwriting || {};
+  const p = selected?.program || {};
+  const requirements = (selected?.requirements || []).map(item => `<li>${escapeText(item)}</li>`).join('');
+  const incentives = (selected?.incentives || []).map(item => `<li>${escapeText(item)}</li>`).join('') || '<li>No incentive assumed.</li>';
+  const sources = (data.sources || []).map(item => `<a href="${escapeText(item.url)}" target="_blank" rel="noopener" title="${escapeText(item.purpose)}">${escapeText(item.label)}</a>`).join('');
+  const saleComps = (data.comps?.sales || []).slice(0, 4).map(item => feasibilityCompHTML(item, 'sale')).join('') || '<div class="fz-comp"><b>No matching saved sale comps</b><span>Confirm broker and appraisal evidence before investment use.</span></div>';
+  const rentComps = (data.comps?.rents || []).slice(0, 4).map(item => feasibilityCompHTML(item, 'rent')).join('') || '<div class="fz-comp"><b>No matching saved rent comps</b><span>The model is using a neighborhood benchmark until property-level evidence is available.</span></div>';
+  body.innerHTML = `
+    <div class="fz-summary">
+      <div class="fz-fact address"><span>Subject</span><strong>${escapeText(data.address)}</strong></div>
+      <div class="fz-fact"><span>Jurisdiction</span><strong>${escapeText(data.jurisdiction?.name || 'Verify')}</strong></div>
+      <div class="fz-fact"><span>Lot area</span><strong>${fmtN(data.parcel?.lotSf)} SF</strong></div>
+      <div class="fz-fact"><span>Base zone</span><strong>${escapeText(data.zoning?.value || 'Verify')}</strong></div>
+      <div class="fz-fact"><span>Parcels</span><strong>${apns.length ? apns.map(escapeText).join(', ') : 'APN pending'}</strong></div>
+    </div>
+    <div class="fz-warnings">${warnings}</div>
+    <div class="fz-layout">
+      <div class="fz-scenarios">${scenarioButtons}</div>
+      ${selected ? `<article class="fz-detail">
+        <div class="fz-detail-head"><div><h2>${escapeText(selected.label)}</h2><p>${escapeText(selected.description)}</p></div><div class="fz-confidence">${escapeText(selected.confidence)} confidence<br>${escapeText(selected.eligibility.replaceAll('_', ' '))}</div></div>
+        <div class="fz-kpis">
+          <div class="fz-kpi"><span>${data.use === 'hotel' ? 'Rooms' : 'Units'}</span><b>${fmtN(p.units || 0)}</b></div>
+          <div class="fz-kpi"><span>Gross building</span><b>${fmtN(p.grossSf)} SF</b></div>
+          <div class="fz-kpi"><span>Total cost</span><b>${feasibilityValue(u.totalCost)}</b></div>
+          <div class="fz-kpi"><span>Exit value</span><b>${feasibilityValue(u.exitValue)}</b></div>
+          <div class="fz-kpi"><span>Profit / cost</span><b>${feasibilityPct(u.marginOnCost)}</b></div>
+        </div>
+        <div class="fz-columns">
+          <section class="fz-section"><h3>Concept program</h3><table class="fz-table"><tr><td>Gross building area</td><td>${fmtN(p.grossSf)} SF</td></tr><tr><td>Net / rentable area</td><td>${fmtN(p.netSf)} SF</td></tr><tr><td>Residential units / rooms</td><td>${fmtN(p.units || 0)}</td></tr><tr><td>Commercial area</td><td>${fmtN(p.commercialSf || 0)} SF</td></tr><tr><td>Estimated stories</td><td>${fmtN(p.stories)}</td></tr><tr><td>Screened height</td><td>${fmtN(p.heightFt)} ft</td></tr><tr><td>Parking screen</td><td>${fmtN(p.parkingSpaces)} spaces</td></tr></table></section>
+          <section class="fz-section"><h3>Development budget</h3><table class="fz-table"><tr><td>Land / acquisition</td><td>${feasibilityValue(u.landCost)}</td></tr><tr><td>Hard costs (${feasibilityValue(u.hardCostPsf)}/SF)</td><td>${feasibilityValue(u.hardCosts)}</td></tr><tr><td>Soft costs</td><td>${feasibilityValue(u.softCosts)}</td></tr><tr><td>Contingency</td><td>${feasibilityValue(u.contingency)}</td></tr><tr><td>Financing carry</td><td>${feasibilityValue(u.financing)}</td></tr><tr><td><b>Total cost</b></td><td><b>${feasibilityValue(u.totalCost)}</b></td></tr></table></section>
+        </div>
+        <div class="fz-columns">
+          <section class="fz-section"><h3>Requirements to verify</h3><ul class="fz-list">${requirements}</ul></section>
+          <section class="fz-section"><h3>Potential allowances</h3><ul class="fz-list">${incentives}</ul></section>
+        </div>
+        <section class="fz-section"><h3>Market evidence</h3><div class="fz-comps"><div><b class="fz-comp-label">Sales - ${escapeText(data.comps?.salesScope || 'no match')}</b>${saleComps}</div><div><b class="fz-comp-label">Rents - ${escapeText(data.comps?.rentScope || 'no match')}</b>${rentComps}</div></div></section>
+        <section class="fz-section"><h3>Official verification sources</h3><div class="fz-source-grid">${sources}</div></section>
+        <div class="fz-warning" style="margin-top:12px">Preliminary projection only. Verify zoning, overlays, specific plans, easements, title, hazards, replacement-unit obligations, objective standards, incentive eligibility, construction costs, rents, sales, financing, taxes and professional conclusions before acquisition or development decisions.</div>
+      </article>` : ''}
+    </div>`;
+}
+
+async function runFeasibility(event) {
+  event?.preventDefault();
+  const body = g('feasibility-body');
+  const request = {
+    address: g('fz-address')?.value.trim(), use: g('fz-use')?.value,
+    acquisitionPrice: g('fz-price')?.value, lotSf: g('fz-lot')?.value,
+    zone: g('fz-zone')?.value.trim(), hardCostPsf: g('fz-hard')?.value,
+    interestRate: g('fz-rate')?.value,
+  };
+  if (!request.address) return;
+  body.innerHTML = '<div class="fz-loading"><div class="spin"></div>Resolving parcel, zoning, development programs, underwriting and comps...</div>';
+  try {
+    feasibilityResult = await fetchJSONWithTimeout(API + '/api/feasibility/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+    }, 60000);
+    feasibilityScenarioId = feasibilityResult.scenarios?.[0]?.id || null;
+    renderFeasibilityResult();
+  } catch (error) {
+    body.innerHTML = `<div class="fz-error"><b>Could not complete the feasibility screen</b>${escapeText(error.message || 'Please verify the address and retry.')}</div>`;
+  }
+}
 
 async function confirmCheckoutReturn() {
   const params = new URLSearchParams(window.location.search);

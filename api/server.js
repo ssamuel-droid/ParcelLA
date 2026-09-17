@@ -43,6 +43,7 @@ import modelRouter     from './routes/model.js';
 import compsRouter     from './routes/comps.js';
 import notesRouter     from './routes/notes.js';
 import stripeRouter    from './routes/stripe.js';
+import feasibilityRouter from './routes/feasibility.js';
 import {
   pdfRouter, authRouter, alertsRouter, submarketRouter,
 } from './routes/other.js';
@@ -112,6 +113,7 @@ app.use('/api/share',       shareRouter);
 app.use('/api/activity',    activityRouter);
 app.use('/api/email',       emailRouter);
 app.use('/api/stripe',      stripeRouter);
+app.use('/api/feasibility', feasibilityRouter);
 
 // ── Health ─────────────────────────────────────────────────────────────────────
 app.get('/api/setup-status', async (req, res) => {

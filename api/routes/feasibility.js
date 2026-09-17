@@ -1,0 +1,266 @@
+import { Router } from 'express';
+import { requireAuth } from '../middleware/auth.js';
+import { supabaseAdmin } from '../lib/supabase-admin.js';
+import { FEASIBILITY_USES, generateFeasibilityScenarios } from '../../src/feasibility/FeasibilityEngine.js';
+import { RENTS, CAP_RATES } from '../../src/data/submarkets.js';
+
+const router = Router();
+const COUNTY_PARCEL_URL = 'https://cache.gis.lacounty.gov/cache/rest/services/LACounty_Cache/LACounty_Parcel/FeatureServer/0/query';
+const LA_ZONING_URL = 'https://services5.arcgis.com/7nsPwEMP38bSkCjy/arcgis/rest/services/Zoning/FeatureServer/15/query';
+const REQUEST_TIMEOUT_MS = 12000;
+
+const SOURCES = [
+  { label: 'ZIMAS', url: 'https://planning.lacity.gov/zoning/zoning-search', purpose: 'Parcel zoning, overlays and incentive-area verification' },
+  { label: 'Los Angeles CHIP', url: 'https://planning.lacity.gov/plans-policies/citywide-housing-incentive-program', purpose: 'State Density Bonus, AHIP and MIIP procedures' },
+  { label: 'Los Angeles housing policy', url: 'https://planning.lacity.gov/plans-policies/initiatives-policies/housing', purpose: 'ED1 and local housing programs' },
+  { label: 'California HCD', url: 'https://www.hcd.ca.gov/planning-and-community-development/statutory-determinations', purpose: 'State streamlining and housing-law guidance' },
+];
+
+function clean(value, max = 180) {
+  return String(value ?? '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function number(value, fallback = null) {
+  const raw = String(value ?? '').replace(/[$,]/g, '').trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+async function fetchJson(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal, headers: { Accept: 'application/json', ...(options.headers || {}) } });
+    const text = await response.text();
+    let payload = null;
+    try { payload = text ? JSON.parse(text) : null; } catch {}
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (payload?.error) throw new Error(payload.error.message || 'Public-data query failed');
+    return payload;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function geocode(address) {
+  if (process.env.GOOGLE_MAPS_API_KEY) {
+    const params = new URLSearchParams({ address, key: process.env.GOOGLE_MAPS_API_KEY, region: 'us' });
+    const data = await fetchJson(`https://maps.googleapis.com/maps/api/geocode/json?${params}`);
+    const result = data?.results?.[0];
+    if (data?.status === 'OK' && result) {
+      const components = {};
+      for (const part of result.address_components || []) for (const type of part.types || []) components[type] = part.long_name;
+      return {
+        formattedAddress: result.formatted_address,
+        lat: result.geometry.location.lat,
+        lng: result.geometry.location.lng,
+        city: components.locality || components.sublocality || '',
+        county: components.administrative_area_level_2 || '',
+        zipCode: components.postal_code || '',
+        jurisdiction: components.locality ? `${components.locality} city` : '',
+        source: 'Google Geocoding',
+      };
+    }
+  }
+
+  const params = new URLSearchParams({ address, benchmark: 'Public_AR_Current', vintage: 'Current_Current', format: 'json' });
+  const data = await fetchJson(`https://geocoding.geo.census.gov/geocoder/geographies/onelineaddress?${params}`);
+  const match = data?.result?.addressMatches?.[0];
+  if (!match) throw Object.assign(new Error('No precise address match was found. Include street number, city and ZIP code.'), { status: 404 });
+  const place = match.geographies?.['Incorporated Places']?.[0];
+  const county = match.geographies?.Counties?.[0];
+  return {
+    formattedAddress: match.matchedAddress,
+    lat: Number(match.coordinates?.y),
+    lng: Number(match.coordinates?.x),
+    city: match.addressComponents?.city || place?.BASENAME || '',
+    county: county?.BASENAME || '',
+    zipCode: match.addressComponents?.zip || '',
+    jurisdiction: place?.NAME || (match.addressComponents?.city ? `${match.addressComponents.city} city` : ''),
+    source: 'U.S. Census Geocoder',
+  };
+}
+
+function countyAddressParts(value) {
+  const suffix = { AVENUE: 'AVE', BOULEVARD: 'BLVD', DRIVE: 'DR', STREET: 'ST', ROAD: 'RD', PLACE: 'PL', LANE: 'LN', COURT: 'CT', HIGHWAY: 'HWY', PARKWAY: 'PKWY', TERRACE: 'TER', CIRCLE: 'CIR' };
+  const firstLine = String(value || '').toUpperCase().split(',')[0].replace(/\s+/g, ' ').trim();
+  const match = firstLine.match(/^(\d+[A-Z]?)(?:-\d+[A-Z]?)?\s+(?:(N|S|E|W|NE|NW|SE|SW)\s+)?(.+)$/);
+  if (!match) return null;
+  const words = match[3].split(' ');
+  if (suffix[words.at(-1)]) words[words.length - 1] = suffix[words.at(-1)];
+  return { houseNo: match[1], direction: match[2] || '', street: words.join(' ') };
+}
+
+async function parcelLookup(address) {
+  const parts = countyAddressParts(address);
+  if (!parts) return [];
+  const quote = value => `'${String(value).replace(/'/g, "''")}'`;
+  const direction = parts.direction ? ` AND SitusDirection=${quote(parts.direction)}` : '';
+  const body = new URLSearchParams({
+    f: 'json', returnGeometry: 'false',
+    where: `SitusHouseNo=${quote(parts.houseNo)} AND SitusStreet=${quote(parts.street)}${direction}`,
+    outFields: 'AIN,APN,SitusFullAddress,SitusCity,SitusZIP,UseCode,UseType,UseDescription,YearBuilt1,Units1,SQFTmain1,Shape__Area,CENTER_LAT,CENTER_LON',
+    resultRecordCount: '25',
+  });
+  const data = await fetchJson(COUNTY_PARCEL_URL, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  return (data?.features || []).map(feature => feature.attributes || {}).map(row => ({
+    apn: clean(row.APN || row.AIN, 30),
+    ain: clean(row.AIN, 20),
+    address: clean(row.SitusFullAddress),
+    lotSf: Math.round(number(row.Shape__Area, 0)),
+    useCode: clean(row.UseCode, 30),
+    useType: clean(row.UseType, 80),
+    useDescription: clean(row.UseDescription, 120),
+    yearBuilt: number(row.YearBuilt1),
+    existingUnits: number(row.Units1),
+    existingBuildingSf: number(row.SQFTmain1),
+    lat: number(row.CENTER_LAT),
+    lng: number(row.CENTER_LON),
+    source: 'LA County Assessor parcel polygon',
+  })).filter(row => row.lotSf >= 500);
+}
+
+async function zoningLookup(lat, lng) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+  const params = new URLSearchParams({
+    f: 'json', geometry: `${lng},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects', outFields: '*', returnGeometry: 'false',
+  });
+  const data = await fetchJson(`${LA_ZONING_URL}?${params}`);
+  return [...new Set((data?.features || []).map(feature => clean(feature.attributes?.Zoning || feature.attributes?.ZONING, 80)).filter(Boolean))];
+}
+
+function normalizeComp(row) {
+  return {
+    address: clean(row.address || row.property_address),
+    neighborhood: clean(row.neighborhood),
+    type: clean(row.project_type || row.property_type),
+    saleDate: row.sale_date || null,
+    price: number(row.sale_price || row.price),
+    units: number(row.units),
+    buildingSf: number(row.building_sf || row.square_feet),
+    pricePerUnit: number(row.price_per_unit),
+    pricePerSf: number(row.price_per_sf),
+    capRate: number(row.cap_rate),
+    source: clean(row.source, 80),
+  };
+}
+
+function normalizeRentComp(row) {
+  return {
+    address: clean(row.address), neighborhood: clean(row.neighborhood), bedrooms: number(row.bedrooms),
+    monthlyRent: number(row.monthly_rent || row.rent), squareFeet: number(row.square_feet || row.sqft),
+    rentPerSf: number(row.rent_per_sf), period: row.period || row.listed_date || null, source: clean(row.source, 80),
+  };
+}
+
+async function compRows(table, neighborhood, dateColumn, limit) {
+  const local = await supabaseAdmin.from(table).select('*')
+    .ilike('neighborhood', neighborhood).order(dateColumn, { ascending: false }).limit(limit);
+  if (!local.error && local.data?.length) return { rows: local.data, scope: neighborhood };
+
+  const fallback = await supabaseAdmin.from(table).select('*')
+    .order(dateColumn, { ascending: false }).limit(limit);
+  return {
+    rows: fallback.error ? [] : (fallback.data || []),
+    scope: fallback.error || !fallback.data?.length ? null : 'Los Angeles area',
+  };
+}
+
+async function evidence(neighborhood, use) {
+  if (!neighborhood) return { sales: [], rents: [], salesScope: null, rentScope: null };
+  const wantsRents = ['apartment', 'mixed_use'].includes(use);
+  const [salesResult, rentsResult] = await Promise.allSettled([
+    compRows('sold_comps', neighborhood, 'sale_date', 8),
+    wantsRents ? compRows('rent_comps', neighborhood, 'period', 10) : Promise.resolve({ rows: [], scope: null }),
+  ]);
+  const salesValue = salesResult.status === 'fulfilled' ? salesResult.value : { rows: [], scope: null };
+  const rentsValue = rentsResult.status === 'fulfilled' ? rentsResult.value : { rows: [], scope: null };
+  return {
+    sales: salesValue.rows.map(normalizeComp),
+    rents: rentsValue.rows.map(normalizeRentComp),
+    salesScope: salesValue.scope,
+    rentScope: rentsValue.scope,
+  };
+}
+
+async function existingSite(address) {
+  const numberPart = clean(address).match(/^\d+/)?.[0];
+  if (!numberPart) return null;
+  const { data, error } = await supabaseAdmin.from('sites')
+    .select('id,address,neighborhood,project_type,zoning,lot_sf,units,avg_unit_sf,lat,lng,price,status,permit_source_id')
+    .ilike('address', `${numberPart}%`).limit(25);
+  if (error) return null;
+  const tokens = clean(address).toUpperCase().split(',')[0].split(/\W+/)
+    .filter(token => token.length > 2 && !['STREET', 'AVENUE', 'BOULEVARD', 'DRIVE', 'ROAD'].includes(token));
+  return (data || []).find(row => tokens.every(token => clean(row.address).toUpperCase().includes(token))) || null;
+}
+
+router.get('/uses', (req, res) => {
+  res.json({ uses: Object.entries(FEASIBILITY_USES).map(([id, profile]) => ({ id, label: profile.label, group: profile.group })) });
+});
+
+router.post('/analyze', requireAuth, async (req, res, next) => {
+  try {
+    const address = clean(req.body?.address);
+    const use = clean(req.body?.use, 40);
+    if (address.length < 6) return res.status(400).json({ error: 'Enter a complete street address.' });
+    if (!FEASIBILITY_USES[use]) return res.status(400).json({ error: 'Select a supported proposed use.' });
+
+    const geo = await geocode(address);
+    const [parcelResult, zoningResult, siteResult] = await Promise.allSettled([
+      parcelLookup(geo.formattedAddress || address), zoningLookup(geo.lat, geo.lng), existingSite(address),
+    ]);
+    const parcels = parcelResult.status === 'fulfilled' ? parcelResult.value : [];
+    const zoningValues = zoningResult.status === 'fulfilled' ? zoningResult.value : [];
+    const matchedSite = siteResult.status === 'fulfilled' ? siteResult.value : null;
+    const userLotSf = number(req.body?.lotSf);
+    const parcelLotSf = parcels.reduce((sum, parcel) => sum + (parcel.lotSf || 0), 0);
+    const lotSf = userLotSf || parcelLotSf || number(matchedSite?.lot_sf) || 7500;
+    const zone = clean(req.body?.zone || zoningValues[0] || matchedSite?.zoning || '', 80);
+    const neighborhood = clean(req.body?.neighborhood || matchedSite?.neighborhood || geo.city || 'Los Angeles', 80);
+    const acquisitionPrice = number(req.body?.acquisitionPrice) || number(matchedSite?.price) || 0;
+    const inLosAngelesCity = /los angeles city/i.test(geo.jurisdiction);
+    const marketRents = RENTS[neighborhood] || RENTS.Koreatown;
+    const oneBedRentPsf = marketRents?.one ? marketRents.one / 750 : 4;
+    const market = ['apartment', 'mixed_use'].includes(use) ? {
+      rentPsfMo: Number(oneBedRentPsf.toFixed(2)),
+      capRate: CAP_RATES[neighborhood] || 0.0525,
+    } : {};
+    const assumptions = {
+      landCost: acquisitionPrice,
+      hardCostPsf: number(req.body?.hardCostPsf) || undefined,
+      softCostPct: number(req.body?.softCostPct) != null ? number(req.body.softCostPct) / 100 : undefined,
+      interestRate: number(req.body?.interestRate) != null ? number(req.body.interestRate) / 100 : undefined,
+      ltc: number(req.body?.ltc) != null ? number(req.body.ltc) / 100 : undefined,
+      market,
+    };
+    const engine = generateFeasibilityScenarios({
+      address: geo.formattedAddress, use, lotSf, zone, jurisdiction: geo.jurisdiction,
+      inLosAngelesCity, assumptions, sources: SOURCES,
+    });
+    const comps = await evidence(neighborhood, use);
+    const warnings = [
+      !parcels.length ? 'Parcel geometry and APN were not returned automatically; confirm lot area before relying on capacity.' : null,
+      !zone ? 'Zoning was not returned automatically; enter the ZIMAS base zone to improve the screen.' : null,
+      !inLosAngelesCity ? `${geo.jurisdiction || geo.city || 'This address'} is outside the City of Los Angeles; LA-specific ED1, AHIP and MIIP options are not generated.` : null,
+      !acquisitionPrice ? 'No acquisition price was entered, so land cost is shown as $0 and returns are not decision-ready.' : null,
+      'Capacity is a preliminary screening estimate, not a zoning determination, entitlement opinion, appraisal, engineering study or offer to lend.',
+    ].filter(Boolean);
+
+    res.set('Cache-Control', 'private, no-store');
+    res.json({
+      generatedAt: new Date().toISOString(), address: geo.formattedAddress, geocode: geo,
+      jurisdiction: { name: geo.jurisdiction || geo.city, inLosAngelesCity },
+      parcel: { lotSf, lotSfSource: userLotSf ? 'User override' : parcels.length ? 'LA County parcel polygon' : matchedSite?.lot_sf ? 'ParcelLA site record' : 'Screening default', apns: parcels.map(row => row.apn).filter(Boolean), parcels },
+      zoning: { value: zone || null, values: zoningValues, source: zoningValues.length ? 'Los Angeles City Planning zoning GIS' : null, needsVerification: true },
+      neighborhood, matchedSite, ...engine, comps, sources: SOURCES, warnings,
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') error.message = 'A public parcel or zoning service timed out. Please retry.';
+    next(error);
+  }
+});
+
+export default router;
