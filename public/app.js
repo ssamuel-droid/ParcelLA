@@ -1626,7 +1626,7 @@ async function runFeasibility(event) {
   const body = g('feasibility-body');
   const rawAddress = g('fz-address')?.value.trim() || '';
   const canonicalAddress = /\b12500\b.*\bRIVERSIDE\b/i.test(rawAddress)
-    ? '12500-12532 W Riverside Dr, Los Angeles, CA 91607'
+    ? '12500 W Riverside Dr, Los Angeles, CA 91607'
     : rawAddress;
   if (canonicalAddress && g('fz-address')) g('fz-address').value = canonicalAddress;
   const request = {

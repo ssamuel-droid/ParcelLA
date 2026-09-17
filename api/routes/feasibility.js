@@ -21,6 +21,7 @@ const VERIFIED_PROJECTS = [
   {
     match: value => /\b12500\b.*\bRIVERSIDE\b/i.test(value),
     displayAddress: '12500-12532 W Riverside Dr, Los Angeles, CA 91607',
+    geocodeAddress: '12500 W Riverside Dr, Los Angeles, CA 91607',
     lotSf: 56525,
     apns: ['2357-032-006', '2357-032-007', '2357-032-008'],
     zone: 'C2-1-RIO',
@@ -257,7 +258,7 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
     const verifiedProject = VERIFIED_PROJECTS.find(project => project.match(address)) || null;
     let geo;
     try {
-      geo = await geocode(verifiedProject?.displayAddress || address);
+      geo = await geocode(verifiedProject?.geocodeAddress || verifiedProject?.displayAddress || address);
     } catch (error) {
       const hasLocality = address.split(',').length >= 2;
       if (verifiedProject || hasLocality) throw error;
