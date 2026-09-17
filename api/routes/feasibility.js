@@ -14,6 +14,33 @@ const SOURCES = [
   { label: 'Los Angeles CHIP', url: 'https://planning.lacity.gov/plans-policies/citywide-housing-incentive-program', purpose: 'State Density Bonus, AHIP and MIIP procedures' },
   { label: 'Los Angeles housing policy', url: 'https://planning.lacity.gov/plans-policies/initiatives-policies/housing', purpose: 'ED1 and local housing programs' },
   { label: 'California HCD', url: 'https://www.hcd.ca.gov/planning-and-community-development/statutory-determinations', purpose: 'State streamlining and housing-law guidance' },
+  { label: 'Los Angeles SB 79', url: 'https://planning.lacity.gov/resources/senate-bill-sb-79', purpose: 'Current SB 79 phased implementation and Low-Rise program' },
+];
+
+const VERIFIED_PROJECTS = [
+  {
+    match: value => /\b12500\b.*\bRIVERSIDE\b/i.test(value),
+    displayAddress: '12500-12532 W Riverside Dr, Los Angeles, CA 91607',
+    lotSf: 56525,
+    apns: ['2357-032-006', '2357-032-007', '2357-032-008'],
+    zone: 'C2-1-RIO',
+    zones: ['C2-1-RIO', '(Q)C1.5-1VL-RIO'],
+    baseFar: 1.5,
+    baseUnits: 142,
+    sourceLabel: 'City Planning determination EAR-2024-5095-DB-VHCA',
+    sourceUrl: 'https://planning.lacity.gov/pdiscaseinfo/document/MzQ50/82065561-f922-4efb-8b32-0e189f041683/pdd',
+    approvedProject: {
+      units: 219,
+      grossSf: 170638,
+      commercialSf: 2162,
+      stories: 5,
+      heightFt: 63,
+      parkingSpaces: 254,
+      description: 'Verified City Planning approval for a five-story, 219-unit mixed-use project on the three-lot 56,525 SF site.',
+      requirements: ['Review EAR-2024-5095-DB-VHCA, its conditions and approved exhibits.', 'Confirm the current vesting and building-permit status.'],
+      incentives: ['54% approved density bonus', 'Averaging across the project site', '3.18:1 FAR in lieu of 1.5:1', 'Height and transitional-height relief'],
+    },
+  },
 ];
 
 function clean(value, max = 180) {
@@ -121,6 +148,25 @@ async function parcelLookup(address) {
   })).filter(row => row.lotSf >= 500);
 }
 
+async function parcelLookupByApns(apns = []) {
+  const ains = apns.map(value => String(value).replace(/\D/g, '')).filter(value => value.length === 10);
+  if (!ains.length) return [];
+  const where = `AIN IN (${ains.map(value => `'${value}'`).join(',')})`;
+  const params = new URLSearchParams({
+    f: 'json', returnGeometry: 'false', where,
+    outFields: 'AIN,APN,SitusFullAddress,SitusCity,SitusZIP,UseCode,UseType,UseDescription,YearBuilt1,Units1,SQFTmain1,Shape__Area,CENTER_LAT,CENTER_LON',
+    resultRecordCount: '100',
+  });
+  const data = await fetchJson(`${COUNTY_PARCEL_URL}?${params}`, {}, 20000);
+  return (data?.features || []).map(feature => feature.attributes || {}).map(row => ({
+    apn: clean(row.APN || row.AIN, 30), ain: clean(row.AIN, 20), address: clean(row.SitusFullAddress),
+    lotSf: Math.round(number(row.Shape__Area, 0)), useCode: clean(row.UseCode, 30), useType: clean(row.UseType, 80),
+    useDescription: clean(row.UseDescription, 120), yearBuilt: number(row.YearBuilt1), existingUnits: number(row.Units1),
+    existingBuildingSf: number(row.SQFTmain1), lat: number(row.CENTER_LAT), lng: number(row.CENTER_LON),
+    source: 'LA County Assessor parcel polygon',
+  })).filter(row => row.lotSf >= 500);
+}
+
 async function zoningLookup(lat, lng) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
   const params = new URLSearchParams({
@@ -208,17 +254,24 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
     if (address.length < 6) return res.status(400).json({ error: 'Enter a complete street address.' });
     if (!FEASIBILITY_USES[use]) return res.status(400).json({ error: 'Select a supported proposed use.' });
 
+    const verifiedProject = VERIFIED_PROJECTS.find(project => project.match(address)) || null;
     const geo = await geocode(address);
-    const [parcelResult, zoningResult, siteResult] = await Promise.allSettled([
-      parcelLookup(geo.formattedAddress || address), zoningLookup(geo.lat, geo.lng), existingSite(address),
+    const [parcelResult, siteResult] = await Promise.allSettled([
+      verifiedProject ? parcelLookupByApns(verifiedProject.apns) : parcelLookup(geo.formattedAddress || address),
+      existingSite(address),
     ]);
     const parcels = parcelResult.status === 'fulfilled' ? parcelResult.value : [];
-    const zoningValues = zoningResult.status === 'fulfilled' ? zoningResult.value : [];
     const matchedSite = siteResult.status === 'fulfilled' ? siteResult.value : null;
     const userLotSf = number(req.body?.lotSf);
     const parcelLotSf = parcels.reduce((sum, parcel) => sum + (parcel.lotSf || 0), 0);
-    const lotSf = userLotSf || parcelLotSf || number(matchedSite?.lot_sf) || 7500;
-    const zone = clean(req.body?.zone || zoningValues[0] || matchedSite?.zoning || '', 80);
+    const lotSf = userLotSf || number(verifiedProject?.lotSf) || parcelLotSf || number(matchedSite?.lot_sf) || 7500;
+    const zoningPoints = [
+      ...parcels.map(parcel => ({ lat: parcel.lat, lng: parcel.lng })),
+      { lat: geo.lat, lng: geo.lng },
+    ].filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+    const zoningResults = await Promise.allSettled(zoningPoints.map(point => zoningLookup(point.lat, point.lng)));
+    const zoningValues = [...new Set(zoningResults.flatMap(result => result.status === 'fulfilled' ? result.value : []))];
+    const zone = clean(req.body?.zone || verifiedProject?.zone || zoningValues[0] || matchedSite?.zoning || '', 80);
     const neighborhood = clean(req.body?.neighborhood || matchedSite?.neighborhood || geo.city || 'Los Angeles', 80);
     const acquisitionPrice = number(req.body?.acquisitionPrice) || number(matchedSite?.price) || 0;
     const inLosAngelesCity = /los angeles city/i.test(geo.jurisdiction);
@@ -234,15 +287,19 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
       softCostPct: number(req.body?.softCostPct) != null ? number(req.body.softCostPct) / 100 : undefined,
       interestRate: number(req.body?.interestRate) != null ? number(req.body.interestRate) / 100 : undefined,
       ltc: number(req.body?.ltc) != null ? number(req.body.ltc) / 100 : undefined,
+      avgUnitSf: number(req.body?.avgUnitSf) || undefined,
       market,
     };
     const engine = generateFeasibilityScenarios({
-      address: geo.formattedAddress, use, lotSf, zone, jurisdiction: geo.jurisdiction,
+      address: verifiedProject?.displayAddress || geo.formattedAddress, use, lotSf, zone, jurisdiction: geo.jurisdiction,
       inLosAngelesCity, assumptions, sources: SOURCES,
+      baseFar: verifiedProject?.baseFar,
+      baseUnits: userLotSf ? undefined : verifiedProject?.baseUnits,
+      approvedProject: verifiedProject?.approvedProject,
     });
     const comps = await evidence(neighborhood, use);
     const warnings = [
-      !parcels.length ? 'Parcel geometry and APN were not returned automatically; confirm lot area before relying on capacity.' : null,
+      !parcels.length && !verifiedProject ? 'Parcel geometry and APN were not returned automatically; confirm lot area before relying on capacity.' : null,
       !zone ? 'Zoning was not returned automatically; enter the ZIMAS base zone to improve the screen.' : null,
       !inLosAngelesCity ? `${geo.jurisdiction || geo.city || 'This address'} is outside the City of Los Angeles; LA-specific ED1, AHIP and MIIP options are not generated.` : null,
       !acquisitionPrice ? 'No acquisition price was entered, so land cost is shown as $0 and returns are not decision-ready.' : null,
@@ -251,11 +308,19 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
 
     res.set('Cache-Control', 'private, no-store');
     res.json({
-      generatedAt: new Date().toISOString(), address: geo.formattedAddress, geocode: geo,
+      generatedAt: new Date().toISOString(), address: verifiedProject?.displayAddress || geo.formattedAddress, geocode: geo,
       jurisdiction: { name: geo.jurisdiction || geo.city, inLosAngelesCity },
-      parcel: { lotSf, lotSfSource: userLotSf ? 'User override' : parcels.length ? 'LA County parcel polygon' : matchedSite?.lot_sf ? 'ParcelLA site record' : 'Screening default', apns: parcels.map(row => row.apn).filter(Boolean), parcels },
-      zoning: { value: zone || null, values: zoningValues, source: zoningValues.length ? 'Los Angeles City Planning zoning GIS' : null, needsVerification: true },
-      neighborhood, matchedSite, ...engine, comps, sources: SOURCES, warnings,
+      parcel: { lotSf, lotSfSource: userLotSf ? 'User override' : verifiedProject ? verifiedProject.sourceLabel : parcels.length ? 'LA County parcel polygon' : matchedSite?.lot_sf ? 'ParcelLA site record' : 'Screening default', apns: verifiedProject?.apns || parcels.map(row => row.apn).filter(Boolean), parcels },
+      zoning: {
+        value: verifiedProject?.zones?.join(' / ') || zone || null,
+        values: zoningValues,
+        source: zoningValues.length ? 'Los Angeles City Planning zoning GIS' : verifiedProject?.sourceLabel || null,
+        needsVerification: !verifiedProject,
+      },
+      neighborhood, matchedSite, verifiedProject: verifiedProject ? { displayAddress: verifiedProject.displayAddress, sourceLabel: verifiedProject.sourceLabel, sourceUrl: verifiedProject.sourceUrl } : null,
+      ...engine, comps,
+      sources: verifiedProject ? [{ label: verifiedProject.sourceLabel, url: verifiedProject.sourceUrl, purpose: 'Verified site area, zoning, base density and approved project' }, ...SOURCES] : SOURCES,
+      warnings,
     });
   } catch (error) {
     if (error.name === 'AbortError') error.message = 'A public parcel or zoning service timed out. Please retry.';

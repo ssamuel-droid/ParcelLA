@@ -1409,7 +1409,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <button class="dhx" type="button" aria-label="Close feasibility analysis" onclick="closeFeasibility()">×</button>
     </header>
     <form class="feasibility-form" id="feasibility-form" onsubmit="runFeasibility(event)">
-      <label class="feasibility-address"><span>Property address</span><input id="fz-address" required autocomplete="street-address" placeholder="12500 Riverside Dr, Los Angeles, CA 91607"></label>
+      <label class="feasibility-address"><span>Property address</span><input id="fz-address" required autocomplete="off" placeholder="Start typing a Los Angeles address"></label>
       <label><span>Proposed use</span><select id="fz-use" required><option value="apartment">Apartments</option><option value="mixed_use">Mixed-use</option><option value="condo">Condominiums</option><option value="townhome">Townhomes</option><option value="single_family">Single-family homes</option><option value="industrial">Industrial / warehouse</option><option value="light_manufacturing">Light manufacturing</option><option value="office">Office</option><option value="retail">Retail</option><option value="hotel">Hotel</option></select></label>
       <label><span>Acquisition price</span><div class="feasibility-money"><b>$</b><input id="fz-price" type="number" min="0" step="10000" placeholder="Optional"></div></label>
       <button class="feasibility-run" type="submit">Run feasibility</button>
@@ -1417,6 +1417,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
       <div class="feasibility-advanced" id="feasibility-advanced">
         <label><span>Lot area SF</span><input id="fz-lot" type="number" min="500" step="100" placeholder="Auto"></label>
         <label><span>Base zone</span><input id="fz-zone" placeholder="Auto from zoning GIS"></label>
+        <label><span>Average unit SF</span><input id="fz-unit-sf" type="number" min="250" max="3000" step="25" placeholder="750"></label>
         <label><span>Hard cost / SF</span><input id="fz-hard" type="number" min="100" step="5" placeholder="Use default"></label>
         <label><span>Interest rate</span><div class="feasibility-money"><input id="fz-rate" type="number" min="0" max="30" step="0.1" placeholder="6.5"><b>%</b></div></label>
       </div>
@@ -1470,6 +1471,53 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 
 let feasibilityResult = null;
 let feasibilityScenarioId = null;
+let feasibilityAutocomplete = null;
+let feasibilityMapsPromise = null;
+
+function loadFeasibilityPlaces() {
+  if (window.google?.maps?.places) return Promise.resolve();
+  if (feasibilityMapsPromise) return feasibilityMapsPromise;
+  feasibilityMapsPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-parcella-places]');
+    if (existing) {
+      existing.addEventListener('load', resolve, { once: true });
+      existing.addEventListener('error', reject, { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.dataset.parcellaPlaces = 'true';
+    script.async = true;
+    script.defer = true;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GMAPS_KEY)}&libraries=places&loading=async`;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Address suggestions are temporarily unavailable.'));
+    document.head.appendChild(script);
+  });
+  return feasibilityMapsPromise;
+}
+
+async function initFeasibilityAutocomplete() {
+  if (feasibilityAutocomplete || !g('fz-address')) return;
+  try {
+    await loadFeasibilityPlaces();
+    feasibilityAutocomplete = new google.maps.places.Autocomplete(g('fz-address'), {
+      componentRestrictions: { country: 'us' },
+      fields: ['formatted_address', 'geometry', 'address_components'],
+      types: ['address'],
+      bounds: new google.maps.LatLngBounds(
+        new google.maps.LatLng(33.65, -118.75),
+        new google.maps.LatLng(34.40, -117.65),
+      ),
+      strictBounds: false,
+    });
+    feasibilityAutocomplete.addListener('place_changed', () => {
+      const place = feasibilityAutocomplete.getPlace();
+      if (place?.formatted_address) g('fz-address').value = place.formatted_address;
+    });
+  } catch (error) {
+    console.warn('[ParcelLA] Address autocomplete unavailable:', error?.message || error);
+  }
+}
 
 function openFeasibility() {
   const panel = g('feasibility');
@@ -1477,6 +1525,7 @@ function openFeasibility() {
   panel.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
+  initFeasibilityAutocomplete();
   setTimeout(() => g('fz-address')?.focus(), 0);
 }
 
@@ -1540,8 +1589,9 @@ function renderFeasibilityResult() {
     <div class="fz-summary">
       <div class="fz-fact address"><span>Subject</span><strong>${escapeText(data.address)}</strong></div>
       <div class="fz-fact"><span>Jurisdiction</span><strong>${escapeText(data.jurisdiction?.name || 'Verify')}</strong></div>
-      <div class="fz-fact"><span>Lot area</span><strong>${fmtN(data.parcel?.lotSf)} SF</strong></div>
-      <div class="fz-fact"><span>Base zone</span><strong>${escapeText(data.zoning?.value || 'Verify')}</strong></div>
+      <div class="fz-fact"><span>Lot area</span><strong>${fmtN(data.parcel?.lotSf)} SF${apns.length > 1 ? ` across ${fmtN(apns.length)} parcels` : ''}</strong><small style="color:#7d8999;font-size:8px">${escapeText(data.parcel?.lotSfSource || '')}</small></div>
+      <div class="fz-fact"><span>Base zone</span><strong>${escapeText(data.zoning?.value || 'Verify')}</strong><small style="color:#7d8999;font-size:8px">${escapeText(data.zoning?.source || 'Source pending')}</small></div>
+      <div class="fz-fact"><span>By-right MARD</span><strong>${data.baseUnits ? fmtN(data.baseUnits) + ' units' : 'Verify'}</strong></div>
       <div class="fz-fact"><span>Parcels</span><strong>${apns.length ? apns.map(escapeText).join(', ') : 'APN pending'}</strong></div>
     </div>
     <div class="fz-warnings">${warnings}</div>
@@ -1557,7 +1607,7 @@ function renderFeasibilityResult() {
           <div class="fz-kpi"><span>Profit / cost</span><b>${feasibilityPct(u.marginOnCost)}</b></div>
         </div>
         <div class="fz-columns">
-          <section class="fz-section"><h3>Concept program</h3><table class="fz-table"><tr><td>Gross building area</td><td>${fmtN(p.grossSf)} SF</td></tr><tr><td>Net / rentable area</td><td>${fmtN(p.netSf)} SF</td></tr><tr><td>Residential units / rooms</td><td>${fmtN(p.units || 0)}</td></tr><tr><td>Commercial area</td><td>${fmtN(p.commercialSf || 0)} SF</td></tr><tr><td>Estimated stories</td><td>${fmtN(p.stories)}</td></tr><tr><td>Screened height</td><td>${fmtN(p.heightFt)} ft</td></tr><tr><td>Parking screen</td><td>${fmtN(p.parkingSpaces)} spaces</td></tr></table></section>
+          <section class="fz-section"><h3>Concept program</h3><table class="fz-table"><tr><td>Density basis</td><td>${escapeText(p.densityMode === 'floor_area' ? 'Limited by floor area' : p.densityMode === 'verified_project' ? 'Verified City project' : 'Zoning MARD')}</td></tr><tr><td>Base MARD</td><td>${fmtN(p.baseUnits || data.baseUnits || 0)} units</td></tr><tr><td>Gross building area</td><td>${fmtN(p.grossSf)} SF</td></tr><tr><td>Screened FAR</td><td>${Number.isFinite(Number(p.far)) ? Number(p.far).toFixed(2) + ':1' : 'n/a'}</td></tr><tr><td>Net / rentable area</td><td>${fmtN(p.netSf)} SF</td></tr><tr><td>Residential units / rooms</td><td>${fmtN(p.units || 0)}</td></tr><tr><td>Average net unit SF</td><td>${p.avgUnitSf ? fmtN(p.avgUnitSf) + ' SF' : 'n/a'}</td></tr><tr><td>Commercial area</td><td>${fmtN(p.commercialSf || 0)} SF</td></tr><tr><td>Estimated stories</td><td>${fmtN(p.stories)}</td></tr><tr><td>Screened height</td><td>${fmtN(p.heightFt)} ft</td></tr><tr><td>Parking screen</td><td>${fmtN(p.parkingSpaces)} spaces</td></tr></table></section>
           <section class="fz-section"><h3>Development budget</h3><table class="fz-table"><tr><td>Land / acquisition</td><td>${feasibilityValue(u.landCost)}</td></tr><tr><td>Hard costs (${feasibilityValue(u.hardCostPsf)}/SF)</td><td>${feasibilityValue(u.hardCosts)}</td></tr><tr><td>Soft costs</td><td>${feasibilityValue(u.softCosts)}</td></tr><tr><td>Contingency</td><td>${feasibilityValue(u.contingency)}</td></tr><tr><td>Financing carry</td><td>${feasibilityValue(u.financing)}</td></tr><tr><td><b>Total cost</b></td><td><b>${feasibilityValue(u.totalCost)}</b></td></tr></table></section>
         </div>
         <div class="fz-columns">
@@ -1578,7 +1628,7 @@ async function runFeasibility(event) {
     address: g('fz-address')?.value.trim(), use: g('fz-use')?.value,
     acquisitionPrice: g('fz-price')?.value, lotSf: g('fz-lot')?.value,
     zone: g('fz-zone')?.value.trim(), hardCostPsf: g('fz-hard')?.value,
-    interestRate: g('fz-rate')?.value,
+    interestRate: g('fz-rate')?.value, avgUnitSf: g('fz-unit-sf')?.value,
   };
   if (!request.address) return;
   body.innerHTML = '<div class="fz-loading"><div class="spin"></div>Resolving parcel, zoning, development programs, underwriting and comps...</div>';

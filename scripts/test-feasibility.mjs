@@ -17,11 +17,34 @@ const laApartment = generateFeasibilityScenarios({
 assert.equal(laApartment.scenarios[0].id, 'by_right');
 assert.ok(laApartment.scenarios.some(item => item.id === 'state_density_bonus'));
 assert.ok(laApartment.scenarios.some(item => item.id === 'miip'));
-assert.ok(laApartment.scenarios.some(item => item.id === 'ed1_ahip'));
+assert.ok(laApartment.scenarios.some(item => item.id === 'ed1_ahip_citywide'));
+assert.ok(laApartment.scenarios.some(item => item.id === 'ed1_ahip_transit_vmt'));
 assert.ok(laApartment.scenarios.some(item => item.id === 'ab2011'));
 assert.ok(laApartment.scenarios.some(item => item.id === 'sb35'));
 assert.ok(laApartment.scenarios.find(item => item.id === 'state_density_bonus').program.units > laApartment.scenarios[0].program.units);
-assert.ok(laApartment.scenarios.find(item => item.id === 'ed1_ahip').underwriting.assumptions.rentPsfMo < laApartment.scenarios[0].underwriting.assumptions.rentPsfMo);
+assert.ok(laApartment.scenarios.find(item => item.id === 'ed1_ahip_citywide').underwriting.assumptions.rentPsfMo < laApartment.scenarios[0].underwriting.assumptions.rentPsfMo);
+
+const riverside = generateFeasibilityScenarios({
+  lotSf: 56525,
+  zone: 'C2-1-RIO',
+  baseFar: 1.5,
+  baseUnits: 142,
+  use: 'apartment',
+  jurisdiction: 'Los Angeles city',
+  approvedProject: { units: 219, grossSf: 170638, commercialSf: 2162, stories: 5, heightFt: 63, parkingSpaces: 254 },
+});
+const riversideByRight = riverside.scenarios.find(item => item.id === 'by_right');
+const riversideFiled = riverside.scenarios.find(item => item.id === 'verified_project');
+const riversideAhip = riverside.scenarios.find(item => item.id === 'ed1_ahip_transit_vmt');
+assert.equal(riverside.lotSf, 56525);
+assert.equal(riverside.zone, 'C2-1-RIO');
+assert.equal(riverside.baseUnits, 142);
+assert.equal(riversideByRight.program.units, 142);
+assert.equal(riversideByRight.program.grossSf, 84788);
+assert.equal(riversideFiled.program.units, 219);
+assert.equal(riversideFiled.program.grossSf, 170638);
+assert.equal(riversideAhip.program.densityMode, 'floor_area');
+assert.ok(riversideAhip.program.units > riversideFiled.program.units);
 
 const industrial = generateFeasibilityScenarios({ lotSf: 20000, zone: 'M1-1', use: 'industrial', jurisdiction: 'Los Angeles city' });
 assert.deepEqual(industrial.scenarios.map(item => item.id), ['by_right']);
