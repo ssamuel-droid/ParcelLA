@@ -37,4 +37,25 @@ assert.ok(result.scenarios.some(item => item.id === 'state_density_bonus'));
 assert.ok(result.scenarios.some(item => item.id === 'sb79'));
 assert.ok(!result.scenarios.some(item => item.id.startsWith('ed1_ahip')));
 
+const broadwayParcels = await santaAnaParcelLookup('1327 N BROADWAY, SANTA ANA, CA, 92706');
+assert.equal(broadwayParcels.length, 1);
+assert.equal(broadwayParcels[0].apn, '398-523-06');
+assert.equal(broadwayParcels[0].lotSf, 16003);
+assert.equal(broadwayParcels[0].zone, 'SP3-BC');
+const broadway = generateFeasibilityScenarios({
+  lotSf: broadwayParcels[0].lotSf,
+  zone: broadwayParcels[0].zone,
+  zoneProfile: santaAnaZoneProfile(broadwayParcels[0].zone, broadwayParcels[0]),
+  baseFar: broadwayParcels[0].generalPlanIntensity,
+  use: 'apartment',
+  jurisdiction: 'Santa Ana city',
+  inSantaAna: true,
+  inCalifornia: true,
+});
+assert.equal(broadway.baseUnits, 0);
+assert.equal(broadway.scenarios.find(item => item.id === 'ab2011').program.units, 12);
+assert.equal(broadway.scenarios.find(item => item.id === 'ab2011_transit').program.units, 30);
+assert.equal(broadway.scenarios.find(item => item.id === 'ab2011_affordable').program.units, 30);
+assert.ok(!broadway.scenarios.some(item => item.id.startsWith('ed1_ahip')));
+
 console.log('Santa Ana feasibility integration tests passed.');

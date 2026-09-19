@@ -27,6 +27,7 @@ const SANTA_ANA_SOURCES = [
   { label: 'Santa Ana parcel GIS', url: 'https://gis.santa-ana.org/server/rest/services/Accela/Accela_AP/MapServer/1', purpose: 'Official APN, lot area, General Plan, zoning and hazard attributes' },
   { label: 'Santa Ana zoning GIS', url: 'https://gis.santa-ana.org/server/rest/services/Public/PBA_ZoningClassifications/MapServer/0', purpose: 'Official zoning classifications and overlays' },
   { label: 'Santa Ana specific plans', url: 'https://gis.santa-ana.org/server/rest/services/Public/PBA_SpecificWorkingPlanAreas/FeatureServer', purpose: 'Specific-plan and special-development area verification' },
+  { label: 'Midtown Specific Plan', url: 'https://storage.googleapis.com/proudcity/santaanaca/uploads/2022/03/Midtown_Specific_Plan.pdf', purpose: 'SP3 district uses, height, setbacks, FAR and design standards' },
   { label: 'Santa Ana zoning code', url: 'https://library.municode.com/ca/santa_ana/codes/code_of_ordinances?nodeId=PTIITHCO_CH41ZO', purpose: 'Current local use and development standards' },
   ...CALIFORNIA_SOURCES,
 ];
@@ -245,6 +246,12 @@ function santaAnaZoneProfile(zone, parcel) {
   const base = clean(zone, 40).toUpperCase();
   const density = number(parcel?.generalPlanDensity);
   const far = number(parcel?.generalPlanIntensity) || (/^R1/.test(base) ? 0.45 : /^R2/.test(base) ? 0.6 : /^R3/.test(base) ? 1.5 : /^R4/.test(base) ? 2 : 1.5);
+  if (/^SP3-BC/.test(base)) {
+    return {
+      family: 'commercial', far: far || 0.5, height: 35, stories: 3, lotPerUnit: null,
+      uses: ['office'], recognized: true, stateHousingOverride: true, localProgram: 'sp3_broadway',
+    };
+  }
   const lotPerUnit = density ? 43560 / density : /^R1/.test(base) ? 6000 : /^R2/.test(base) ? 3000 : /^R3/.test(base) ? 1500 : /^R4/.test(base) ? 500 : null;
   const family = /^R1/.test(base) ? 'single' : /^R[234]/.test(base) ? 'multi' : /^M/.test(base) ? 'industrial' : /^(C|CR|SD|SP|TV)/.test(base) ? 'commercial' : 'unknown';
   const uses = family === 'single'
@@ -426,6 +433,7 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
       !parcels.length && !verifiedProject ? 'Parcel geometry and APN were not returned automatically; confirm lot area before relying on capacity.' : null,
       !zone ? `Zoning was not returned automatically; enter the ${inSantaAna ? 'Santa Ana' : 'ZIMAS'} base zone to improve the screen.` : null,
       inSantaAna && /^(SD|SP)/i.test(zone) ? `${zone} is a special-development or specific-plan zone. The controlling adopted plan must be reviewed before relying on setbacks, height, FAR or permitted uses.` : null,
+      inSantaAna && /^SP3-BC/i.test(zone) && ['apartment', 'mixed_use', 'condo'].includes(use) ? 'SP3 Broadway Corridor does not permit a new market-rate multifamily building by right. The apartment options below rely on AB 2011, State Density Bonus, transit/VMT eligibility or a 100% affordable program.' : null,
       inSantaAna && santaAnaParcel?.historicDistrict ? `Historic district: ${santaAnaParcel.historicDistrict}. Historic-resource review may constrain demolition or design.` : null,
       inSantaAna && santaAnaParcel?.liquefaction ? 'The City parcel record flags a liquefaction area; confirm geotechnical and seismic requirements.' : null,
       inSantaAna && !comps.sales.length && !comps.rents.length ? 'No Santa Ana market comps are stored yet; underwriting uses screening market assumptions until local monthly comp coverage is added.' : null,
