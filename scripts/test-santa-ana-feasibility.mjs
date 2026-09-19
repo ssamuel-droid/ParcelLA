@@ -3,7 +3,10 @@ import { generateFeasibilityScenarios } from '../src/feasibility/FeasibilityEngi
 
 process.env.SUPABASE_URL ||= 'http://127.0.0.1:54321';
 process.env.SUPABASE_SERVICE_KEY ||= 'test-service-key';
-const { santaAnaParcelLookup, santaAnaZoneProfile } = await import('../api/routes/feasibility.js');
+const { addressSuggestions, santaAnaParcelLookup, santaAnaZoneProfile } = await import('../api/routes/feasibility.js');
+
+const suggestions = await addressSuggestions('201 e macarthur');
+assert.ok(suggestions.some(item => /201 E Macarthur Blvd, Santa Ana/i.test(item.address)));
 
 const parcels = await santaAnaParcelLookup('201 E MACARTHUR BLVD, SANTA ANA, CA, 92707');
 assert.equal(parcels.length, 1);

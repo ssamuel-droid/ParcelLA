@@ -8,6 +8,7 @@ const router = Router();
 const COUNTY_PARCEL_URL = 'https://cache.gis.lacounty.gov/cache/rest/services/LACounty_Cache/LACounty_Parcel/FeatureServer/0/query';
 const LA_ZONING_URL = 'https://services5.arcgis.com/7nsPwEMP38bSkCjy/arcgis/rest/services/Zoning/FeatureServer/15/query';
 const SANTA_ANA_PARCEL_URL = 'https://gis.santa-ana.org/server/rest/services/Accela/Accela_AP/MapServer/1/query';
+const ADDRESS_SUGGEST_URL = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/suggest';
 const REQUEST_TIMEOUT_MS = 12000;
 
 const CALIFORNIA_SOURCES = [
@@ -227,6 +228,19 @@ async function santaAnaParcelLookup(address) {
   return [...byParentApn.values()].filter(row => row.lotSf >= 500);
 }
 
+async function addressSuggestions(query) {
+  const text = clean(query, 120);
+  if (text.length < 3) return [];
+  const params = new URLSearchParams({
+    f: 'json', text, category: 'Address', sourceCountry: 'USA', maxSuggestions: '8',
+    location: '-118.10,33.95', searchExtent: '-118.75,33.65,-117.65,34.40',
+  });
+  const data = await fetchJson(`${ADDRESS_SUGGEST_URL}?${params}`, {}, 10000);
+  return (data?.suggestions || [])
+    .map(item => ({ address: clean(item.text, 180), magicKey: clean(item.magicKey, 180) }))
+    .filter(item => item.address);
+}
+
 function santaAnaZoneProfile(zone, parcel) {
   const base = clean(zone, 40).toUpperCase();
   const density = number(parcel?.generalPlanDensity);
@@ -324,6 +338,15 @@ async function existingSite(address) {
 
 router.get('/uses', (req, res) => {
   res.json({ uses: Object.entries(FEASIBILITY_USES).map(([id, profile]) => ({ id, label: profile.label, group: profile.group })) });
+});
+
+router.get('/suggest', async (req, res, next) => {
+  try {
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json({ suggestions: await addressSuggestions(req.query?.q) });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.post('/analyze', requireAuth, async (req, res, next) => {
@@ -441,4 +464,4 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
 });
 
 export default router;
-export { santaAnaParcelLookup, santaAnaZoneProfile };
+export { addressSuggestions, santaAnaParcelLookup, santaAnaZoneProfile };
