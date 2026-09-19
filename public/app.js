@@ -1607,9 +1607,12 @@ function renderFeasibilityResult() {
   const warnings = (data.warnings || []).map(item => `<div class="fz-warning">${escapeText(item)}</div>`).join('');
   const scenarioButtons = (data.scenarios || []).map(item => {
     const u = item.underwriting || {};
+    const capacityLabel = item.eligibility === 'not_indicated'
+      ? 'Not allowed'
+      : item.program.units ? fmtN(item.program.units) + (data.use === 'hotel' ? ' rooms' : ' units') : fmtN(item.program.grossSf) + ' SF';
     return `<button type="button" class="fz-scenario ${item.id === feasibilityScenarioId ? 'on' : ''}" onclick="selectFeasibilityScenario('${escapeText(item.id)}')">
       <div class="fz-scenario-top"><div><h3>${escapeText(item.label)}</h3><small>${escapeText(item.eligibility.replaceAll('_', ' '))}</small></div><span class="fz-tag">${escapeText(item.category)}</span></div>
-      <div class="fz-scenario-metrics"><div><span>Capacity</span><b>${item.program.units ? fmtN(item.program.units) + (data.use === 'hotel' ? ' rooms' : ' units') : fmtN(item.program.grossSf) + ' SF'}</b></div><div><span>Project SF</span><b>${fmtN(item.program.grossSf)}</b></div><div><span>Profit</span><b>${feasibilityValue(u.profit)}</b></div></div>
+      <div class="fz-scenario-metrics"><div><span>Capacity</span><b>${capacityLabel}</b></div><div><span>Project SF</span><b>${fmtN(item.program.grossSf)}</b></div><div><span>Profit</span><b>${feasibilityValue(u.profit)}</b></div></div>
     </button>`;
   }).join('');
   const u = selected?.underwriting || {};

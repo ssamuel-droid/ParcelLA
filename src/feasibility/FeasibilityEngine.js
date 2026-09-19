@@ -139,7 +139,7 @@ export function generateFeasibilityScenarios(input = {}) {
   const scenarios = [];
   const byRightProgram = baseAllowed || !['housing', 'for_sale'].includes(profile.group)
     ? programFactory(baseFar)
-    : { ...programFactory(baseFar), grossSf: 0, netSf: 0, units: 0, commercialSf: 0, physicalUnitCapacity: 0, regulatoryUnits: 0, parkingSpaces: 0 };
+    : { ...programFactory(baseFar), grossSf: 0, netSf: 0, units: 0, baseUnits: 0, commercialSf: 0, physicalUnitCapacity: 0, regulatoryUnits: 0, parkingSpaces: 0 };
 
   scenarios.push(scenario({ id: 'by_right', label: 'By-right zoning capacity', category: 'By right', use, description: baseAllowed ? 'Maximum Allowable Residential Density (MARD) from the base zone, shown separately from practical unit sizing and floor-area fit.' : `${profile.label} are not permitted as new construction by the controlling base plan in this preliminary screen. Review the state-law alternatives below.`, program: byRightProgram, assumptions, eligibility: baseAllowed ? 'potentially_eligible' : 'not_indicated', requirements: baseAllowed ? ['Verify general-plan density, specific plans, overlays, setbacks, lot coverage, height district and parking.', 'Confirm unit mix fits within base FAR; MARD is a regulatory unit ceiling, not a plan check.'] : [`${profile.label} are not indicated as a base-zone use for new construction.`, 'Review AB 2011 and other state housing pathways before concluding the site cannot support housing.'], incentives: [], sources, confidence: input.baseUnitsVerified ? 'verified' : rule.recognized ? 'screening' : 'low' }));
 
