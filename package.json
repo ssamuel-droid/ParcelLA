@@ -13,6 +13,7 @@
     "test:houses": "node scripts/test-house-lots.mjs",
     "test:security": "node scripts/test-cors.mjs",
     "test:feasibility": "node scripts/test-feasibility.mjs",
+    "test:santa-ana": "node scripts/test-santa-ana-feasibility.mjs",
     "test-apis": "python scripts/test_apis.py",
     "audit:filters": "node scripts/audit-site-filters.mjs",
     "audit:narrative": "node scripts/audit-narrative.mjs",

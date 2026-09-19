@@ -56,6 +56,28 @@ assert.ok(!outsideLa.scenarios.some(item => item.id === 'miip'));
 assert.ok(!outsideLa.scenarios.some(item => item.id === 'ed1_ahip'));
 assert.ok(outsideLa.scenarios.some(item => item.id === 'state_density_bonus'));
 
+const santaAna = generateFeasibilityScenarios({
+  lotSf: 73405,
+  zone: 'SD43',
+  use: 'apartment',
+  jurisdiction: 'Santa Ana city',
+  inSantaAna: true,
+  inCalifornia: true,
+  baseFar: 2,
+  baseUnits: 151,
+  zoneProfile: {
+    family: 'commercial', far: 2, height: 55, stories: 4,
+    lotPerUnit: 484, uses: ['apartment', 'mixed_use', 'condo', 'office', 'retail', 'hotel'], recognized: true,
+  },
+});
+assert.equal(santaAna.baseUnits, 151);
+assert.equal(santaAna.scenarios.find(item => item.id === 'by_right').program.units, 151);
+assert.equal(santaAna.scenarios.find(item => item.id === 'by_right').program.grossSf, 146810);
+assert.ok(santaAna.scenarios.some(item => item.id === 'state_density_bonus'));
+assert.ok(santaAna.scenarios.some(item => item.id === 'sb79'));
+assert.ok(santaAna.scenarios.some(item => item.id === 'ab2011'));
+assert.ok(!santaAna.scenarios.some(item => item.id.startsWith('ed1_ahip')));
+
 const sfr = generateFeasibilityScenarios({ lotSf: 6000, zone: 'R1-1', use: 'single_family', jurisdiction: 'Los Angeles city' });
 assert.ok(sfr.scenarios.some(item => item.id === 'sb9'));
 assert.ok(sfr.scenarios.some(item => item.id === 'adu'));

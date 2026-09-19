@@ -1592,6 +1592,7 @@ function renderFeasibilityResult() {
       <div class="fz-fact"><span>Lot area</span><strong>${fmtN(data.parcel?.lotSf)} SF${apns.length > 1 ? ` across ${fmtN(apns.length)} parcels` : ''}</strong><small style="color:#7d8999;font-size:8px">${escapeText(data.parcel?.lotSfSource || '')}</small></div>
       <div class="fz-fact"><span>Base zone</span><strong>${escapeText(data.zoning?.value || 'Verify')}</strong><small style="color:#7d8999;font-size:8px">${escapeText(data.zoning?.source || 'Source pending')}</small></div>
       <div class="fz-fact"><span>By-right MARD</span><strong>${data.baseUnits ? fmtN(data.baseUnits) + ' units' : 'Verify'}</strong></div>
+      ${data.parcel?.generalPlan ? `<div class="fz-fact"><span>General Plan</span><strong>${escapeText(data.parcel.generalPlan.designation || 'Verify')}</strong><small style="color:#7d8999;font-size:8px">${data.parcel.generalPlan.density ? `${fmtN(data.parcel.generalPlan.density)} units/acre` : ''}${data.parcel.generalPlan.density && data.parcel.generalPlan.intensity ? ' · ' : ''}${data.parcel.generalPlan.intensity ? `${Number(data.parcel.generalPlan.intensity).toFixed(2)} intensity` : ''}</small></div>` : ''}
       <div class="fz-fact"><span>Parcels</span><strong>${apns.length ? apns.map(escapeText).join(', ') : 'APN pending'}</strong></div>
     </div>
     <div class="fz-warnings">${warnings}</div>
