@@ -70,6 +70,35 @@ function number(value, fallback = null) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function imputedAcquisitionBasis({ use, lotSf, matchedUnits, approvedUnits, baseUnits, landPerDoor, landPerLotSf } = {}) {
+  const perDoor = Math.min(2000000, Math.max(0, number(landPerDoor, 100000)));
+  const perLotSf = Math.min(2000, Math.max(0, number(landPerLotSf, 100)));
+  const residentialUnits = Math.round(number(matchedUnits) || number(approvedUnits) || number(baseUnits) || 0);
+  if (['apartment', 'mixed_use', 'condo', 'townhome'].includes(use) && residentialUnits > 0 && perDoor > 0) {
+    return {
+      value: Math.round(residentialUnits * perDoor),
+      source: 'User apartment land basis',
+      metric: 'price per unit',
+      metricValue: perDoor,
+      basisQuantity: residentialUnits,
+      formula: `${residentialUnits.toLocaleString()} units × $${Math.round(perDoor).toLocaleString()}/unit`,
+      imputed: true,
+    };
+  }
+  if (use === 'single_family' && number(lotSf) > 0 && perLotSf > 0) {
+    return {
+      value: Math.round(number(lotSf) * perLotSf),
+      source: 'User house land basis',
+      metric: 'price per lot SF',
+      metricValue: perLotSf,
+      basisQuantity: number(lotSf),
+      formula: `${Math.round(number(lotSf)).toLocaleString()} lot SF × $${Math.round(perLotSf).toLocaleString()}/SF`,
+      imputed: true,
+    };
+  }
+  return { value: 0, source: null, metric: null, metricValue: null, basisQuantity: null, formula: null, imputed: false };
+}
+
 async function fetchJson(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -398,8 +427,27 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
       : [...new Set(zoningResults.flatMap(result => result.status === 'fulfilled' ? result.value : []))];
     const zone = clean(req.body?.zone || verifiedProject?.zone || zoningValues[0] || matchedSite?.zoning || '', 80);
     const santaAnaParcel = inSantaAna ? parcels[0] : null;
+    const santaAnaBaseUnits = !userLotSf && santaAnaParcel?.generalPlanDensity
+      ? Math.max(1, Math.floor(lotSf * santaAnaParcel.generalPlanDensity / 43560))
+      : undefined;
     const neighborhood = clean(req.body?.neighborhood || santaAnaParcel?.neighborhood || matchedSite?.neighborhood || geo.city || 'Los Angeles', 80);
-    const acquisitionPrice = number(req.body?.acquisitionPrice) || number(matchedSite?.price) || 0;
+    const enteredAcquisitionPrice = number(req.body?.acquisitionPrice) || 0;
+    const recordedAcquisitionPrice = number(matchedSite?.price) || 0;
+    const imputedLand = imputedAcquisitionBasis({
+      use,
+      lotSf,
+      matchedUnits: matchedSite?.units,
+      approvedUnits: verifiedProject?.approvedProject?.units,
+      baseUnits: verifiedProject?.baseUnits || santaAnaBaseUnits,
+      landPerDoor: req.body?.landPerDoor,
+      landPerLotSf: req.body?.landPerLotSf,
+    });
+    const acquisitionPrice = enteredAcquisitionPrice || recordedAcquisitionPrice || imputedLand.value;
+    const landBasis = enteredAcquisitionPrice
+      ? { value: acquisitionPrice, source: 'User-entered acquisition price', metric: 'acquisition price', metricValue: acquisitionPrice, basisQuantity: 1, formula: `$${Math.round(acquisitionPrice).toLocaleString()} entered price`, imputed: false }
+      : recordedAcquisitionPrice
+        ? { value: acquisitionPrice, source: 'ParcelLA property record', metric: 'recorded or asking price', metricValue: acquisitionPrice, basisQuantity: 1, formula: `$${Math.round(acquisitionPrice).toLocaleString()} property-record price`, imputed: false }
+        : imputedLand;
     const marketRents = RENTS[neighborhood] || RENTS.Koreatown;
     const oneBedRentPsf = inSantaAna ? 3.25 : marketRents?.one ? marketRents.one / 750 : 4;
     const market = ['apartment', 'mixed_use'].includes(use) ? {
@@ -432,9 +480,6 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
       market,
     };
     const santaAnaProfile = inSantaAna ? santaAnaZoneProfile(zone, santaAnaParcel) : null;
-    const santaAnaBaseUnits = !userLotSf && santaAnaParcel?.generalPlanDensity
-      ? Math.max(1, Math.floor(lotSf * santaAnaParcel.generalPlanDensity / 43560))
-      : undefined;
     const engine = generateFeasibilityScenarios({
       address: verifiedProject?.displayAddress || geo.formattedAddress, use, lotSf, zone, jurisdiction: geo.jurisdiction,
       inLosAngelesCity, inSantaAna, inCalifornia: /CA\b|california/i.test(geo.formattedAddress), assumptions, sources: jurisdictionSources,
@@ -454,7 +499,8 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
       inSantaAna && santaAnaParcel?.liquefaction ? 'The City parcel record flags a liquefaction area; confirm geotechnical and seismic requirements.' : null,
       inSantaAna && !comps.sales.length && !comps.rents.length ? 'No Santa Ana market comps are stored yet; underwriting uses screening market assumptions until local monthly comp coverage is added.' : null,
       !inLosAngelesCity && !inSantaAna ? `${geo.jurisdiction || geo.city || 'This address'} is outside the currently supported Los Angeles and Santa Ana jurisdictions.` : null,
-      !acquisitionPrice ? 'No acquisition price was entered, so land cost is shown as $0 and returns are not decision-ready.' : null,
+      landBasis.imputed ? `No acquisition price was entered. Underwriting uses an imputed ${landBasis.source.toLowerCase()}: ${landBasis.formula}.` : null,
+      !acquisitionPrice ? 'No acquisition price or applicable residential land basis was available, so land cost is shown as $0 and returns are not decision-ready.' : null,
       'Capacity is a preliminary screening estimate, not a zoning determination, entitlement opinion, appraisal, engineering study or offer to lend.',
     ].filter(Boolean);
 
@@ -476,7 +522,7 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
         source: inSantaAna && zoningValues.length ? 'City of Santa Ana parcel and zoning GIS' : zoningValues.length ? 'Los Angeles City Planning zoning GIS' : verifiedProject?.sourceLabel || null,
         needsVerification: !verifiedProject,
       },
-      neighborhood, matchedSite, verifiedProject: verifiedProject ? { displayAddress: verifiedProject.displayAddress, sourceLabel: verifiedProject.sourceLabel, sourceUrl: verifiedProject.sourceUrl } : null,
+      neighborhood, matchedSite, landBasis, verifiedProject: verifiedProject ? { displayAddress: verifiedProject.displayAddress, sourceLabel: verifiedProject.sourceLabel, sourceUrl: verifiedProject.sourceUrl } : null,
       ...engine, comps,
       sources: verifiedProject ? [{ label: verifiedProject.sourceLabel, url: verifiedProject.sourceUrl, purpose: 'Verified site area, zoning, base density and approved project' }, ...jurisdictionSources] : jurisdictionSources,
       warnings,
@@ -488,4 +534,4 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
 });
 
 export default router;
-export { addressSuggestions, santaAnaParcelLookup, santaAnaZoneProfile };
+export { addressSuggestions, imputedAcquisitionBasis, santaAnaParcelLookup, santaAnaZoneProfile };

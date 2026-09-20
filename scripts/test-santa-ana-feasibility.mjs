@@ -3,7 +3,15 @@ import { generateFeasibilityScenarios } from '../src/feasibility/FeasibilityEngi
 
 process.env.SUPABASE_URL ||= 'http://127.0.0.1:54321';
 process.env.SUPABASE_SERVICE_KEY ||= 'test-service-key';
-const { addressSuggestions, santaAnaParcelLookup, santaAnaZoneProfile } = await import('../api/routes/feasibility.js');
+const { addressSuggestions, imputedAcquisitionBasis, santaAnaParcelLookup, santaAnaZoneProfile } = await import('../api/routes/feasibility.js');
+
+const apartmentLand = imputedAcquisitionBasis({ use: 'apartment', lotSf: 56525, matchedUnits: 217, approvedUnits: 219, baseUnits: 142, landPerDoor: 100000 });
+assert.equal(apartmentLand.value, 21700000);
+assert.equal(apartmentLand.formula, '217 units × $100,000/unit');
+assert.equal(apartmentLand.imputed, true);
+const houseLand = imputedAcquisitionBasis({ use: 'single_family', lotSf: 6000, landPerLotSf: 100 });
+assert.equal(houseLand.value, 600000);
+assert.equal(houseLand.formula, '6,000 lot SF × $100/SF');
 
 const suggestions = await addressSuggestions('201 e macarthur');
 assert.ok(suggestions.some(item => /201 E Macarthur Blvd, Santa Ana/i.test(item.address)));
