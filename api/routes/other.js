@@ -65,6 +65,20 @@ const authRouter = Router();
 
 const CURRENT_TERMS_VERSION = '2026-09-07';
 const CURRENT_TERMS_DIGEST = 'c64719e2665f129dcb76fdca3d22dfe0f01e91638f70a631095b3d21dd519079';
+const UNDERWRITING_METRIC_RULES = {
+  hardCostMultifamily: [100, 1000], hardCostMixedUse: [100, 1000], hardCostCondoTH: [100, 1000], hardCostNewHouse: [100, 1000],
+  baseSoftCostPct: [5, 45], contingencyPct: [0, 25], loanToCostPct: [0, 90], interestRatePct: [0, 20],
+  constructionMonths: [1, 120], amortizationYears: [1, 50], vacancyPct: [0, 30], expenseRatioPct: [5, 70],
+  rentGrowthPct: [-10, 12], exitCapSpreadBps: [-100, 200], exitCostPct: [0, 20], marketRentPerSfMonthly: [0, 30],
+  resalePricePerSf: [0, 5000], imputedLandPerDoorMarket: [0, 2000000], imputedHouseLandPerLotSf: [0, 2000],
+};
+
+function sanitizeUnderwritingSettings(input = {}) {
+  return Object.fromEntries(Object.entries(UNDERWRITING_METRIC_RULES).flatMap(([key, [min, max]]) => {
+    const value = Number(input?.[key]);
+    return Number.isFinite(value) ? [[key, Math.max(min, Math.min(max, value))]] : [];
+  }));
+}
 
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
@@ -252,11 +266,30 @@ authRouter.get('/me', async (req, res, next) => {
       access,
       unlockedSiteIds,
       savedSiteIds: saved?.map(s => s.site_id) ?? [],
+      underwritingSettings: sanitizeUnderwritingSettings(user.user_metadata?.underwriting_settings || {}),
       terms: {
         currentVersion: CURRENT_TERMS_VERSION,
         accepted: !!termsAcceptance,
         acceptedAt: termsAcceptance?.accepted_at || null,
       },
+    });
+  } catch (err) { next(err); }
+});
+
+authRouter.put('/settings', requireAuth, async (req, res, next) => {
+  try {
+    const underwritingSettings = sanitizeUnderwritingSettings(req.body?.underwritingSettings || {});
+    const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const { data, error } = await sb.auth.admin.updateUserById(req.user.id, {
+      user_metadata: {
+        ...(req.user.user_metadata || {}),
+        underwriting_settings: underwritingSettings,
+      },
+    });
+    if (error) throw error;
+    res.json({
+      saved: true,
+      underwritingSettings: sanitizeUnderwritingSettings(data.user?.user_metadata?.underwriting_settings || underwritingSettings),
     });
   } catch (err) { next(err); }
 });

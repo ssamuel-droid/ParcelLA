@@ -316,10 +316,12 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     const landValue = money(costs.land || site.landBasis || site.askPrice || 0);
     const hardCostValue = money(costs.hardCosts || 0);
     const softCostValue = money(costs.softCosts || 0);
-    const preCarryValue = landValue + hardCostValue + softCostValue;
+    const contingencyValue = money(costs.contingency || 0);
+    const preCarryValue = landValue + hardCostValue + softCostValue + contingencyValue;
     const carryCostValue = money(costs.carryCost || 0);
     const hardPsfValue = totalSfValue ? num(assumptions.hardCostPerSf ?? (hardCostValue / totalSfValue), 0) : num(assumptions.hardCostPerSf || costs.hardPerSf, 0);
     const softPctValue = hardCostValue ? num(assumptions.softCostPct ?? (softCostValue / hardCostValue), 0) : pct(assumptions.softCostPct || 0);
+    const contingencyPctValue = hardCostValue ? num(assumptions.contingencyPct ?? (contingencyValue / hardCostValue), 0) : pct(assumptions.contingencyPct || 0);
     const carryPctValue = preCarryValue ? num(assumptions.carryPct ?? (carryCostValue / preCarryValue), 0) : 0;
     const rentPremiumValue = pct(assumptions.rentPremiumPct);
     const summaryWs = wb.addWorksheet('Summary');
@@ -344,15 +346,19 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     A.totalSf = ref('Assumptions', totalSfRow.number, 2);
     addAssumption('land', 'Land basis / acquisition price', landValue, FMT.money, text(site.landSource || assumptions.landSource || 'Asking price or imputed off-market land value.'));
     addAssumption('hardPsf', 'Hard cost / SF', hardPsfValue, FMT.money, 'Exact model input; formatted dollars may round on screen.');
-    addAssumption('softPct', 'Soft costs / hard costs', softPctValue, FMT.pct, 'A&E, permits, fees, contingency, developer fee.');
+    addAssumption('softPct', 'Soft costs / hard costs', softPctValue, FMT.pct, 'A&E, permits, fees, legal, and developer fee.');
+    addAssumption('contingencyPct', 'Contingency / hard costs', contingencyPctValue, FMT.pct, 'Construction contingency held separately from soft costs.');
     addAssumption('months', 'Construction months', num(assumptions.constructionMonths || costs.months || 18), FMT.whole, 'Used to size financing carry.');
     addAssumption('ltc', 'Loan-to-cost', pct(assumptions.loanToCostPct), FMT.pct, 'Debt sizing assumption.');
-    addAssumption('rate', 'Interest rate', pct(assumptions.interestRatePct), FMT.pct, isHouse ? 'Construction-loan interest and financing carry.' : 'Interest-only debt service and carry.');
+    addAssumption('rate', 'Interest rate', pct(assumptions.interestRatePct), FMT.pct, isHouse ? 'Construction-loan interest and financing carry.' : 'Interest rate used for permanent debt service and carry.');
+    addAssumption('amortization', 'Permanent amortization years', num(assumptions.amortizationYears || 30), FMT.whole, 'Used to calculate stabilized annual debt service.');
+    addAssumption('exitCostPct', 'Disposition / sale costs', pct(assumptions.exitCostPct), FMT.pct, 'Deducted from gross exit value.');
     addAssumption('carryPct', 'Financing carry / pre-carry cost', carryPctValue, FMT.pct, 'Derived from current site model so the budget ties to the app; edit to stress-test carry.');
     if (isHouse) {
       addAssumption('resalePsf', 'Completed-home sale price / building SF', num(assumptions.resalePricePerSf || appraisal.weightedPsf || valuation.exitValueMetricValue), FMT.money, text(assumptions.resalePricePerSfSource || appraisal.valuationSource || 'Recent local completed-home sales; neighborhood benchmark only when comps are unavailable.'));
     } else {
       addAssumption('vacancy', 'Vacancy / credit loss', pct(assumptions.vacancyPct), FMT.pct, 'Applied to gross potential rent.');
+      addAssumption('rentPsf', 'Market rent override / SF / month', num(assumptions.marketRentPerSfMonthly || 0), FMT.money, 'Zero means use the project rent roll and comparable market evidence.');
       addAssumption('expenseRatio', 'Operating expenses / EGI', pct(assumptions.expenseRatioPct), FMT.pct, 'Stabilized operating expense ratio.');
       addAssumption('rentGrowth', 'Annual rent growth', pct(assumptions.rentGrowthPct), FMT.pct, 'Used for year-5 NOI.');
       addAssumption('entryCap', 'Entry cap rate', pct(assumptions.entryCap || valuation.entryCap || appraisal.entryCap), FMT.pct2, 'Driven by scored sales comps when available.');
@@ -543,9 +549,10 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
     budgetRow('land', 'Land basis', `${A.land}`, costs.land, text(site.landSource || assumptions.landSource || 'Land basis'));
     budgetRow('hard', 'Hard costs', `${A.totalSf}*${A.hardPsf}`, costs.hardCosts, 'Direct construction: framing, HVAC, plumbing, electrical, etc.');
     budgetRow('soft', 'Soft costs', `${budgetRefs.hard}*${A.softPct}`, costs.softCosts, 'Soft costs as a percentage of hard costs.');
-    budgetRow('preCarry', 'Subtotal before carry', `${budgetRefs.land}+${budgetRefs.hard}+${budgetRefs.soft}`, num(costs.land) + num(costs.hardCosts) + num(costs.softCosts), 'Land + hard + soft costs.', 'section');
+    budgetRow('contingency', 'Contingency', `${budgetRefs.hard}*${A.contingencyPct}`, costs.contingency, 'Construction contingency as a percentage of hard costs.');
+    budgetRow('preCarry', 'Subtotal before carry', `${budgetRefs.land}+${budgetRefs.hard}+${budgetRefs.soft}+${budgetRefs.contingency}`, num(costs.land) + num(costs.hardCosts) + num(costs.softCosts) + num(costs.contingency), 'Land + hard + soft costs + contingency.', 'section');
     budgetRow('carry', 'Financing carry', `${budgetRefs.preCarry}*${A.carryPct}`, costs.carryCost, 'Explicit carry load from the app model; adjust the carry assumption to stress-test timing/rates.');
-    const totalCostRow = budgetRow('total', 'Total project cost', `${budgetRefs.land}+${budgetRefs.hard}+${budgetRefs.soft}+${budgetRefs.carry}`, costs.totalCost, 'Formula total underwriting basis.', 'total');
+    const totalCostRow = budgetRow('total', 'Total project cost', `${budgetRefs.land}+${budgetRefs.hard}+${budgetRefs.soft}+${budgetRefs.contingency}+${budgetRefs.carry}`, costs.totalCost, 'Formula total underwriting basis.', 'total');
     constructionWs.getCell(`E${totalCostRow}`).value = 1;
     constructionWs.getCell(`E${totalCostRow}`).numFmt = FMT.pct;
     budgetRow('loan', 'Loan amount', `${budgetRefs.total}*${A.ltc}`, num(costs.totalCost) * pct(assumptions.loanToCostPct), 'Formula: total cost x loan-to-cost.');
@@ -564,10 +571,12 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       writeRow(incomeWs, ['Completed home building SF', formula(`${A.totalSf}`, totalSfValue, FMT.whole), 'Permit/source building area.']);
       writeRow(incomeWs, ['Comp-derived resale value / SF', formula(`${A.resalePsf}`, money(assumptions.resalePricePerSf || appraisal.weightedPsf), FMT.money), 'Recent comparable completed-home sales.']);
       writeRow(incomeWs, ['Estimated completed-home value', formula(`${A.totalSf}*${A.resalePsf}`, money(valuation.exitValue), FMT.money), 'Building SF x comp-derived resale $/SF.'], 'total');
+      writeRow(incomeWs, ['Disposition / sale costs', formula(`B5*${A.exitCostPct}`, money(valuation.dispositionCosts), FMT.money), 'Gross completed value x sale-cost assumption.']);
+      writeRow(incomeWs, ['Net sale proceeds', formula('B5-B6', money(valuation.netSaleProceeds), FMT.money), 'Gross value less sale costs.'], 'total');
       writeRow(incomeWs, ['Total project cost', formula(`${budgetRefs.total}`, money(costs.totalCost), FMT.money), 'Construction Budget tab.']);
-      writeRow(incomeWs, ['Net profit / gap', formula(`B5-B6`, money(valuation.netProfit), FMT.money), 'Completed-home value less total project cost.'], 'total');
-      writeRow(incomeWs, ['Gross margin', formula('IFERROR(B7/B5,0)', pct(valuation.grossMarginPct), FMT.pct), 'Net profit / completed-home value.']);
-      writeRow(incomeWs, ['Return on cost', formula('IFERROR(B7/B6,0)', pct(valuation.returnOnCost), FMT.pct), 'Net profit / total project cost.']);
+      writeRow(incomeWs, ['Net profit / gap', formula('B7-B8', money(valuation.netProfit), FMT.money), 'Net sale proceeds less total project cost.'], 'total');
+      writeRow(incomeWs, ['Gross margin', formula('IFERROR(B9/B5,0)', pct(valuation.grossMarginPct), FMT.pct), 'Net profit / completed-home value.']);
+      writeRow(incomeWs, ['Return on cost', formula('IFERROR(B9/B8,0)', pct(valuation.returnOnCost), FMT.pct), 'Net profit / total project cost.']);
       writeRow(incomeWs, ['Valuation method', 'Sales comparison - price per building SF', 'Completed building SF x comp-derived resale $/SF.']);
     } else {
       incomeWs = wb.addWorksheet('Income Statement');
@@ -621,8 +630,8 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       ]);
     });
     incRow('noi', 'Net operating income', `${I.egi}-${I.opex}`, income.noi, `IFERROR(B${incomeWs.rowCount + 1}/${I.egi},0)`, 'Formula: EGI less total operating expenses.', 'total');
-    incRow('debt', 'Debt service', `${budgetRefs.loan}*${A.rate}`, income.debtService, '', 'Formula: loan amount x interest rate.');
-    incRow('cfbt', 'Cash flow before tax', `${I.noi}-${I.debt}`, income.cfbt, '', 'NOI less annual interest-only debt service.', 'total');
+    incRow('debt', 'Debt service', `-PMT(${A.rate}/12,${A.amortization}*12,${budgetRefs.loan})*12`, income.debtService, '', 'Annual amortizing debt service.');
+    incRow('cfbt', 'Cash flow before tax', `${I.noi}-${I.debt}`, income.cfbt, '', 'NOI less annual debt service.', 'total');
     const egiValue = num(income.effectiveGrossIncome, 0);
     const pctResult = key => {
       if (key === 'egi') return 1;
@@ -663,8 +672,10 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       valRow('homeSf', 'Completed home building SF', `${A.totalSf}`, totalSfValue, FMT.whole, text(site.buildingSfSource || 'Permit/source data.'));
       valRow('resalePsf', 'Comp-derived resale value / SF', `${A.resalePsf}`, money(assumptions.resalePricePerSf || appraisal.weightedPsf), FMT.money, text(appraisal.valuationSource || assumptions.resalePricePerSfSource));
       valRow('exitValue', 'Estimated completed-home value', `${V.homeSf}*${V.resalePsf}`, money(valuation.exitValue), FMT.money, 'Completed home building SF x comp-derived sale price / SF.', 'total');
+      valRow('dispositionCosts', 'Disposition / sale costs', `${V.exitValue}*${A.exitCostPct}`, money(valuation.dispositionCosts), FMT.money, 'Gross completed value x sale-cost assumption.');
+      valRow('netSaleProceeds', 'Net sale proceeds', `${V.exitValue}-${V.dispositionCosts}`, money(valuation.netSaleProceeds), FMT.money, 'Gross value less sale costs.', 'total');
       valRow('totalCost', 'Total project cost', `${budgetRefs.total}`, money(costs.totalCost), FMT.money, 'From construction budget.');
-      valRow('netProfit', 'Net profit / gap', `${V.exitValue}-${V.totalCost}`, money(valuation.netProfit), FMT.money, 'Completed-home value less total cost.', 'total');
+      valRow('netProfit', 'Net profit / gap', `${V.netSaleProceeds}-${V.totalCost}`, money(valuation.netProfit), FMT.money, 'Net sale proceeds less total cost.', 'total');
       valRow('grossMargin', 'Gross margin', `IFERROR(${V.netProfit}/${V.exitValue},0)`, pct(valuation.grossMarginPct), FMT.pct, 'Net profit / completed-home value.');
       valRow('returnOnCost', 'Return on cost', `IFERROR(${V.netProfit}/${V.totalCost},0)`, pct(valuation.returnOnCost), FMT.pct, 'Net profit / total project cost.');
       V.devSpread = V.returnOnCost;
@@ -676,10 +687,12 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       valRow('year5Noi', 'Year 5 NOI', `${V.noi}*(1+${A.rentGrowth})^4`, money(valuation.year5Noi), FMT.money, 'NOI grown for four years.');
       valRow('stabilizedValue', 'Stabilized value at entry cap', `IFERROR(${V.noi}/${V.entryCap},0)`, money(num(income.noi) / Math.max(0.0001, pct(valuation.entryCap || appraisal.entryCap))), FMT.money, 'NOI / entry cap.');
       valRow('exitValue', 'Exit value', `IFERROR(${V.year5Noi}/${V.exitCap},0)`, money(valuation.exitValue), FMT.money, 'Year 5 NOI / exit cap.', 'total');
+      valRow('dispositionCosts', 'Disposition costs', `${V.exitValue}*${A.exitCostPct}`, money(valuation.dispositionCosts), FMT.money, 'Gross exit value x disposition-cost assumption.');
+      valRow('netSaleProceeds', 'Net sale proceeds', `${V.exitValue}-${V.dispositionCosts}`, money(valuation.netSaleProceeds), FMT.money, 'Gross exit value less disposition costs.', 'total');
       valRow('totalCost', 'Total project cost', `${budgetRefs.total}`, money(costs.totalCost), FMT.money, 'From construction budget.');
-      valRow('netProfit', 'Net profit / gap', `${V.exitValue}-${V.totalCost}`, money(valuation.netProfit), FMT.money, 'Exit value less total cost.', 'total');
+      valRow('netProfit', 'Net profit / gap', `${V.netSaleProceeds}-${V.totalCost}`, money(valuation.netProfit), FMT.money, 'Net sale proceeds less total cost.', 'total');
       valRow('capOnCost', 'Cap on cost', `IFERROR(${V.noi}/${V.totalCost},0)`, pctPoints(valuation.capOnCost), FMT.pct, 'NOI / total project cost.');
-      valRow('devSpread', 'Development spread', `IFERROR(${V.exitValue}/${V.totalCost}-1,0)`, pct(valuation.devSpreadPct), FMT.pct, 'Exit value / total cost - 1.');
+      valRow('devSpread', 'Development spread', `IFERROR(${V.netSaleProceeds}/${V.totalCost}-1,0)`, pct(valuation.devSpreadPct), FMT.pct, 'Net sale proceeds / total cost - 1.');
       valRow('leveredIrr', 'Levered IRR', `IFERROR(IRR(${rangeRef('Cash Flow', 6, 2, 6, 7)}),0)`, pctPoints(valuation.leveragedIRR), FMT.pct, 'Formula references Cash Flow tab.');
     }
 
@@ -689,15 +702,15 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       writeRow(cashWs, ['SFR Equity Cash Flow', siteName], 'title');
       writeRow(cashWs, ['Date', cell(new Date(generated), FMT.date), formula(`EDATE(B2,${A.months})`, new Date(), FMT.date), 'Construction period uses the editable months assumption.'], 'header');
       writeRow(cashWs, ['Event', 'Initial equity', 'Completed-home sale', 'Financing carry is already included in total project cost.']);
-      writeRow(cashWs, ['Net sale proceeds', '', formula(`${V.exitValue}-${budgetRefs.loan}`, money(num(valuation.exitValue) - num(costs.totalCost) * pct(assumptions.loanToCostPct)), FMT.money), 'Sale value less construction loan repayment.']);
-      writeRow(cashWs, ['Equity cash flow', formula(`-${budgetRefs.equity}`, -money(num(costs.totalCost) * (1 - pct(assumptions.loanToCostPct))), FMT.money), formula('C4', money(num(valuation.exitValue) - num(costs.totalCost) * pct(assumptions.loanToCostPct)), FMT.money), 'Used by XIRR on the Valuation tab.'], 'total');
+      writeRow(cashWs, ['Net sale proceeds', '', formula(`${V.netSaleProceeds}-${budgetRefs.loan}`, money(num(valuation.netSaleProceeds) - num(costs.totalCost) * pct(assumptions.loanToCostPct)), FMT.money), 'Net sale proceeds less construction loan repayment.']);
+      writeRow(cashWs, ['Equity cash flow', formula(`-${budgetRefs.equity}`, -money(num(costs.totalCost) * (1 - pct(assumptions.loanToCostPct))), FMT.money), formula('C4', money(num(valuation.netSaleProceeds) - num(costs.totalCost) * pct(assumptions.loanToCostPct)), FMT.money), 'Used by XIRR on the Valuation tab.'], 'total');
     } else {
       setupSheet(cashWs, [22, 14, 14, 14, 14, 14, 14]);
       writeRow(cashWs, ['Cash Flow', siteName], 'title');
       writeRow(cashWs, ['Year', 0, 1, 2, 3, 4, 5], 'header');
       writeRow(cashWs, ['NOI', '', formula(`${I.noi}`, money(income.noi), FMT.money), formula(`${I.noi}*(1+${A.rentGrowth})`, money(income.noi), FMT.money), formula(`${I.noi}*(1+${A.rentGrowth})^2`, money(income.noi), FMT.money), formula(`${I.noi}*(1+${A.rentGrowth})^3`, money(income.noi), FMT.money), formula(`${V.year5Noi}`, money(valuation.year5Noi), FMT.money)]);
       writeRow(cashWs, ['Debt service', '', formula(`${I.debt}`, money(income.debtService), FMT.money), formula(`${I.debt}`, money(income.debtService), FMT.money), formula(`${I.debt}`, money(income.debtService), FMT.money), formula(`${I.debt}`, money(income.debtService), FMT.money), formula(`${I.debt}`, money(income.debtService), FMT.money)]);
-      writeRow(cashWs, ['Sale proceeds', '', '', '', '', '', formula(`${V.exitValue}-${budgetRefs.loan}`, money(num(valuation.exitValue) - num(costs.totalCost) * pct(assumptions.loanToCostPct)), FMT.money)]);
+      writeRow(cashWs, ['Sale proceeds', '', '', '', '', '', formula(`${V.netSaleProceeds}-${budgetRefs.loan}`, money(num(valuation.netSaleProceeds) - num(costs.totalCost) * pct(assumptions.loanToCostPct)), FMT.money)]);
       writeRow(cashWs, ['Total cash flow', formula(`-${budgetRefs.equity}`, -money(num(costs.totalCost) * (1 - pct(assumptions.loanToCostPct))), FMT.money), formula('C3-C4', 0, FMT.money), formula('D3-D4', 0, FMT.money), formula('E3-E4', 0, FMT.money), formula('F3-F4', 0, FMT.money), formula('G3-G4+G5', 0, FMT.money)], 'total');
     }
 
@@ -716,9 +729,9 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
           cell(pct(row.softPct), FMT.pct),
           cell(num(row.months, 18), FMT.whole),
           formula(`${A.resalePsf}`, money(assumptions.resalePricePerSf || appraisal.weightedPsf), FMT.money),
-          formula(`${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r}+(${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r})*${A.ltc}*${A.rate}*D${r}/12`, money(row.totalCost), FMT.money),
+          formula(`${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r}+(${A.totalSf}*B${r})*${A.contingencyPct}+(${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r}+(${A.totalSf}*B${r})*${A.contingencyPct})*${A.ltc}*${A.rate}*D${r}/12`, money(row.totalCost), FMT.money),
           formula(`${A.totalSf}*E${r}`, money(row.exitValue), FMT.money),
-          formula(`G${r}-F${r}`, money(row.netProfit), FMT.money),
+          formula(`G${r}*(1-${A.exitCostPct})-F${r}`, money(row.netProfit), FMT.money),
           formula(`IFERROR(F${r}/${A.totalSf},0)`, money(num(row.totalCost) / Math.max(1, totalSfValue)), FMT.money),
           formula(`IFERROR(H${r}/F${r},0)`, pct(num(row.netProfit) / Math.max(1, num(row.totalCost))), FMT.pct),
           formula(`IFERROR(H${r}/G${r},0)`, pct(num(row.netProfit) / Math.max(1, num(row.exitValue))), FMT.pct),
@@ -731,10 +744,10 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
           cell(pct(row.softPct), FMT.pct),
           cell(num(row.months, 18), FMT.whole),
           cell(pct(row.rentPremiumPct), FMT.pct),
-          formula(`${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r}+(${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r})*${A.ltc}*${A.rate}*D${r}/12`, money(row.totalCost), FMT.money),
+          formula(`${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r}+(${A.totalSf}*B${r})*${A.contingencyPct}+(${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r}+(${A.totalSf}*B${r})*${A.contingencyPct})*${A.ltc}*${A.rate}*D${r}/12`, money(row.totalCost), FMT.money),
           formula(`((${rentAnnualRef}*(1+E${r}))*(1-${A.vacancy})+${A.units}*${A.otherIncomeUnit})*(1-${A.expenseRatio})`, money(row.noi), FMT.money),
           formula(`IFERROR((G${r}*(1+${A.rentGrowth})^4)/${A.exitCap},0)`, money(row.exitValue), FMT.money),
-          formula(`H${r}-F${r}`, money(row.netProfit), FMT.money),
+          formula(`H${r}*(1-${A.exitCostPct})-F${r}`, money(row.netProfit), FMT.money),
           formula(`IFERROR(F${r}/${A.units},0)`, money(row.costPerUnit), FMT.money),
           formula(`IFERROR(G${r}/F${r},0)`, pctPoints(row.capOnCost), FMT.pct),
           text(row.note),
@@ -837,7 +850,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       writeRow(summaryWs, ['NOI', formula(`${V.noi}`, money(income.noi), FMT.money), 'Income Statement tab']);
     }
     writeRow(summaryWs, ['Exit value', formula(`${V.exitValue}`, money(valuation.exitValue), FMT.money), 'Valuation tab']);
-    writeRow(summaryWs, ['Net profit / gap', formula(`${V.netProfit}`, money(valuation.netProfit), FMT.money), 'Exit value less total project cost.'], 'total');
+    writeRow(summaryWs, ['Net profit / gap', formula(`${V.netProfit}`, money(valuation.netProfit), FMT.money), 'Net sale proceeds less total project cost.'], 'total');
     writeRow(summaryWs, ['Levered IRR', formula(`${V.leveredIrr}`, pctPoints(valuation.leveragedIRR), FMT.pct), 'Cash Flow tab']);
     if (isHouse) {
       writeRow(summaryWs, ['Gross margin', formula(`${V.grossMargin}`, pct(valuation.grossMarginPct), FMT.pct), 'Net profit / completed-home value']);

@@ -360,6 +360,17 @@ function valueAmount(value) {
 
 function houseExitValueForSite(s) {
   if (!isHouseSite(s)) return null;
+  const customPsf = Number(currentUserMetrics().resalePricePerSf || 0);
+  const customSf = siteBuildingSf(s);
+  if (customPsf > 0 && customSf > 0) {
+    return {
+      value: Math.round(customSf * customPsf),
+      source: 'User resale price / SF setting',
+      formula: `${Math.round(customSf).toLocaleString()} building SF x ${fmtD(customPsf)}/SF`,
+      metricValue: customPsf,
+      basisQuantity: Math.round(customSf),
+    };
+  }
   const localBenchmark = houseCompBenchmarks.get(siteNeighborhood(s));
   if (localBenchmark?.psf > 0) {
     const sf = siteBuildingSf(s);
@@ -786,12 +797,18 @@ const DEFAULT_USER_METRICS = {
   hardCostCondoTH:340,
   hardCostNewHouse:275,
   baseSoftCostPct:18,
+  contingencyPct:5,
   loanToCostPct:65,
   interestRatePct:6.5,
+  constructionMonths:18,
+  amortizationYears:30,
   vacancyPct:5,
   expenseRatioPct:35,
   rentGrowthPct:3,
   exitCapSpreadBps:25,
+  exitCostPct:2,
+  marketRentPerSfMonthly:0,
+  resalePricePerSf:0,
   imputedLandPerDoorMarket:100000,
   imputedHouseLandPerLotSf:100,
 };
@@ -986,6 +1003,7 @@ async function refreshAccount() {
       termsAccepted: false,
       terms: { currentVersion: TERMS_VERSION, accepted: false, acceptedAt: null },
     };
+    userMetrics = loadUserMetrics();
     renderAuthUI();
     renderExperience();
     return;
@@ -1000,6 +1018,7 @@ async function refreshAccount() {
       termsAccepted: authConfig?.termsVersion ? data.terms?.accepted === true : true,
       terms: data.terms || { currentVersion: TERMS_VERSION, accepted: false, acceptedAt: null },
     };
+    applyAccountUnderwritingSettings(data.underwritingSettings, data.user?.id);
     if (!accountState.termsAccepted && pendingTermsAcceptance()) {
       await persistTermsAcceptance(false);
     }
@@ -1012,6 +1031,7 @@ async function refreshAccount() {
       termsAccepted: false,
       terms: { currentVersion: TERMS_VERSION, accepted: false, acceptedAt: null },
     };
+    userMetrics = loadUserMetrics();
   }
   renderAuthUI();
   renderExperience();
@@ -1411,7 +1431,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
     </header>
     <form class="feasibility-form" id="feasibility-form" onsubmit="runFeasibility(event)">
       <label class="feasibility-address"><span>Property address</span><input id="fz-address" required autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="fz-address-suggestions" placeholder="Start typing a Los Angeles or Santa Ana address"><div class="fz-address-suggestions" id="fz-address-suggestions" role="listbox" hidden></div></label>
-      <label><span>Proposed use</span><select id="fz-use" required><option value="apartment">Apartments</option><option value="mixed_use">Mixed-use</option><option value="condo">Condominiums</option><option value="townhome">Townhomes</option><option value="single_family">Single-family homes</option><option value="industrial">Industrial / warehouse</option><option value="light_manufacturing">Light manufacturing</option><option value="office">Office</option><option value="retail">Retail</option><option value="hotel">Hotel</option></select></label>
+      <label><span>Proposed use</span><select id="fz-use" required onchange="syncFeasibilityUseDefaults()"><option value="apartment">Apartments</option><option value="mixed_use">Mixed-use</option><option value="condo">Condominiums</option><option value="townhome">Townhomes</option><option value="single_family">Single-family homes</option><option value="industrial">Industrial / warehouse</option><option value="light_manufacturing">Light manufacturing</option><option value="office">Office</option><option value="retail">Retail</option><option value="hotel">Hotel</option></select></label>
       <label><span>Acquisition price</span><div class="feasibility-money"><b>$</b><input id="fz-price" type="number" min="0" step="10000" placeholder="Optional"></div></label>
       <button class="feasibility-run" type="submit">Run feasibility</button>
       <button class="feasibility-advanced-toggle" type="button" onclick="toggleFeasibilityAdvanced()">Underwriting assumptions</button>
@@ -1432,6 +1452,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <label><span>Construction period</span><div class="feasibility-money"><input id="fz-months" type="number" min="1" max="120" step="1" placeholder="18"><b>mo</b></div></label>
         <label><span>Permanent amortization</span><div class="feasibility-money"><input id="fz-amortization" type="number" min="1" max="50" step="1" placeholder="30"><b>yr</b></div></label>
         <label><span>Sale / disposition costs</span><div class="feasibility-money"><input id="fz-exit-cost" type="number" min="0" max="20" step="0.5" placeholder="2"><b>%</b></div></label>
+        <button class="feasibility-advanced-toggle" type="button" onclick="saveFeasibilityDefaults()">Save as my defaults</button>
       </div>
     </form>
     <main class="feasibility-body" id="feasibility-body">
@@ -1452,21 +1473,28 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <div class="setfield income-setting"><label>Condo / TH hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-cn" step="5"></div></div>
         <div class="setfield"><label>New house hard cost / SF</label><div class="mfr"><span>$</span><input type="number" id="set-hc-nh" step="5"></div></div>
         <div class="setfield"><label>Soft costs / hard costs</label><div class="mfr"><input type="number" id="set-soft" step="0.5"><span>%</span></div></div>
+        <div class="setfield"><label>Contingency / hard costs</label><div class="mfr"><input type="number" id="set-contingency" step="0.5"><span>%</span></div></div>
         <div class="setfield"><label>Loan-to-cost</label><div class="mfr"><input type="number" id="set-ltc" step="1"><span>%</span></div></div>
         <div class="setfield"><label>Interest rate</label><div class="mfr"><input type="number" id="set-rate" step="0.1"><span>%</span></div></div>
+        <div class="setfield"><label>Construction period</label><div class="mfr"><input type="number" id="set-months" step="1"><span>months</span></div></div>
+        <div class="setfield income-setting"><label>Permanent amortization</label><div class="mfr"><input type="number" id="set-amortization" step="1"><span>years</span></div></div>
         <div class="setfield income-setting"><label>Vacancy</label><div class="mfr"><input type="number" id="set-vacancy" step="0.5"><span>%</span></div></div>
         <div class="setfield income-setting"><label>Operating expenses / EGI</label><div class="mfr"><input type="number" id="set-expense" step="0.5"><span>%</span></div></div>
         <div class="setfield income-setting"><label>Annual rent growth</label><div class="mfr"><input type="number" id="set-growth" step="0.25"><span>%</span></div></div>
         <div class="setfield income-setting"><label>Exit cap spread</label><div class="mfr"><input type="number" id="set-exit-spread" step="5"><span>bps</span></div></div>
+        <div class="setfield"><label>Disposition / sale costs</label><div class="mfr"><input type="number" id="set-exit-cost" step="0.5"><span>%</span></div></div>
+        <div class="setfield income-setting"><label>Market rent override</label><div class="mfr"><span>$</span><input type="number" id="set-rent-psf" step="0.05"><span>/SF/mo</span></div></div>
+        <div class="setfield"><label>Home resale override</label><div class="mfr"><span>$</span><input type="number" id="set-resale-psf" step="5"><span>/SF</span></div></div>
         <div class="setfield income-setting"><label>Apartment land / unit</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-market" step="5000"></div></div>
         <div class="setfield"><label>New house land / lot SF</label><div class="mfr"><span>$</span><input type="number" id="set-land-house-psf" step="5"><span>/SF</span></div></div>
       </div>
-      <div class="setnote" id="settings-note">Apartment land is calculated per unit. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. The top-row hard-cost override still works as a quick one-off stress test.</div>
+      <div class="setnote" id="settings-note">Apartment land is calculated per unit. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. Enter 0 for rent or resale overrides to use market evidence.</div>
+      <div class="setnote" id="settings-save-status">Signed-in users save these assumptions to their ParcelLA account.</div>
     </div>
     <div class="setactions">
       <button class="warn" onclick="resetSettings()">Reset defaults</button>
       <button onclick="closeSettings()">Cancel</button>
-      <button class="primary" onclick="saveSettings()">Save & re-underwrite</button>
+      <button class="primary" id="settings-save" onclick="saveSettings()">Save to account & re-underwrite</button>
     </div>
   </div>
 </div>
@@ -1569,7 +1597,59 @@ function openFeasibility() {
   panel.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';
   initFeasibilityAutocomplete();
+  populateFeasibilityAssumptions();
   setTimeout(() => g('fz-address')?.focus(), 0);
+}
+
+function feasibilityHardCostDefault(use = g('fz-use')?.value) {
+  const m = baseUserMetrics();
+  if (use === 'apartment') return m.hardCostMultifamily;
+  if (use === 'mixed_use') return m.hardCostMixedUse;
+  if (['condo', 'townhome'].includes(use)) return m.hardCostCondoTH;
+  if (use === 'single_family') return m.hardCostNewHouse;
+  return '';
+}
+
+function syncFeasibilityUseDefaults() {
+  const hard = g('fz-hard');
+  if (hard) hard.value = feasibilityHardCostDefault();
+}
+
+function populateFeasibilityAssumptions() {
+  const m = baseUserMetrics();
+  syncFeasibilityUseDefaults();
+  const values = {
+    'fz-rent': m.marketRentPerSfMonthly || '', 'fz-sale-psf': m.resalePricePerSf || '',
+    'fz-vacancy': m.vacancyPct, 'fz-opex': m.expenseRatioPct, 'fz-soft': m.baseSoftCostPct,
+    'fz-contingency': m.contingencyPct, 'fz-ltc': m.loanToCostPct, 'fz-rate': m.interestRatePct,
+    'fz-months': m.constructionMonths, 'fz-amortization': m.amortizationYears, 'fz-exit-cost': m.exitCostPct,
+  };
+  Object.entries(values).forEach(([id, value]) => { if (g(id)) g(id).value = value; });
+}
+
+async function saveFeasibilityDefaults() {
+  const current = baseUserMetrics();
+  const use = g('fz-use')?.value;
+  const hardCost = metricNumber(g('fz-hard')?.value, feasibilityHardCostDefault(use) || current.hardCostMultifamily, 100, 1000);
+  const hardKey = use === 'mixed_use' ? 'hardCostMixedUse' : ['condo', 'townhome'].includes(use) ? 'hardCostCondoTH' : use === 'single_family' ? 'hardCostNewHouse' : use === 'apartment' ? 'hardCostMultifamily' : null;
+  userMetrics = {
+    ...current,
+    ...(hardKey ? { [hardKey]: hardCost } : {}),
+    marketRentPerSfMonthly: metricNumber(g('fz-rent')?.value, current.marketRentPerSfMonthly, 0, 30),
+    resalePricePerSf: metricNumber(g('fz-sale-psf')?.value, current.resalePricePerSf, 0, 5000),
+    vacancyPct: metricNumber(g('fz-vacancy')?.value, current.vacancyPct, 0, 30),
+    expenseRatioPct: metricNumber(g('fz-opex')?.value, current.expenseRatioPct, 5, 70),
+    baseSoftCostPct: metricNumber(g('fz-soft')?.value, current.baseSoftCostPct, 5, 45),
+    contingencyPct: metricNumber(g('fz-contingency')?.value, current.contingencyPct, 0, 25),
+    loanToCostPct: metricNumber(g('fz-ltc')?.value, current.loanToCostPct, 0, 90),
+    interestRatePct: metricNumber(g('fz-rate')?.value, current.interestRatePct, 0, 20),
+    constructionMonths: metricNumber(g('fz-months')?.value, current.constructionMonths, 1, 120),
+    amortizationYears: metricNumber(g('fz-amortization')?.value, current.amortizationYears, 1, 50),
+    exitCostPct: metricNumber(g('fz-exit-cost')?.value, current.exitCostPct, 0, 20),
+  };
+  saveUserMetrics();
+  refreshUnderwritingViews();
+  try { await persistUserMetrics(); } catch {}
 }
 
 function closeFeasibility() {
@@ -1796,9 +1876,21 @@ function planByKey(key) {
   return { key, ...(CONSTRUCTION_PLANS[key] || CONSTRUCTION_PLANS.auto) };
 }
 
-function loadUserMetrics() {
+function userMetricsStorageKey(userId = accountState?.user?.id) {
+  return userId ? `parcella_user_metrics:${userId}` : 'parcella_user_metrics';
+}
+
+function storedUserMetrics(userId = accountState?.user?.id) {
   try {
-    const saved = JSON.parse(localStorage.getItem('parcella_user_metrics') || '{}');
+    return JSON.parse(localStorage.getItem(userMetricsStorageKey(userId)) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function loadUserMetrics(userId = accountState?.user?.id) {
+  try {
+    const saved = storedUserMetrics(userId);
     if (saved.hardCostSfrAdu && !saved.hardCostNewHouse) saved.hardCostNewHouse = saved.hardCostSfrAdu;
     if (Number(saved.imputedLandPerDoorMarket) === 250000) delete saved.imputedLandPerDoorMarket;
     return { ...DEFAULT_USER_METRICS, ...saved };
@@ -1822,7 +1914,21 @@ function currentUserMetrics() {
 }
 
 function saveUserMetrics() {
-  localStorage.setItem('parcella_user_metrics', JSON.stringify(baseUserMetrics()));
+  localStorage.setItem(userMetricsStorageKey(), JSON.stringify(baseUserMetrics()));
+}
+
+async function persistUserMetrics() {
+  if (!authSession?.access_token || !accountState.user) return { saved: false, localOnly: true };
+  const result = await fetchJSONWithTimeout(API + '/api/auth/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ underwritingSettings: baseUserMetrics() }),
+  }, 15000);
+  if (result?.underwritingSettings) {
+    userMetrics = { ...DEFAULT_USER_METRICS, ...result.underwritingSettings };
+    saveUserMetrics();
+  }
+  return result;
 }
 
 function metricNumber(value, fallback, min, max) {
@@ -1853,12 +1959,18 @@ function populateSettingsForm() {
   setSettingsField('set-hc-cn', m.hardCostCondoTH);
   setSettingsField('set-hc-nh', m.hardCostNewHouse);
   setSettingsField('set-soft', m.baseSoftCostPct);
+  setSettingsField('set-contingency', m.contingencyPct);
   setSettingsField('set-ltc', m.loanToCostPct);
   setSettingsField('set-rate', m.interestRatePct);
+  setSettingsField('set-months', m.constructionMonths);
+  setSettingsField('set-amortization', m.amortizationYears);
   setSettingsField('set-vacancy', m.vacancyPct);
   setSettingsField('set-expense', m.expenseRatioPct);
   setSettingsField('set-growth', m.rentGrowthPct);
   setSettingsField('set-exit-spread', m.exitCapSpreadBps);
+  setSettingsField('set-exit-cost', m.exitCostPct);
+  setSettingsField('set-rent-psf', m.marketRentPerSfMonthly);
+  setSettingsField('set-resale-psf', m.resalePricePerSf);
   setSettingsField('set-land-door-market', m.imputedLandPerDoorMarket);
   setSettingsField('set-land-house-psf', m.imputedHouseLandPerLotSf);
 }
@@ -1889,8 +2001,12 @@ function syncUnderwritingModeControls() {
   document.querySelectorAll('.income-setting').forEach(el => { el.hidden = houseOnly; });
   const settingsNote = g('settings-note');
   if (settingsNote) settingsNote.textContent = houseOnly
-    ? 'New-house land is calculated from actual permit lot size. These assumptions update the deal list, detail screen, map hover cards, Excel workbook, and PDF memo.'
-    : 'Apartment land is calculated per unit. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. The top-row hard-cost override still works as a quick one-off stress test.';
+    ? 'New-house land is calculated from actual permit lot size. Enter 0 for the resale override to use recent local sales. These assumptions update the deal list, detail screen, map hover cards, Excel workbook, and PDF memo.'
+    : 'Apartment land is calculated per unit. Enter 0 for rent or resale overrides to use market evidence. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo.';
+  const status = g('settings-save-status');
+  if (status) status.textContent = accountState.user
+    ? 'These assumptions are saved to your ParcelLA account and follow you across devices.'
+    : 'Sign in to save assumptions across devices. They are stored in this browser until then.';
 }
 
 function openSettings() {
@@ -1912,7 +2028,7 @@ function refreshUnderwritingViews() {
   }
 }
 
-function saveSettings() {
+async function saveSettings() {
   const current = baseUserMetrics();
   userMetrics = {
     hardCostMultifamily: metricNumber(g('set-hc-mf')?.value, current.hardCostMultifamily, 100, 1000),
@@ -1920,25 +2036,47 @@ function saveSettings() {
     hardCostCondoTH: metricNumber(g('set-hc-cn')?.value, current.hardCostCondoTH, 100, 1000),
     hardCostNewHouse: metricNumber(g('set-hc-nh')?.value, current.hardCostNewHouse, 100, 1000),
     baseSoftCostPct: metricNumber(g('set-soft')?.value, current.baseSoftCostPct, 5, 45),
+    contingencyPct: metricNumber(g('set-contingency')?.value, current.contingencyPct, 0, 25),
     loanToCostPct: metricNumber(g('set-ltc')?.value, current.loanToCostPct, 0, 90),
     interestRatePct: metricNumber(g('set-rate')?.value, current.interestRatePct, 0, 20),
+    constructionMonths: metricNumber(g('set-months')?.value, current.constructionMonths, 1, 120),
+    amortizationYears: metricNumber(g('set-amortization')?.value, current.amortizationYears, 1, 50),
     vacancyPct: metricNumber(g('set-vacancy')?.value, current.vacancyPct, 0, 30),
     expenseRatioPct: metricNumber(g('set-expense')?.value, current.expenseRatioPct, 5, 70),
     rentGrowthPct: metricNumber(g('set-growth')?.value, current.rentGrowthPct, -10, 12),
     exitCapSpreadBps: metricNumber(g('set-exit-spread')?.value, current.exitCapSpreadBps, -100, 200),
+    exitCostPct: metricNumber(g('set-exit-cost')?.value, current.exitCostPct, 0, 20),
+    marketRentPerSfMonthly: metricNumber(g('set-rent-psf')?.value, current.marketRentPerSfMonthly, 0, 30),
+    resalePricePerSf: metricNumber(g('set-resale-psf')?.value, current.resalePricePerSf, 0, 5000),
     imputedLandPerDoorMarket: metricNumber(g('set-land-door-market')?.value, current.imputedLandPerDoorMarket, 0, 2000000),
     imputedHouseLandPerLotSf: metricNumber(g('set-land-house-psf')?.value, current.imputedHouseLandPerLotSf, 0, 2000),
   };
   saveUserMetrics();
-  closeSettings();
   refreshUnderwritingViews();
+  const status = g('settings-save-status');
+  const button = g('settings-save');
+  if (!accountState.user) {
+    closeSettings();
+    return;
+  }
+  if (status) status.textContent = 'Saving assumptions to your account...';
+  if (button) button.disabled = true;
+  try {
+    await persistUserMetrics();
+    closeSettings();
+  } catch (error) {
+    if (status) status.textContent = 'Saved in this browser, but account sync failed. Please retry.';
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
-function resetSettings() {
+async function resetSettings() {
   userMetrics = { ...DEFAULT_USER_METRICS };
   saveUserMetrics();
   populateSettingsForm();
   refreshUnderwritingViews();
+  try { await persistUserMetrics(); } catch {}
 }
 
 function metricRate(key) {
@@ -2159,6 +2297,15 @@ function loadSiteLotOverrides() {
   } catch {
     return {};
   }
+}
+
+function applyAccountUnderwritingSettings(remoteSettings, userId) {
+  const remote = remoteSettings && typeof remoteSettings === 'object' ? remoteSettings : {};
+  const accountSaved = storedUserMetrics(userId);
+  const legacySaved = storedUserMetrics(null);
+  const selected = Object.keys(remote).length ? remote : Object.keys(accountSaved).length ? accountSaved : legacySaved;
+  userMetrics = { ...DEFAULT_USER_METRICS, ...selected };
+  localStorage.setItem(userMetricsStorageKey(userId), JSON.stringify(userMetrics));
 }
 
 function saveSiteLotOverrides() {
@@ -3589,7 +3736,10 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
   const opexRatio = metricRate('expenseRatioPct') || 0.35;
   const vacancyRate = metricRate('vacancyPct') || 0.05;
   const unitMixGrossRent = grossPotentialRentFromUnitMix(s);
-  const baseGrossPotentialRent = Math.round(unitMixGrossRent || s.grossPotentialRent || (storedNoi ? storedNoi / Math.max(0.01, (1 - opexRatio) * (1 - vacancyRate)) : 0));
+  const customRentPsf = isEd1Site(s) ? 0 : Number(metrics.marketRentPerSfMonthly || 0);
+  const rentableSf = Math.max(0, Number(s.units || 0) * Number(s.usf || 0)) || siteBuildingSf(s);
+  const customGrossRent = customRentPsf > 0 && rentableSf > 0 ? customRentPsf * rentableSf * 12 : 0;
+  const baseGrossPotentialRent = Math.round(customGrossRent || unitMixGrossRent || s.grossPotentialRent || (storedNoi ? storedNoi / Math.max(0.01, (1 - opexRatio) * (1 - vacancyRate)) : 0));
   const rentPremium = appliedRentPremiumForSite(s, plan.rentPremium);
   const grossPotentialRent = Math.round(baseGrossPotentialRent * (1 + rentPremium));
   const vacancyLoss = Math.round(recastIncome ? grossPotentialRent * vacancyRate : (s.vacancyLoss ?? grossPotentialRent * vacancyRate));
@@ -3612,7 +3762,13 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
   const ltc = metricRate('loanToCostPct') || 0.65;
   const interestRate = metricRate('interestRatePct') || 0.065;
   const loanAmount = recastIncome ? debtBase * ltc : (s.loanAmount || debtBase * ltc);
-  const debtService = Math.round(recastIncome ? loanAmount * interestRate : (s.debtService ?? loanAmount * interestRate));
+  const amortizationYears = Math.max(1, Number(metrics.amortizationYears) || 30);
+  const monthlyRate = interestRate / 12;
+  const payments = amortizationYears * 12;
+  const annualDebtService = monthlyRate > 0
+    ? loanAmount * (monthlyRate * (1 + monthlyRate) ** payments) / ((1 + monthlyRate) ** payments - 1) * 12
+    : loanAmount / amortizationYears;
+  const debtService = Math.round(recastIncome ? annualDebtService : (s.debtService ?? annualDebtService));
   return {
     grossPotentialRent,
     vacancyLoss,
@@ -3799,14 +3955,17 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
   const storedHard = Math.round(s.hardCosts || 0);
   const storedHardPsf = totalSF ? Math.round(storedHard / totalSF) : 0;
   const modeledHardPsf = totalSF ? Math.round(modeledHard / totalSF) : 0;
-  const shouldRecastCosts = !!userLand || override || plan.key !== 'auto' || savedMetricsCustomized() || !storedHard || storedHardPsf > modeledHardPsf * 1.2;
+  const shouldRecastCosts = totalSF > 0;
   const shouldRecastCarry = shouldRecastCosts || !!currentInterestRateOverride();
 
   const hardCosts = shouldRecastCosts ? modeledHard : storedHard;
   const softPct = Math.max(0, (metrics.baseSoftCostPct / 100) + ((plan.softPct ?? 0.18) - 0.18));
   const softCosts = shouldRecastCosts ? Math.round(hardCosts * softPct) : Math.round(s.softCosts ?? Math.max(0, ((s.totalCost || 0) - land) * 0.24));
-  const preCarry = land + hardCosts + softCosts;
-  const carryYears = (plan.months || 18) / 12;
+  const contingencyPct = Math.max(0, Number(metrics.contingencyPct || 0) / 100);
+  const contingency = Math.round(hardCosts * contingencyPct);
+  const preCarry = land + hardCosts + softCosts + contingency;
+  const months = plan.key === 'auto' ? Number(metrics.constructionMonths || 18) : Number(plan.months || metrics.constructionMonths || 18);
+  const carryYears = months / 12;
   const ltc = metrics.loanToCostPct / 100;
   const interestRate = metrics.interestRatePct / 100;
   const carryCost = shouldRecastCarry ? Math.round(preCarry * ltc * interestRate * carryYears) : Math.round(s.carryCost ?? preCarry * ltc * interestRate * carryYears);
@@ -3817,6 +3976,7 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
     totalSF,
     hardCosts,
     softCosts,
+    contingency,
     carryCost,
     totalCost,
     hardPerSf: totalSF ? Math.round(hardCosts / totalSF) : 0,
@@ -3828,9 +3988,10 @@ function costModelForSite(s, plan = currentConstructionPlan()) {
     planLabel: plan.label,
     planNote: plan.note,
     softPct,
+    contingencyPct,
     loanToCost: ltc,
     interestRate,
-    months: plan.months || 18,
+    months,
     requestedRentPremium: plan.rentPremium || 0,
     rentPremium: appliedRentPremiumForSite(s, plan.rentPremium || 0),
     storedHardPsf,
@@ -3850,7 +4011,9 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
   const year5Noi = Math.round(noi * Math.pow(1 + rentGrowth, 4));
   const houseExit = houseExitValueForSite(s);
   const exitValue = houseExit?.value || (exitCap ? Math.round(year5Noi / exitCap) : 0);
-  const netProfit = needsLandComp ? null : exitValue - costs.totalCost;
+  const dispositionCosts = Math.round(exitValue * ((Number(metrics.exitCostPct) || 0) / 100));
+  const netSaleProceeds = Math.max(0, exitValue - dispositionCosts);
+  const netProfit = needsLandComp ? null : netSaleProceeds - costs.totalCost;
   const loanAmount = Math.round(costs.totalCost * ((Number(metrics.loanToCostPct) || 0) / 100));
   const equity = Math.max(0, costs.totalCost - loanAmount);
   const debtService = Math.round(income.debtService ?? loanAmount * ((Number(metrics.interestRatePct) || 0) / 100));
@@ -3859,9 +4022,9 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
   if (!needsLandComp && equity > 0) {
     if (house) {
       const holdPeriodYears = Math.max(1, (Number(costs.months) || 18) / 12);
-      const netSaleProceeds = Math.max(0, exitValue - loanAmount);
-      leveragedIRR = netSaleProceeds > 0
-        ? (Math.pow(netSaleProceeds / equity, 1 / holdPeriodYears) - 1) * 100
+      const equitySaleProceeds = Math.max(0, netSaleProceeds - loanAmount);
+      leveragedIRR = equitySaleProceeds > 0
+        ? (Math.pow(equitySaleProceeds / equity, 1 / holdPeriodYears) - 1) * 100
         : -100;
     } else {
       const cashflows = [-equity];
@@ -3869,7 +4032,7 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
         const yearNoi = Math.round(noi * Math.pow(1 + rentGrowth, year - 1));
         cashflows.push(yearNoi - debtService);
       }
-      cashflows.push((year5Noi - debtService) + Math.max(0, exitValue - loanAmount));
+      cashflows.push((year5Noi - debtService) + Math.max(0, netSaleProceeds - loanAmount));
       leveragedIRR = calcIRR(cashflows) * 100;
     }
   }
@@ -3882,15 +4045,17 @@ function valuationForSite(s, costs = costModelForSite(s), income = incomeStateme
     noi,
     year5Noi,
     exitValue,
+    dispositionCosts,
+    netSaleProceeds,
     netProfit,
     loanAmount,
     equity,
     debtService,
     cfbt: Math.round(noi - debtService),
     leveragedIRR,
-    equityMultiple: equity > 0 ? Math.max(0, exitValue - loanAmount) / equity : 0,
+    equityMultiple: equity > 0 ? Math.max(0, netSaleProceeds - loanAmount) / equity : 0,
     capOnCost: house ? null : (costs.totalCost ? Math.round((noi / costs.totalCost) * 10000) / 100 : 0),
-    devSpreadPct: costs.totalCost ? (exitValue - costs.totalCost) / costs.totalCost : 0,
+    devSpreadPct: costs.totalCost ? (netSaleProceeds - costs.totalCost) / costs.totalCost : 0,
     returnOnCost,
     grossMarginPct,
     exitValueSource: houseExit?.source || s.exitValueSource || 'Income cap rate',
@@ -3924,6 +4089,7 @@ function renderDetail(s) {
   const hardCostOverride=currentHardCostOverride();
   const hardCosts=costs.hardCosts;
   const softCosts=costs.softCosts;
+  const contingency=costs.contingency;
   const carryCost=costs.carryCost;
   const hardPerSf=costs.hardPerSf;
   const hardPerUnit=costs.hardPerUnit;
@@ -3947,6 +4113,7 @@ function renderDetail(s) {
     [land,'#0f1f3d','Land'+(offMarket?' (imputed)':'')],
     [hardCosts,'#378add','Hard costs'],
     [softCosts,'#1d9e75','Soft costs'],
+    [contingency,'#7b61a8','Contingency'],
     [carryCost,'#ef9f27','Financing carry'],
   ].filter(x=>x[0]>0);
 
@@ -3979,7 +4146,7 @@ function renderDetail(s) {
         profitKpiEl.textContent = compValuation.needsLandComp ? compMissingBasisLabel : fmtM(compProfit);
         profitKpiEl.style.color = compValuation.needsLandComp ? '#b98b2f' : compProfitColor;
       }
-      if (profitSupportEl) profitSupportEl.textContent = compValuation.needsLandComp ? 'land basis required' : 'exit minus all-in cost';
+      if (profitSupportEl) profitSupportEl.textContent = compValuation.needsLandComp ? 'land basis required' : 'net sale proceeds minus all-in cost';
       if (irrKpiEl) {
         irrKpiEl.textContent = compValuation.needsLandComp || compValuation.leveragedIRR === null ? 'n/a' : `${Math.round(compIrr * 10) / 10}%`;
         irrKpiEl.style.color = compValuation.needsLandComp ? '#b98b2f' : irrC(compIrr);
@@ -4015,6 +4182,7 @@ function renderDetail(s) {
       <button type="button" onclick="applyHouseLotOverride(${s.id})">Use lot SF</button>
       ${lotOverrideForSite(s) ? `<button type="button" class="clear" onclick="clearHouseLotOverride(${s.id})">Clear</button>` : ''}
     </div>` : ''}
+    <button class="ab" onclick="openSettings()">Edit underwriting assumptions</button>
     <button class="ab as" onclick="toggleWatch(${s.id}, event)">${isWatched(s.id)?'Remove from watchlist':'Save to watchlist'}</button>
     <div class="sh">Parcels</div>
     <div class="ownerbox">
@@ -4029,7 +4197,7 @@ function renderDetail(s) {
     ${renderMapPanel(s)}
     <div class="sh">Returns</div>
     <div class="mbg">
-      <div class="mb" style="border-left-color:${valuation.needsLandComp?'#b98b2f':pc}"><div class="mbl">Net profit</div><div class="mbv" id="profit-kpi-${s.id}" style="color:${valuation.needsLandComp?'#b98b2f':pc}">${valuation.needsLandComp?missingBasisLabel:fmtM(prof)}</div><div class="mbs" id="profit-kpi-support-${s.id}">${valuation.needsLandComp?'land basis required':'exit minus all-in cost'}</div></div>
+      <div class="mb" style="border-left-color:${valuation.needsLandComp?'#b98b2f':pc}"><div class="mbl">Net profit</div><div class="mbv" id="profit-kpi-${s.id}" style="color:${valuation.needsLandComp?'#b98b2f':pc}">${valuation.needsLandComp?missingBasisLabel:fmtM(prof)}</div><div class="mbs" id="profit-kpi-support-${s.id}">${valuation.needsLandComp?'land basis required':'net sale proceeds minus all-in cost'}</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Annualized IRR' : 'IRR (5-yr)'}</div><div class="mbv" id="irr-kpi-${s.id}" style="color:${ic}">${valuation.needsLandComp?'n/a':Math.round(irr*10)/10 + '%'}</div><div class="mbs" id="irr-kpi-support-${s.id}">${house ? `${costs.months || 18}-month build and sale` : irrL(irr)}</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Gross margin' : 'Cap on cost'}</div><div class="mbv" ${house ? `id="gross-kpi-${s.id}"` : ''}>${valuation.needsLandComp?'n/a':(house ? ((valuation.grossMarginPct || 0) * 100).toFixed(1) : (valuation.capOnCost || 0)) + '%'}</div><div class="mbs" id="cap-kpi-source-${s.id}">${house ? (valuation.exitValueMetricValue ? fmtD(valuation.exitValueMetricValue) + '/SF resale benchmark' : 'loading local home sales') : 'loading comp cap'}</div></div>
       <div class="mb" style="border-left-color:${ic}"><div class="mbl">${house ? 'Return on cost' : 'Dev spread'}</div><div class="mbv" ${house ? `id="roc-kpi-${s.id}"` : ''}>${valuation.needsLandComp?'n/a':(house ? ((valuation.returnOnCost || 0) * 100).toFixed(1) : spd) + '%'}</div><div class="mbs" id="roc-kpi-support-${s.id}">${valuation.needsLandComp?'land basis required':profitSupportText(prof)}</div></div>
@@ -4049,6 +4217,7 @@ function renderDetail(s) {
       <tr><td>Hard cost / SF</td><td>${fmtD(hardPerSf)}/SF${hardCostOverride?' <span style="color:#b98b2f;font-size:9px">custom input</span>':''}</td></tr>
       <tr><td>Hard cost / ${house ? 'home' : 'unit'}</td><td>${fmtD(hardPerUnit)}/${house ? 'home' : 'unit'}</td></tr>
       <tr><td>Soft costs / hard costs</td><td>${softPctHard}%</td></tr>
+      <tr><td>Contingency</td><td>${fmtD(contingency)} (${Math.round((costs.contingencyPct || 0) * 1000) / 10}% of hard costs)</td></tr>
       <tr><td>Loan / interest assumptions</td><td>${Math.round((costs.loanToCost || 0) * 1000) / 10}% LTC @ ${Math.round((costs.interestRate || 0) * 1000) / 10}%</td></tr>
       <tr><td>Construction period</td><td>${costs.months} months</td></tr>
       ${house ? '' : `<tr><td>Rent impact</td><td>${signedPlanPct(costs.rentPremium)}${isEd1Site(s) && costs.requestedRentPremium > 0 ? ' <span style="color:#b98b2f;font-size:9px">positive premium capped by ED1 rent limit</span>' : ''}</td></tr>`}
@@ -4485,15 +4654,17 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
   if (appraisal?.isHouse) {
     const exitValue = Math.round(appraisal?.values?.reconciled || base.exitValue || 0);
     const totalCost = Number(costs?.totalCost || 0);
-    const netProfit = base.needsLandComp ? null : exitValue - totalCost;
+    const dispositionCosts = Math.round(exitValue * metricRate('exitCostPct'));
+    const netSaleProceeds = Math.max(0, exitValue - dispositionCosts);
+    const netProfit = base.needsLandComp ? null : netSaleProceeds - totalCost;
     const loanAmount = base.loanAmount || Math.round(totalCost * metricRate('loanToCostPct'));
     const equity = base.equity || Math.max(0, totalCost - loanAmount);
-    const netSaleProceeds = Math.max(0, exitValue - loanAmount);
+    const equitySaleProceeds = Math.max(0, netSaleProceeds - loanAmount);
     const holdPeriodYears = Math.max(1, (Number(costs?.months) || 18) / 12);
     const leveragedIRR = base.needsLandComp || equity <= 0
       ? null
-      : netSaleProceeds > 0
-        ? (Math.pow(netSaleProceeds / equity, 1 / holdPeriodYears) - 1) * 100
+      : equitySaleProceeds > 0
+        ? (Math.pow(equitySaleProceeds / equity, 1 / holdPeriodYears) - 1) * 100
         : -100;
     return {
       ...base,
@@ -4503,12 +4674,14 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
       exitCap: null,
       capOnCost: null,
       exitValue,
+      dispositionCosts,
+      netSaleProceeds,
       netProfit,
       loanAmount,
       equity,
       leveragedIRR,
-      equityMultiple: equity > 0 ? netSaleProceeds / equity : 0,
-      devSpreadPct: totalCost ? (exitValue - totalCost) / totalCost : 0,
+      equityMultiple: equity > 0 ? equitySaleProceeds / equity : 0,
+      devSpreadPct: totalCost ? (netSaleProceeds - totalCost) / totalCost : 0,
       returnOnCost: totalCost && netProfit !== null ? netProfit / totalCost : null,
       grossMarginPct: exitValue && netProfit !== null ? netProfit / exitValue : null,
       exitValueSource: appraisal.valuationSource,
@@ -4522,7 +4695,9 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
   const exitCap = appraisal?.exitCap || base.exitCap;
   const year5Noi = base.year5Noi || Math.round((income?.noi || 0) * Math.pow(1 + metricRate('rentGrowthPct'), 4));
   const exitValue = exitCap ? Math.round(year5Noi / exitCap) : base.exitValue || 0;
-  const netProfit = exitValue - (costs?.totalCost || 0);
+  const dispositionCosts = Math.round(exitValue * metricRate('exitCostPct'));
+  const netSaleProceeds = Math.max(0, exitValue - dispositionCosts);
+  const netProfit = netSaleProceeds - (costs?.totalCost || 0);
   const loanAmount = base.loanAmount || Math.round((costs?.totalCost || 0) * metricRate('loanToCostPct'));
   const equity = base.equity || Math.max(0, (costs?.totalCost || 0) - loanAmount);
   const debtService = base.debtService || income?.debtService || 0;
@@ -4533,7 +4708,7 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
     const yearNoi = Math.round(noi * Math.pow(1 + rentGrowth, year - 1));
     cashflows.push(yearNoi - debtService);
   }
-  cashflows.push((year5Noi - debtService) + Math.max(0, exitValue - loanAmount));
+  cashflows.push((year5Noi - debtService) + Math.max(0, netSaleProceeds - loanAmount));
   const leveragedIRR = equity > 0 ? calcIRR(cashflows) * 100 : 0;
   return {
     ...base,
@@ -4541,13 +4716,15 @@ function valuationWithAppraisal(base, appraisal, costs, income) {
     exitCap,
     year5Noi,
     exitValue,
+    dispositionCosts,
+    netSaleProceeds,
     netProfit,
     loanAmount,
     equity,
     debtService,
     leveragedIRR,
-    equityMultiple: equity > 0 ? Math.max(0, exitValue - loanAmount) / equity : 0,
-    devSpreadPct: costs?.totalCost ? (exitValue - costs.totalCost) / costs.totalCost : 0,
+    equityMultiple: equity > 0 ? Math.max(0, netSaleProceeds - loanAmount) / equity : 0,
+    devSpreadPct: costs?.totalCost ? (netSaleProceeds - costs.totalCost) / costs.totalCost : 0,
     capRateSource: appraisal?.capRateSource || 'base market cap rate',
   };
 }
@@ -4566,6 +4743,8 @@ function valuationTableHTML(valuation, costs, sourceNote = '') {
       <tr><td>Cap source</td><td>${escapeText(sourceNote || valuation.capRateSource || 'base market cap rate')}</td></tr>
       <tr><td>Year 5 NOI</td><td>${fmtD(valuation.year5Noi)}</td></tr>`}
       <tr><td>Exit value</td><td>${fmtD(valuation.exitValue)}</td></tr>
+      <tr><td>Disposition / sale costs</td><td style="color:#e24b4a">-${fmtD(valuation.dispositionCosts || 0)}</td></tr>
+      <tr><td>Net sale proceeds</td><td>${fmtD(valuation.netSaleProceeds ?? valuation.exitValue)}</td></tr>
       <tr><td>Valuation source</td><td>${escapeText(valuation.exitValueSource || 'Income cap rate')}</td></tr>
       <tr><td>Valuation formula</td><td>${escapeText(valuation.exitValueFormula || `${fmtD(valuation.year5Noi)} / ${(valuation.exitCap*100).toFixed(2)}%`)}</td></tr>
       <tr><td style="color:${needsLand ? '#697789' : '#e24b4a'}">${needsLand ? 'Subtotal before land' : 'Less: all-in cost'}</td><td style="color:${needsLand ? '#697789' : '#e24b4a'}">${needsLand ? fmtD(costs.totalCost || 0) : `-${fmtD(costs.totalCost || 0)}`}</td></tr>
@@ -4582,14 +4761,19 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
     const weightedPsf = weightedValue(sales, c => c.usablePricePerSf, c => c.compScore);
     const fallback = houseExitValueForSite(site);
     const fallbackPsf = numberOrNull(fallback?.metricValue);
-    const appliedPsf = weightedPsf || fallbackPsf;
+    const customResalePsf = Number(metrics.resalePricePerSf || 0);
+    const appliedPsf = customResalePsf || weightedPsf || fallbackPsf;
     const reconciled = appliedPsf && subjectBuildingSf
       ? Math.round(appliedPsf * subjectBuildingSf)
       : Math.round(fallback?.value || valuation?.exitValue || 0);
-    const netProfit = valuation?.needsLandComp ? null : reconciled - Number(costs?.totalCost || 0);
+    const appraisedDispositionCosts = Math.round(reconciled * metricRate('exitCostPct'));
+    const appraisedNetProceeds = Math.max(0, reconciled - appraisedDispositionCosts);
+    const netProfit = valuation?.needsLandComp ? null : appraisedNetProceeds - Number(costs?.totalCost || 0);
     const returnOnCost = costs?.totalCost && netProfit !== null ? netProfit / costs.totalCost : null;
     const grossMarginPct = reconciled && netProfit !== null ? netProfit / reconciled : null;
-    const source = sales.length
+    const source = customResalePsf
+      ? 'User resale price / SF setting; recent sales shown as supporting evidence'
+      : sales.length
       ? `${comps?.matchLabel || 'recent local sales'}; weighted completed-home price per building SF`
       : fallback?.source || 'Neighborhood new-home $/SF benchmark (fallback)';
     const formula = appliedPsf && subjectBuildingSf
@@ -4712,7 +4896,7 @@ function buildAppraisalEngine(site, comps, rentComps, costs, income, valuation) 
   const reconciled = reconciliation.reduce((sum, row) => sum + row.value * (row.weightPct / 100), 0) || incomeApproach || valuation.exitValue || 0;
   const lowValue = reconciled ? reconciled * 0.92 : 0;
   const highValue = reconciled ? reconciled * 1.08 : 0;
-  const appraisedProfit = reconciled - (costs?.totalCost || 0);
+  const appraisedProfit = reconciled - Math.round(reconciled * metricRate('exitCostPct')) - (costs?.totalCost || 0);
   const confidence = sales.length >= 5 && rents.length >= 3 ? 'High' : sales.length >= 3 || rents.length >= 3 ? 'Medium' : 'Preliminary';
 
   return {
@@ -5478,7 +5662,7 @@ async function exportExcel(id) {
     rentComps,
   } = snapshot;
   const metrics = currentUserMetrics();
-  const preCarryCost = (costs.land || 0) + (costs.hardCosts || 0) + (costs.softCosts || 0);
+  const preCarryCost = (costs.land || 0) + (costs.hardCosts || 0) + (costs.softCosts || 0) + (costs.contingency || 0);
   const payload = {
     generatedAt: new Date().toISOString().slice(0, 10),
     site: {
@@ -5537,8 +5721,11 @@ async function exportExcel(id) {
       hardCostPerSf: costs.totalSF ? (costs.hardCosts || 0) / costs.totalSF : costs.hardPerSf,
       hardCostPerSfDisplay: costs.hardPerSf,
       softCostPct: costs.hardCosts ? (costs.softCosts || 0) / costs.hardCosts : (costs.softPct || 0),
+      contingencyPct: costs.contingencyPct || 0,
       carryPct: preCarryCost ? (costs.carryCost || 0) / preCarryCost : 0,
       constructionMonths: costs.months || 18,
+      amortizationYears: metrics.amortizationYears,
+      exitCostPct: metrics.exitCostPct,
       loanToCostPct: metrics.loanToCostPct,
       interestRatePct: metrics.interestRatePct,
       landSource: landValueSourceNote(s),
@@ -5552,11 +5739,13 @@ async function exportExcel(id) {
         rentRestrictionNote: ed1RentDisclosure(s),
         vacancyPct: metrics.vacancyPct,
         expenseRatioPct: metrics.expenseRatioPct,
+        marketRentPerSfMonthly: metrics.marketRentPerSfMonthly,
         rentGrowthPct: metrics.rentGrowthPct,
         entryCap: compValuation.entryCap || exportAppraisal.entryCap || valuation.entryCap,
         exitCapSpreadBps: metrics.exitCapSpreadBps,
         otherIncomePerUnit: s.units ? Math.round((income.otherIncome || 0) / s.units) : 600,
       }),
+      ...(isHouse ? { userResalePricePerSf: metrics.resalePricePerSf } : {}),
     },
     costs,
     ...(isHouse ? {} : { income }),
@@ -5671,6 +5860,7 @@ async function exportPDF(id) {
   const pdfTotalSF = costs.totalSF;
   const pdfHardCosts = costs.hardCosts;
   const pdfSoftCosts = costs.softCosts;
+  const pdfContingency = costs.contingency || 0;
   const pdfCarryCost = costs.carryCost;
   const pdfHardPerSf = costs.hardPerSf;
   const pdfHardPerUnit = costs.hardPerUnit;
@@ -5683,7 +5873,7 @@ async function exportPDF(id) {
   const pdfCarrySchedule = allocateCostSchedule(pdfCarryCost, carryCostLineItems());
   const pdfLoan = Math.round(tc * (metrics.loanToCostPct / 100));
   const pdfEquity = Math.round(tc - pdfLoan);
-  const pdfDebtService = Math.round(pdfLoan * (metrics.interestRatePct / 100));
+  const pdfDebtService = pdfIncome.debtService || 0;
   const pdfRentGrowth = metrics.rentGrowthPct / 100;
   const pdfEd1 = ed1AffordabilityForSite(s);
   const pdfRentImpact = signedPlanPct(appliedRentPremiumForSite(s, costs.rentPremium));
@@ -5763,7 +5953,7 @@ async function exportPDF(id) {
   <div class="kpi" style="border-left-color:${pc}">
     <div class="kpi-l">Net Development Profit</div>
     <div class="kpi-v" style="color:${pc}">${needsLand ? 'n/a' : fmtM(prof)}</div>
-    <div class="kpi-s">${needsLand ? 'lot SF required' : 'exit value minus all-in cost'}</div>
+    <div class="kpi-s">${needsLand ? 'lot SF required' : 'net sale proceeds minus all-in cost'}</div>
   </div>
   <div class="kpi" style="border-left-color:${ic}">
     <div class="kpi-l">${house ? 'Annualized Levered IRR' : 'Levered IRR'}</div>
@@ -5945,6 +6135,9 @@ ${house ? `<div class="two-col">
       ${pdfSoftSchedule.slice(0,5).map(item => `<tr><td>${item.name}</td><td>${fmtD(item.amount)}</td></tr>`).join('')}
       <tr class="tot"><td>Soft Cost Subtotal</td><td>${fmtD(pdfSoftCosts)}</td></tr>
 
+      <tr><th colspan="2" style="padding-top:10px">CONTINGENCY</th></tr>
+      <tr><td>${Math.round((costs.contingencyPct || 0) * 1000) / 10}% of hard costs</td><td>${fmtD(pdfContingency)}</td></tr>
+
       <tr><th colspan="2" style="padding-top:10px">FINANCING & CARRY</th></tr>
       <tr><td>Construction Period</td><td>${costs.months || 18} months</td></tr>
       <tr><td>Construction Loan (${metrics.loanToCostPct}% LTC)</td><td>${fmtD(pdfLoan)}</td></tr>
@@ -5975,7 +6168,8 @@ ${house ? `<div class="two-col">
   <tr><td>Hard Construction Budget</td><td>${fmtD(pdfHardCosts)}</td><td>Direct construction budget</td></tr>
   <tr><td>Hard Cost / SF</td><td>${fmtD(pdfHardPerSf)}/SF</td><td>Primary construction-cost benchmark</td></tr>
   <tr><td>Hard Cost / ${house ? 'Home' : 'Unit'}</td><td>${fmtD(pdfHardPerUnit)}/${house ? 'home' : 'unit'}</td><td>Comparable ${house ? 'completed-home' : 'unit-count'} benchmark</td></tr>
-  <tr><td>Soft Cost / SF</td><td>${fmtD(pdfSoftPerSf)}/SF</td><td>Permits, A&E, legal, contingency, fees</td></tr>
+  <tr><td>Soft Cost / SF</td><td>${fmtD(pdfSoftPerSf)}/SF</td><td>Permits, A&E, legal and fees</td></tr>
+  <tr><td>Contingency</td><td>${fmtD(pdfContingency)}</td><td>${Math.round((costs.contingencyPct || 0) * 1000) / 10}% of hard costs</td></tr>
   <tr><td>Carry Cost / SF</td><td>${fmtD(pdfCarryPerSf)}/SF</td><td>Interest, loan fees, taxes during construction</td></tr>
   <tr><td>${needsLand ? 'Cost Before Land / SF' : 'Total Cost / SF'}</td><td>${fmtD(pdfTotalPerSf)}/SF</td><td>${needsLand ? 'Incomplete until lot SF is available' : 'All-in basis including land, soft costs, carry'}</td></tr>
   <tr><td>${needsLand ? `Cost Before Land / ${house ? 'Home' : 'Unit'}` : `Total Cost / ${house ? 'Home' : 'Unit'}`}</td><td>${fmtD(pdfTotalPerUnit)}/${house ? 'home' : 'unit'}</td><td>${needsLand ? 'Incomplete until lot SF is available' : `All-in delivered ${house ? 'home' : 'unit'} basis`}</td></tr>
@@ -6034,6 +6228,8 @@ ${house ? `<div class="two-col">
       ${house ? `<tr><td>Completed home building SF</td><td>${Math.round(pdfCompValuation.exitValueBasisQuantity || pdfTotalSF).toLocaleString()} SF</td></tr>
       <tr><td>Comp-derived resale value / SF</td><td>${fmtD(pdfCompValuation.exitValueMetricValue || 0)}/SF</td></tr>
       <tr><td>Completed-home value</td><td>${fmtD(exitV)}</td></tr>
+      <tr><td>Disposition / sale costs</td><td>(${fmtD(pdfCompValuation.dispositionCosts || 0)})</td></tr>
+      <tr><td>Net sale proceeds</td><td>${fmtD(pdfCompValuation.netSaleProceeds ?? exitV)}</td></tr>
       <tr><td>${needsLand ? 'Cost subtotal before land' : 'All-in development cost'}</td><td>${fmtD(tc)}</td></tr>
       <tr class="tot" style="background:${needsLand ? '#f0f2f5' : prof>0?'#e8f5ee':'#fdecea'}"><td style="color:${pc};font-weight:700">NET DEVELOPMENT PROFIT</td><td style="color:${pc};font-weight:700;font-size:12px">${needsLand ? 'n/a' : fmtD(prof)}</td></tr>
       <tr><td>Formula</td><td>${escapeText(pdfAppraisal.valuationFormula)}</td></tr>
@@ -6045,6 +6241,8 @@ ${house ? `<div class="two-col">
       <tr><td>Exit Cap Rate (entry + ${metrics.exitCapSpreadBps}bps)</td><td>${(exitCap*100).toFixed(2)}%</td></tr>
       <tr><td>Valuation Formula</td><td>${fmtD(valuation.year5Noi)} / ${(exitCap*100).toFixed(2)}%</td></tr>
       <tr><td>Exit Value</td><td>${fmtD(exitV)}</td></tr>
+      <tr><td>Disposition Costs (${metrics.exitCostPct}%)</td><td>(${fmtD(pdfCompValuation.dispositionCosts || 0)})</td></tr>
+      <tr><td>Net Sale Proceeds</td><td>${fmtD(pdfCompValuation.netSaleProceeds ?? exitV)}</td></tr>
       <tr><td>&nbsp;</td><td>&nbsp;</td></tr>
       <tr><td>All-In Development Cost</td><td>${fmtD(tc)}</td></tr>
       <tr><td style="color:#e24b4a">Less: All-In Cost</td><td style="color:#e24b4a">(${fmtD(tc)})</td></tr>
