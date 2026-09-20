@@ -36,6 +36,7 @@ const riverside = generateFeasibilityScenarios({
 const riversideByRight = riverside.scenarios.find(item => item.id === 'by_right');
 const riversideFiled = riverside.scenarios.find(item => item.id === 'verified_project');
 const riversideAhip = riverside.scenarios.find(item => item.id === 'ed1_ahip_transit_vmt');
+const riversideAb2011Transit = riverside.scenarios.find(item => item.id === 'ab2011_transit');
 assert.equal(riverside.lotSf, 56525);
 assert.equal(riverside.zone, 'C2-1-RIO');
 assert.equal(riverside.baseUnits, 142);
@@ -45,6 +46,10 @@ assert.equal(riversideFiled.program.units, 219);
 assert.equal(riversideFiled.program.grossSf, 170638);
 assert.equal(riversideAhip.program.densityMode, 'floor_area');
 assert.ok(riversideAhip.program.units > riversideFiled.program.units);
+assert.equal(riversideAb2011Transit.program.units, 142);
+assert.equal(riversideAb2011Transit.program.grossSf, 129878);
+assert.equal(riversideAb2011Transit.program.grossSfCapacity, 226100);
+assert.equal(riversideAb2011Transit.program.avgUnitSf, 750);
 
 const industrial = generateFeasibilityScenarios({ lotSf: 20000, zone: 'M1-1', use: 'industrial', jurisdiction: 'Los Angeles city' });
 assert.deepEqual(industrial.scenarios.map(item => item.id), ['by_right']);
@@ -72,7 +77,7 @@ const santaAna = generateFeasibilityScenarios({
 });
 assert.equal(santaAna.baseUnits, 151);
 assert.equal(santaAna.scenarios.find(item => item.id === 'by_right').program.units, 151);
-assert.equal(santaAna.scenarios.find(item => item.id === 'by_right').program.grossSf, 146810);
+assert.equal(santaAna.scenarios.find(item => item.id === 'by_right').program.grossSf, 138110);
 assert.ok(santaAna.scenarios.some(item => item.id === 'state_density_bonus'));
 assert.ok(santaAna.scenarios.some(item => item.id === 'sb79'));
 assert.ok(santaAna.scenarios.some(item => item.id === 'ab2011'));

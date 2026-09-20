@@ -59,13 +59,17 @@ function residentialProgram({ lotSf, use, rule, far, baseUnits, densityMultiplie
     return { grossSf, netSf, units, avgUnitSf: units ? round(netSf / units) : 0, commercialSf: round(exact.commercialSf || 0), stories: round(exact.stories || 1), heightFt: round(exact.heightFt || rule.height), parkingSpaces: round(exact.parkingSpaces || 0), far: lotSf ? grossSf / lotSf : null, baseUnits, densityMode: 'verified_project', physicalUnitCapacity: units };
   }
   const selectedAvgUnitSf = Number(avgUnitSf || profile.avgUnitSf);
-  const grossSf = round(lotSf * far);
-  const residentialGrossSf = round(grossSf * (1 - commercialShare));
-  const netSf = round(residentialGrossSf * profile.efficiency);
-  const physicalUnitCapacity = Math.max(1, Math.floor(netSf / selectedAvgUnitSf));
+  const grossSfCapacity = round(lotSf * far);
+  const residentialGrossCapacity = round(grossSfCapacity * (1 - commercialShare));
+  const netSfCapacity = round(residentialGrossCapacity * profile.efficiency);
+  const physicalUnitCapacity = Math.max(1, Math.floor(netSfCapacity / selectedAvgUnitSf));
   const regulatoryUnits = Math.max(1, Math.ceil(baseUnits * densityMultiplier));
   const units = densityMode === 'floor_area' ? physicalUnitCapacity : regulatoryUnits;
-  return { grossSf, netSf, units, avgUnitSf: units ? round(netSf / units) : selectedAvgUnitSf, assumedAvgUnitSf: selectedAvgUnitSf, physicalUnitCapacity, regulatoryUnits: densityMode === 'floor_area' ? null : regulatoryUnits, baseUnits, densityMode, far, commercialSf: round(grossSf * commercialShare * 0.9), stories: Math.max(1, Math.ceil(grossSf / Math.max(lotSf * 0.72, 1))), heightFt: Math.max(rule.height, rule.height + heightBonus), parkingSpaces: Math.round(units * parkingRatio) };
+  const grossSfNeeded = round((units * selectedAvgUnitSf / profile.efficiency) / Math.max(0.01, 1 - commercialShare));
+  const grossSf = densityMode === 'floor_area' ? grossSfCapacity : Math.min(grossSfCapacity, grossSfNeeded);
+  const residentialGrossSf = round(grossSf * (1 - commercialShare));
+  const netSf = round(residentialGrossSf * profile.efficiency);
+  return { grossSf, grossSfCapacity, netSf, netSfCapacity, units, avgUnitSf: units ? round(netSf / units) : selectedAvgUnitSf, assumedAvgUnitSf: selectedAvgUnitSf, physicalUnitCapacity, regulatoryUnits: densityMode === 'floor_area' ? null : regulatoryUnits, baseUnits, densityMode, far: lotSf ? grossSf / lotSf : far, maximumFar: far, commercialSf: round(grossSf * commercialShare * 0.9), stories: Math.max(1, Math.ceil(grossSf / Math.max(lotSf * 0.72, 1))), heightFt: Math.max(rule.height, rule.height + heightBonus), parkingSpaces: Math.round(units * parkingRatio) };
 }
 
 function commercialProgram({ lotSf, use, rule, far }) {
