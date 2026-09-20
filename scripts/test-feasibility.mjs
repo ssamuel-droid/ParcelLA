@@ -107,6 +107,42 @@ const model = underwriteProgram({ grossSf: 20000, netSf: 17000, commercialSf: 17
 assert.ok(model.hardCosts > 0);
 assert.ok(model.totalCost > model.hardCosts);
 assert.ok(model.exitValue > 0);
+assert.equal(model.grossRevenue - model.vacancyLoss, model.effectiveGrossIncome);
+assert.equal(model.effectiveGrossIncome - model.operatingExpenses, model.noi);
+assert.ok(model.loanAmount > 0);
+assert.ok(model.equity > 0);
+assert.ok(model.annualDebtService > 0);
+assert.ok(model.dscr > 0);
+assert.ok(model.debtYield > 0);
+assert.ok(model.ltv > 0);
+assert.ok(model.dispositionCosts > 0);
+assert.equal(model.netSaleProceeds, model.exitValue - model.dispositionCosts);
+assert.equal(Number.isFinite(model.unleveredIrr), true);
+assert.equal(model.leveredIrr, null);
 assert.equal(Number.isFinite(model.marginOnCost), true);
+
+const customModel = underwriteProgram(
+  { grossSf: 50000, netSf: 41000, commercialSf: 0, units: 55, stories: 5 },
+  'apartment',
+  {
+    landCost: 5000000, hardCostPsf: 300, softCostPct: 0.18, contingencyPct: 0.04,
+    ltc: 0.60, interestRate: 0.07, constructionMonths: 24, amortizationYears: 30,
+    exitCostPct: 0.02, market: { rentPsfMo: 4.5, vacancy: 0.04, opex: 0.32, capRate: 0.05 },
+  },
+);
+assert.equal(customModel.assumptions.rentPsfMo, 4.5);
+assert.equal(customModel.assumptions.vacancy, 0.04);
+assert.equal(customModel.assumptions.opex, 0.32);
+assert.equal(customModel.assumptions.capRate, 0.05);
+assert.equal(customModel.assumptions.constructionMonths, 24);
+assert.equal(customModel.assumptions.amortizationYears, 30);
+assert.equal(customModel.grossRevenue, 2214000);
+assert.equal(customModel.vacancyLoss, 88560);
+assert.equal(customModel.effectiveGrossIncome, 2125440);
+assert.equal(customModel.operatingExpenses, 680141);
+assert.equal(customModel.noi, 1445299);
+assert.equal(Number.isFinite(customModel.equityMultiple), true);
+assert.equal(Number.isFinite(customModel.unleveredIrr), true);
+assert.equal(Number.isFinite(customModel.leveredIrr), true);
 
 console.log('Feasibility engine tests passed.');

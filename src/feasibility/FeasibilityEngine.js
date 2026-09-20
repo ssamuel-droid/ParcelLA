@@ -89,29 +89,70 @@ export function underwriteProgram(program, use, assumptions = {}) {
   const ltc = Number(assumptions.ltc ?? 0.65);
   const interestRate = Number(assumptions.interestRate ?? 0.065);
   const constructionMonths = Number(assumptions.constructionMonths ?? (program.stories > 5 ? 24 : 18));
+  const amortizationYears = Number(assumptions.amortizationYears ?? 30);
+  const exitCostPct = Number(assumptions.exitCostPct ?? (profile.group === 'for_sale' ? 0.05 : 0.02));
   const loanAmount = money(preCarry * ltc);
   const financing = money(loanAmount * interestRate * constructionMonths / 24);
   const totalCost = preCarry + financing;
-  let grossRevenue = 0, noi = 0, exitValue = 0;
+  let grossRevenue = 0, vacancyLoss = 0, effectiveGrossIncome = 0, operatingExpenses = 0, noi = 0, exitValue = 0;
   if (profile.group === 'housing') {
     grossRevenue = program.netSf * Number(profile.rentPsfMo) * 12 + program.commercialSf * Number(profile.commercialRentPsfMo || 0) * 12;
-    noi = grossRevenue * (1 - Number(profile.vacancy)) * (1 - Number(profile.opex));
+    vacancyLoss = grossRevenue * Number(profile.vacancy);
+    effectiveGrossIncome = grossRevenue - vacancyLoss;
+    operatingExpenses = effectiveGrossIncome * Number(profile.opex);
+    noi = effectiveGrossIncome - operatingExpenses;
     exitValue = noi / Number(profile.capRate);
   } else if (profile.group === 'commercial') {
     grossRevenue = program.netSf * Number(profile.rentPsfMo) * 12;
-    noi = grossRevenue * (1 - Number(profile.vacancy)) * (1 - Number(profile.opex));
+    vacancyLoss = grossRevenue * Number(profile.vacancy);
+    effectiveGrossIncome = grossRevenue - vacancyLoss;
+    operatingExpenses = effectiveGrossIncome * Number(profile.opex);
+    noi = effectiveGrossIncome - operatingExpenses;
     exitValue = noi / Number(profile.capRate);
   } else if (profile.group === 'hospitality') {
     grossRevenue = program.rooms * Number(profile.adr) * 365 * Number(profile.occupancy);
-    noi = grossRevenue * (1 - Number(profile.opex));
+    effectiveGrossIncome = grossRevenue;
+    operatingExpenses = effectiveGrossIncome * Number(profile.opex);
+    noi = effectiveGrossIncome - operatingExpenses;
     exitValue = noi / Number(profile.capRate);
   } else {
     grossRevenue = program.netSf * Number(profile.salePsf);
+    effectiveGrossIncome = grossRevenue;
     exitValue = grossRevenue;
   }
-  const profit = money(exitValue - totalCost);
+  const dispositionCosts = money(exitValue * exitCostPct);
+  const netSaleProceeds = money(exitValue - dispositionCosts);
+  const profit = money(netSaleProceeds - totalCost);
   const equity = money(totalCost - loanAmount);
-  return { landCost, hardCostPsf, hardCosts, softCosts, contingency, financing, totalCost, loanAmount, equity, grossRevenue: money(grossRevenue), noi: money(noi), exitValue: money(exitValue), profit, marginOnCost: totalCost ? profit / totalCost : 0, capOnCost: totalCost ? noi / totalCost : null, returnOnEquity: equity ? profit / equity : null, costPerSf: program.grossSf ? totalCost / program.grossSf : null, costPerUnit: program.units ? totalCost / program.units : null, assumptions: { softCostPct, contingencyPct, ltc, interestRate, constructionMonths, ...profile } };
+  const monthlyRate = interestRate / 12;
+  const paymentCount = Math.max(1, Math.round(amortizationYears * 12));
+  const annualDebtService = loanAmount > 0
+    ? money(monthlyRate > 0
+      ? loanAmount * (monthlyRate * (1 + monthlyRate) ** paymentCount) / ((1 + monthlyRate) ** paymentCount - 1) * 12
+      : loanAmount / amortizationYears)
+    : 0;
+  const cashFlowBeforeTax = money(noi - annualDebtService);
+  const holdYears = Math.max(constructionMonths / 12, 0.25);
+  const equitySaleProceeds = money(netSaleProceeds - loanAmount);
+  const unleveredIrr = totalCost > 0 && netSaleProceeds > 0 ? (netSaleProceeds / totalCost) ** (1 / holdYears) - 1 : null;
+  const leveredIrr = equity > 0 && equitySaleProceeds > 0 ? (equitySaleProceeds / equity) ** (1 / holdYears) - 1 : null;
+  return {
+    landCost, hardCostPsf, hardCosts, softCosts, contingency, financing, totalCost, loanAmount, equity,
+    grossRevenue: money(grossRevenue), vacancyLoss: money(vacancyLoss), effectiveGrossIncome: money(effectiveGrossIncome),
+    operatingExpenses: money(operatingExpenses), noi: money(noi), annualDebtService, cashFlowBeforeTax,
+    exitValue: money(exitValue), dispositionCosts, netSaleProceeds, equitySaleProceeds, profit,
+    marginOnCost: totalCost ? profit / totalCost : 0,
+    capOnCost: totalCost && noi ? noi / totalCost : null,
+    returnOnEquity: equity ? profit / equity : null,
+    dscr: annualDebtService && noi ? noi / annualDebtService : null,
+    debtYield: loanAmount && noi ? noi / loanAmount : null,
+    ltv: exitValue ? loanAmount / exitValue : null,
+    equityMultiple: equity ? (equity + profit) / equity : null,
+    unleveredIrr, leveredIrr,
+    costPerSf: program.grossSf ? totalCost / program.grossSf : null,
+    costPerUnit: program.units ? totalCost / program.units : null,
+    assumptions: { softCostPct, contingencyPct, ltc, interestRate, constructionMonths, amortizationYears, exitCostPct, ...profile },
+  };
 }
 
 function scenario({ id, label, category, description, program, use, assumptions, eligibility, requirements, incentives, sources, confidence = 'screening' }) {

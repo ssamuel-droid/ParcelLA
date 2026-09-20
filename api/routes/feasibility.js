@@ -406,12 +406,28 @@ router.post('/analyze', requireAuth, async (req, res, next) => {
       rentPsfMo: Number(oneBedRentPsf.toFixed(2)),
       capRate: CAP_RATES[neighborhood] || 0.0525,
     } : {};
+    const rentPsfMo = number(req.body?.rentPsfMo);
+    const commercialRentPsfMo = number(req.body?.commercialRentPsfMo);
+    const salePsf = number(req.body?.salePsf);
+    const capRate = number(req.body?.capRate);
+    const vacancyPct = number(req.body?.vacancyPct);
+    const opexPct = number(req.body?.opexPct);
+    if (rentPsfMo != null) market.rentPsfMo = rentPsfMo;
+    if (commercialRentPsfMo != null) market.commercialRentPsfMo = commercialRentPsfMo;
+    if (salePsf != null) market.salePsf = salePsf;
+    if (capRate != null) market.capRate = capRate / 100;
+    if (vacancyPct != null) market.vacancy = vacancyPct / 100;
+    if (opexPct != null) market.opex = opexPct / 100;
     const assumptions = {
       landCost: acquisitionPrice,
       hardCostPsf: number(req.body?.hardCostPsf) || undefined,
       softCostPct: number(req.body?.softCostPct) != null ? number(req.body.softCostPct) / 100 : undefined,
+      contingencyPct: number(req.body?.contingencyPct) != null ? number(req.body.contingencyPct) / 100 : undefined,
       interestRate: number(req.body?.interestRate) != null ? number(req.body.interestRate) / 100 : undefined,
       ltc: number(req.body?.ltc) != null ? number(req.body.ltc) / 100 : undefined,
+      constructionMonths: number(req.body?.constructionMonths) || undefined,
+      amortizationYears: number(req.body?.amortizationYears) || undefined,
+      exitCostPct: number(req.body?.exitCostPct) != null ? number(req.body.exitCostPct) / 100 : undefined,
       avgUnitSf: number(req.body?.avgUnitSf) || undefined,
       market,
     };
