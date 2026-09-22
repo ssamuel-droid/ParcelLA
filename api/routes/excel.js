@@ -342,8 +342,14 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
 
     addAssumption('units', isHouse ? 'Homes' : 'Units', unitsValue, FMT.whole, isHouse ? 'Editable home count used throughout the workbook.' : 'Editable unit count used throughout the workbook.');
     addAssumption('avgUnitSf', isHouse ? 'Completed home SF / home' : 'Average unit SF', avgUnitSfValue, FMT.whole, isHouse ? 'Completed building area per home.' : 'Net rentable SF per unit.');
-    const totalSfRow = writeRow(assumptionsWs, [isHouse ? 'Completed home building SF' : 'Total rentable SF', formula(`${A.units}*${A.avgUnitSf}`, totalSfValue, FMT.whole), isHouse ? 'Formula: homes x completed building SF per home.' : 'Formula: units x average unit SF.'], 'total');
+    const hasSeparateGrossSf = num(site.grossBuildingSf, 0) > 0;
+    const totalSfRow = writeRow(assumptionsWs, [hasSeparateGrossSf ? 'Gross building SF' : isHouse ? 'Completed home building SF' : 'Total rentable SF', hasSeparateGrossSf ? cell(totalSfValue, FMT.whole) : formula(`${A.units}*${A.avgUnitSf}`, totalSfValue, FMT.whole), hasSeparateGrossSf ? 'Gross construction area from the selected feasibility program.' : isHouse ? 'Formula: homes x completed building SF per home.' : 'Formula: units x average unit SF.'], 'total');
     A.totalSf = ref('Assumptions', totalSfRow.number, 2);
+    if (isHouse && num(site.saleableSf, 0) > 0) {
+      addAssumption('valuationSf', 'Net saleable SF', num(site.saleableSf), FMT.whole, 'Net area used for for-sale revenue and completed value.');
+    } else {
+      A.valuationSf = A.totalSf;
+    }
     addAssumption('land', 'Land basis / acquisition price', landValue, FMT.money, text(site.landSource || assumptions.landSource || 'Asking price or imputed off-market land value.'));
     addAssumption('hardPsf', 'Hard cost / SF', hardPsfValue, FMT.money, 'Exact model input; formatted dollars may round on screen.');
     addAssumption('softPct', 'Soft costs / hard costs', softPctValue, FMT.pct, 'A&E, permits, fees, legal, and developer fee.');
@@ -480,9 +486,9 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       setupSheet(houseInputWs, [34, 20, 58]);
       writeRow(houseInputWs, ['House Sale Inputs', siteName], 'title');
       writeRow(houseInputWs, ['Metric', 'Value', 'Source / formula'], 'header');
-      writeRow(houseInputWs, ['Completed home building SF', formula(`${A.totalSf}`, totalSfValue, FMT.whole), text(site.buildingSfSource || 'Permit/source data')]);
+      writeRow(houseInputWs, ['Completed home saleable SF', formula(`${A.valuationSf}`, num(site.saleableSf, totalSfValue), FMT.whole), text(site.buildingSfSource || 'Permit/source data')]);
       writeRow(houseInputWs, ['Comp-derived resale value / SF', formula(`${A.resalePsf}`, money(assumptions.resalePricePerSf || appraisal.weightedPsf), FMT.money), text(assumptions.resalePricePerSfSource || appraisal.valuationSource)]);
-      writeRow(houseInputWs, ['Estimated completed-home value', formula(`${A.totalSf}*${A.resalePsf}`, money(valuation.exitValue), FMT.money), 'Building SF x comp-derived resale $/SF.'], 'total');
+      writeRow(houseInputWs, ['Estimated completed-home value', formula(`${A.valuationSf}*${A.resalePsf}`, money(valuation.exitValue), FMT.money), 'Saleable SF x comp-derived resale $/SF.'], 'total');
       writeRow(houseInputWs, ['Method', 'Sales comparison approach', 'Completed building SF x comp-derived resale $/SF.']);
     } else {
       const rentWs = wb.addWorksheet('Rent Roll');
@@ -669,7 +675,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       return r.number;
     };
     if (isHouse) {
-      valRow('homeSf', 'Completed home building SF', `${A.totalSf}`, totalSfValue, FMT.whole, text(site.buildingSfSource || 'Permit/source data.'));
+      valRow('homeSf', 'Completed home saleable SF', `${A.valuationSf}`, num(site.saleableSf, totalSfValue), FMT.whole, text(site.buildingSfSource || 'Permit/source data.'));
       valRow('resalePsf', 'Comp-derived resale value / SF', `${A.resalePsf}`, money(assumptions.resalePricePerSf || appraisal.weightedPsf), FMT.money, text(appraisal.valuationSource || assumptions.resalePricePerSfSource));
       valRow('exitValue', 'Estimated completed-home value', `${V.homeSf}*${V.resalePsf}`, money(valuation.exitValue), FMT.money, 'Completed home building SF x comp-derived sale price / SF.', 'total');
       valRow('dispositionCosts', 'Disposition / sale costs', `${V.exitValue}*${A.exitCostPct}`, money(valuation.dispositionCosts), FMT.money, 'Gross completed value x sale-cost assumption.');
@@ -730,7 +736,7 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
           cell(num(row.months, 18), FMT.whole),
           formula(`${A.resalePsf}`, money(assumptions.resalePricePerSf || appraisal.weightedPsf), FMT.money),
           formula(`${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r}+(${A.totalSf}*B${r})*${A.contingencyPct}+(${A.land}+${A.totalSf}*B${r}+(${A.totalSf}*B${r})*C${r}+(${A.totalSf}*B${r})*${A.contingencyPct})*${A.ltc}*${A.rate}*D${r}/12`, money(row.totalCost), FMT.money),
-          formula(`${A.totalSf}*E${r}`, money(row.exitValue), FMT.money),
+          formula(`${A.valuationSf}*E${r}`, money(row.exitValue), FMT.money),
           formula(`G${r}*(1-${A.exitCostPct})-F${r}`, money(row.netProfit), FMT.money),
           formula(`IFERROR(F${r}/${A.totalSf},0)`, money(num(row.totalCost) / Math.max(1, totalSfValue)), FMT.money),
           formula(`IFERROR(H${r}/F${r},0)`, pct(num(row.netProfit) / Math.max(1, num(row.totalCost))), FMT.pct),

@@ -1266,7 +1266,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
 .lot-assumption{display:flex;align-items:center;gap:6px;border:1px solid #ead7a6;border-left:3px solid var(--gold);border-radius:7px;padding:7px 8px;margin:6px 0;background:#fffaf1}.lot-assumption label{font-size:10px;font-weight:800;color:#76550f;flex:1}.lot-assumption input{width:105px;border:1px solid #d8c58f;border-radius:5px;padding:5px 6px;text-align:right;font-size:11px}.lot-assumption button{border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:5px;padding:5px 8px;font-size:10px;font-weight:800;cursor:pointer}.lot-assumption button.clear{background:#fff;color:#536071;border-color:var(--line)}
 .feasibility-launch{background:var(--gold)!important;border-color:var(--gold)!important;color:#fff!important}.feasibility{position:fixed;inset:48px 0 0;background:#eef2f6;display:none;z-index:120;overflow:auto}.feasibility.open{display:block}.feasibility-panel{min-height:100%;background:#eef2f6}.feasibility-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:18px clamp(16px,3vw,44px);background:#fff;border-bottom:1px solid var(--line)}.feasibility-head span{font-size:9px;font-weight:900;color:var(--gold);letter-spacing:.08em}.feasibility-head h2{font-size:24px;color:var(--navy);margin:2px 0 3px}.feasibility-head p{font-size:12px;color:#667384}.feasibility-form{display:grid;grid-template-columns:minmax(260px,2fr) minmax(150px,1fr) minmax(150px,1fr) auto auto;gap:8px;align-items:end;padding:12px clamp(16px,3vw,44px);background:#fff;border-bottom:1px solid var(--line)}.feasibility-form label{display:grid;gap:4px;min-width:0}.feasibility-form label>span{font-size:8px;font-weight:900;color:#748195;text-transform:uppercase}.feasibility-form input,.feasibility-form select{width:100%;height:36px;border:1px solid #cfd7e2;border-radius:6px;background:#fff;color:var(--navy);font-size:12px;padding:0 9px}.feasibility-money{display:flex;align-items:center;height:36px;border:1px solid #cfd7e2;border-radius:6px;background:#fff;padding:0 8px}.feasibility-money input{border:0;height:32px;padding:0 5px}.feasibility-money b{font-size:11px;color:#738095}.feasibility-run,.feasibility-advanced-toggle{height:36px;border-radius:6px;padding:0 13px;font-size:11px;font-weight:900;cursor:pointer;white-space:nowrap}.feasibility-run{background:var(--navy);border:1px solid var(--navy);color:#fff}.feasibility-advanced-toggle{background:#fff;border:1px solid var(--line);color:#536071}.feasibility-advanced{display:none;grid-column:1/-1;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px}.feasibility-advanced.open{display:grid}.feasibility-body{padding:14px clamp(16px,3vw,44px) 40px}.feasibility-empty{min-height:360px;display:grid;place-content:center;text-align:center;color:#738095}.feasibility-empty strong{font-size:18px;color:var(--navy);margin-bottom:5px}.feasibility-empty span{font-size:12px}.fz-summary{display:grid;grid-template-columns:minmax(0,2fr) repeat(4,minmax(115px,1fr));gap:7px;margin-bottom:12px}.fz-fact{background:#fff;border:1px solid var(--line);border-radius:7px;padding:10px;min-width:0}.fz-fact span{display:block;font-size:8px;color:#7d8999;text-transform:uppercase;font-weight:900}.fz-fact strong{display:block;color:var(--navy);font-size:13px;overflow-wrap:anywhere}.fz-fact.address strong{font-size:16px}.fz-warnings{display:grid;gap:5px;margin-bottom:12px}.fz-warning{background:#fffaf0;border:1px solid #ead7a6;border-left:3px solid var(--gold);border-radius:6px;padding:7px 9px;color:#6e551e;font-size:10px}.fz-layout{display:grid;grid-template-columns:minmax(300px,.8fr) minmax(520px,1.7fr);gap:12px;align-items:start}.fz-scenarios{display:grid;gap:7px}.fz-scenario{width:100%;text-align:left;border:1px solid var(--line);border-left:4px solid #9ba6b4;background:#fff;border-radius:7px;padding:10px;cursor:pointer;color:var(--ink)}.fz-scenario.on{border-left-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}.fz-scenario-top{display:flex;justify-content:space-between;gap:12px}.fz-scenario h3{font-size:13px;color:var(--navy)}.fz-scenario small{font-size:9px;color:#748195}.fz-tag{font-size:8px;font-weight:900;border-radius:999px;padding:3px 6px;background:#edf1f5;color:#536071}.fz-scenario-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:8px}.fz-scenario-metrics div{background:#f6f8fa;border-radius:5px;padding:5px}.fz-scenario-metrics span{display:block;font-size:7px;color:#7d8999;text-transform:uppercase;font-weight:900}.fz-scenario-metrics b{font-size:11px;color:var(--navy)}.fz-detail{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;position:sticky;top:62px}.fz-detail-head{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid var(--line);padding-bottom:10px}.fz-detail-head h2{font-size:18px;color:var(--navy)}.fz-detail-head p{font-size:11px;color:#667384;line-height:1.45}.fz-confidence{font-size:8px;font-weight:900;text-transform:uppercase;color:#7b8797}.fz-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;margin:10px 0}.fz-kpi{background:#f6f8fa;border:1px solid #edf1f4;border-radius:6px;padding:7px}.fz-kpi span{display:block;font-size:7px;color:#7d8999;text-transform:uppercase;font-weight:900}.fz-kpi b{display:block;font-size:14px;color:var(--navy)}.fz-section{margin-top:13px}.fz-section h3{font-size:9px;color:#7d8999;text-transform:uppercase}.fz-table{width:100%;border-collapse:collapse;font-size:10px}.fz-table td{border-bottom:1px solid #edf1f4;padding:5px 2px}.fz-table td:last-child{text-align:right;font-weight:800}.fz-assumptions td:nth-child(2),.fz-assumptions td:nth-child(4){text-align:right;font-weight:800}.fz-columns,.fz-comps{display:grid;grid-template-columns:1fr 1fr;gap:12px}.fz-list{margin:0;padding-left:17px;color:#536071;font-size:10px;line-height:1.55}.fz-source-grid{display:flex;flex-wrap:wrap;gap:5px}.fz-source-grid a{border:1px solid var(--line);border-radius:5px;padding:5px 7px;color:var(--navy);font-size:9px;font-weight:800;text-decoration:none}.fz-comp{border:1px solid var(--line);border-radius:6px;padding:7px;font-size:9px;color:#647083}.fz-comp b{display:block;color:var(--navy);font-size:10px}.fz-loading{min-height:360px;display:grid;place-content:center;color:#748195}.fz-error{background:#fff;border:1px solid #efc5c5;border-left:4px solid var(--red);border-radius:8px;padding:14px;color:#8a2f2f}
 .logo{font-size:18px}.navbtn,.albl,.ntag{font-size:12px}.cb,.sbs,.sb2 input,.bp,.br,.ss,.cm,.ct,.nb,.gb,.readitem,.ownerbox{font-size:12px}.ca{font-size:15px}.cp{font-size:14px}.tbl,.dht{font-size:14px}.kpv{font-size:14px}.mbv{font-size:17px}.sh,.sb h4,.mfl,.kpl,.icl,.mbl,.bdg,.mapbtn,.mapcap,.maplinks a,.maplinks button,.viewbtn,.watchbtn,.layerbtn,.topdeal span,.sourcelinks a{font-size:10px}.icv{font-size:13px}.da{font-size:10px}
-.feasibility-address{position:relative}.fz-address-suggestions{position:absolute;left:0;right:0;top:56px;z-index:150;background:#fff;border:1px solid #cfd7e2;border-radius:6px;box-shadow:0 8px 22px rgba(15,31,61,.16);overflow:hidden}.fz-address-suggestions[hidden]{display:none}.fz-address-option{display:block;width:100%;border:0;border-bottom:1px solid #edf1f4;background:#fff;color:var(--navy);padding:9px 10px;text-align:left;font-size:11px;cursor:pointer}.fz-address-option:last-child{border-bottom:0}.fz-address-option:hover,.fz-address-option.on{background:#eef3f8}
+.feasibility-address{position:relative}.fz-address-suggestions{position:absolute;left:0;right:0;top:56px;z-index:150;background:#fff;border:1px solid #cfd7e2;border-radius:6px;box-shadow:0 8px 22px rgba(15,31,61,.16);overflow:hidden}.fz-address-suggestions[hidden]{display:none}.fz-address-option{display:block;width:100%;border:0;border-bottom:1px solid #edf1f4;background:#fff;color:var(--navy);padding:9px 10px;text-align:left;font-size:11px;cursor:pointer}.fz-address-option:last-child{border-bottom:0}.fz-address-option:hover,.fz-address-option.on{background:#eef3f8}.fz-export-actions{display:flex;gap:6px;justify-content:flex-end;margin:10px 0}.fz-export-actions button{height:32px;border:1px solid var(--navy);border-radius:5px;background:#fff;color:var(--navy);padding:0 11px;font-size:10px;font-weight:900;cursor:pointer}.fz-export-actions button:last-child{background:var(--navy);color:#fff}
 @media(max-width:1100px){.feasibility-form{grid-template-columns:2fr 1fr 1fr auto}.feasibility-advanced-toggle{grid-column:1/-1;width:max-content}.fz-layout{grid-template-columns:1fr}.fz-detail{position:static}}
 @media(max-width:980px){.detail{width:62vw}.ig{grid-template-columns:1fr 1fr}.mbg{grid-template-columns:1fr 1fr}.mfb{grid-template-columns:1fr 1fr}.settings-grid{grid-template-columns:1fr 1fr}.mapview{grid-template-columns:1fr}.mapside{display:grid;grid-template-columns:1fr 1fr}.fz-summary{grid-template-columns:repeat(3,1fr)}.fz-fact.address{grid-column:1/-1}.fz-kpis{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:700px){.sb{display:none}.nav{padding:0 12px}.ntag,.albl{display:none}.mfb{grid-template-columns:1fr 1fr}.detail{left:0;right:0;width:100vw;border-left:none}.kpis,.ig,.mbg{grid-template-columns:1fr 1fr}.dha{max-width:150px}.list{padding:8px}.mapstage,.mapstage img{min-height:420px}.mapside{display:flex}.sourcelinks{grid-template-columns:1fr 1fr}.feasibility-head{padding:13px 12px}.feasibility-form{grid-template-columns:1fr 1fr;padding:10px 12px}.feasibility-address,.feasibility-run{grid-column:1/-1}.feasibility-advanced{grid-template-columns:1fr 1fr}.feasibility-body{padding:10px 12px 30px}.fz-summary{grid-template-columns:1fr 1fr}.fz-columns,.fz-comps{grid-template-columns:1fr}.fz-kpis{grid-template-columns:1fr 1fr}.feasibility-launch{font-size:9px!important;padding:5px!important}}
@@ -1737,6 +1737,7 @@ function renderFeasibilityResult() {
       <div class="fz-scenarios">${scenarioButtons}</div>
       ${selected ? `<article class="fz-detail">
         <div class="fz-detail-head"><div><h2>${escapeText(selected.label)}</h2><p>${escapeText(selected.description)}</p></div><div class="fz-confidence">${escapeText(selected.confidence)} confidence<br>${escapeText(selected.eligibility.replaceAll('_', ' '))}</div></div>
+        <div class="fz-export-actions"><button type="button" onclick="exportFeasibilityExcel()">Download Excel workbook</button><button type="button" onclick="exportFeasibilityPDF()">Download PDF deal memo</button></div>
         <div class="fz-kpis">
           <div class="fz-kpi"><span>${data.use === 'hotel' ? 'Rooms' : 'Units'}</span><b>${fmtN(p.units || 0)}</b></div>
           <div class="fz-kpi"><span>Gross building</span><b>${fmtN(p.grossSf)} SF</b></div>
@@ -1798,6 +1799,206 @@ async function runFeasibility(event) {
   } catch (error) {
     body.innerHTML = `<div class="fz-error"><b>Could not complete the feasibility screen</b><span style="display:block;margin-top:4px">${escapeText(error.message || 'Please verify the address and retry.')}</span></div>`;
   }
+}
+
+function selectedFeasibilityScenario() {
+  return feasibilityResult?.scenarios?.find(item => item.id === feasibilityScenarioId) || feasibilityResult?.scenarios?.[0] || null;
+}
+
+function feasibilityExportAccess() {
+  if (!authSession?.access_token) {
+    openAuthDialog('Sign in to export the full feasibility underwriting.');
+    return false;
+  }
+  if (!hasFullAccess()) {
+    openAuthDialog('Unlimited access is required to download a full address-feasibility workbook or PDF memo.');
+    return false;
+  }
+  return true;
+}
+
+function feasibilityTypeLabel(use) {
+  return ({ apartment:'Multifamily', mixed_use:'Mixed-Use', condo:'Condo/TH', townhome:'Condo/TH', single_family:'New House', office:'Office', retail:'Retail', industrial:'Industrial', light_manufacturing:'Light Manufacturing', hotel:'Hotel' })[use] || 'Development';
+}
+
+function feasibilityExpenseDetail(total = 0) {
+  return {
+    propertyTaxes: total * 0.22, insurance: total * 0.09, utilities: total * 0.07,
+    repairsMaintenance: total * 0.12, payrollAdmin: total * 0.16, managementFee: total * 0.08,
+    marketingTurnover: total * 0.06, replacementReserves: total * 0.08, otherOperating: total * 0.12,
+  };
+}
+
+function feasibilityExportPayload() {
+  const data = feasibilityResult;
+  const selected = selectedFeasibilityScenario();
+  if (!data || !selected) return null;
+  const p = selected.program || {};
+  const u = selected.underwriting || {};
+  const a = u.assumptions || {};
+  const forSale = a.group === 'for_sale';
+  const avgUnitSf = p.units ? (p.netSf || 0) / p.units : 0;
+  const residentialAnnualRent = !forSale && p.units ? (p.netSf || 0) * (a.rentPsfMo || 0) * 12 : 0;
+  const commercialAnnualRent = !forSale ? Math.max(0, (u.grossRevenue || 0) - residentialAnnualRent) : 0;
+  const expenseDetail = feasibilityExpenseDetail(u.operatingExpenses || 0);
+  const land = data.landBasis || {};
+  const apns = data.parcel?.apns || [];
+  const planningSource = data.verifiedProject?.sourceUrl ? [{
+    caseNumber: String(data.verifiedProject.sourceLabel || '').replace(/^.*?(EAR-[A-Z0-9-]+).*$/i, '$1'),
+    documentType: 'Planning determination', title: data.verifiedProject.sourceLabel, url: data.verifiedProject.sourceUrl,
+  }] : [];
+  return {
+    generatedAt: data.generatedAt || new Date().toISOString(),
+    site: {
+      id: `feasibility-${selected.id}`, addr: data.address, displayAddress: data.address,
+      neighborhood: data.neighborhood, type: feasibilityTypeLabel(data.use), isForSale: forSale,
+      units: p.units || 0, avgUnitSf, lotSf: data.parcel?.lotSf || 0,
+      buildingSf: p.grossSf || 0, grossBuildingSf: p.grossSf || 0, netRentableSf: p.netSf || 0,
+      saleableSf: forSale ? p.netSf || 0 : 0, buildingSfSource: 'ParcelLA address-feasibility program',
+      zone: data.zoning?.value || '', apn: apns[0] || '', apns,
+      landBasis: u.landCost || 0, landSource: land.formula || land.source || 'Entered acquisition price',
+      listingStatus: 'Address feasibility', developmentStatus: selected.label,
+      stories: p.stories || 0, workDescription: selected.description || '',
+    },
+    owner: {},
+    planning: { cases: [], documents: planningSource },
+    assumptions: {
+      planLabel: selected.label, hardCostPerSf: u.hardCostPsf || 0,
+      softCostPct: a.softCostPct || 0, contingencyPct: a.contingencyPct || 0,
+      carryPct: (u.landCost + u.hardCosts + u.softCosts + u.contingency) ? u.financing / (u.landCost + u.hardCosts + u.softCosts + u.contingency) : 0,
+      constructionMonths: a.constructionMonths || 18, amortizationYears: a.amortizationYears || 30,
+      exitCostPct: a.exitCostPct || 0, loanToCostPct: a.ltc || 0, interestRatePct: a.interestRate || 0,
+      landSource: land.formula || land.source || '', resalePricePerSf: a.salePsf || 0,
+      resalePricePerSfSource: 'Address-feasibility market assumption', vacancyPct: a.vacancy || 0,
+      expenseRatioPct: a.opex || 0, marketRentPerSfMonthly: a.rentPsfMo || 0,
+      rentGrowthPct: 0, entryCap: a.capRate || 0, exitCapSpreadBps: 0, otherIncomePerUnit: 0,
+    },
+    costs: {
+      land: u.landCost || 0, totalSF: p.grossSf || 0, hardCosts: u.hardCosts || 0,
+      softCosts: u.softCosts || 0, contingency: u.contingency || 0, carryCost: u.financing || 0,
+      totalCost: u.totalCost || 0, hardPerSf: u.hardCostPsf || 0,
+      hardPerUnit: p.units ? (u.hardCosts || 0) / p.units : 0,
+      totalPerSf: p.grossSf ? (u.totalCost || 0) / p.grossSf : 0,
+      totalPerUnit: p.units ? (u.totalCost || 0) / p.units : 0,
+      contingencyPct: a.contingencyPct || 0, softPct: a.softCostPct || 0,
+      loanToCost: a.ltc || 0, interestRate: a.interestRate || 0,
+      months: a.constructionMonths || 18, planLabel: selected.label, planNote: selected.description || '',
+    },
+    ...(forSale ? {} : { income: {
+      grossPotentialRent: u.grossRevenue || 0, vacancyLoss: u.vacancyLoss || 0, otherIncome: 0,
+      effectiveGrossIncome: u.effectiveGrossIncome || 0, operatingExpenses: u.operatingExpenses || 0,
+      expenseDetail, noi: u.noi || 0, debtService: u.annualDebtService || 0, cfbt: u.cashFlowBeforeTax || 0,
+    } }),
+    valuation: {
+      entryCap: a.capRate || 0, exitCap: a.capRate || 0, noi: u.noi || 0, year5Noi: u.noi || 0,
+      exitValue: u.exitValue || 0, dispositionCosts: u.dispositionCosts || 0,
+      netSaleProceeds: u.netSaleProceeds || 0, netProfit: u.profit || 0,
+      loanAmount: u.loanAmount || 0, equity: u.equity || 0, debtService: u.annualDebtService || 0,
+      cfbt: u.cashFlowBeforeTax || 0, leveragedIRR: Number.isFinite(u.leveredIrr) ? u.leveredIrr * 100 : 0,
+      equityMultiple: u.equityMultiple || 0, capOnCost: (u.capOnCost || 0) * 100,
+      devSpreadPct: u.marginOnCost || 0, returnOnCost: u.marginOnCost || 0,
+      grossMarginPct: u.exitValue ? (u.profit || 0) / u.exitValue : 0,
+      exitValueMetricValue: a.salePsf || 0, exitValueBasisQuantity: p.netSf || 0,
+    },
+    appraisal: {
+      isHouse: forSale, valuationMethod: forSale ? 'Sales comparison - price per saleable SF' : 'Income capitalization',
+      valuationSource: 'Address-feasibility market assumptions and available comparable evidence',
+      valuationFormula: forSale ? 'Saleable SF x sale price / SF' : 'Stabilized NOI / exit cap rate',
+      confidence: selected.confidence || 'screening', weightedPsf: a.salePsf || 0,
+      subjectBuildingSf: p.netSf || 0, entryCap: a.capRate || 0, exitCap: a.capRate || 0,
+      values: { reconciled: u.exitValue || 0, appraisedProfit: u.profit || 0 }, reconciled: u.exitValue || 0,
+    },
+    unitMix: forSale ? [] : a.group === 'housing' && p.units ? [{
+      label: 'Average residential unit', mix: 1, units: p.units, rent: residentialAnnualRent / 12 / Math.max(1, p.units),
+      monthly: residentialAnnualRent / 12, annual: residentialAnnualRent,
+      source: `${a.rentPsfMo || 0}/SF/month × ${Math.round(avgUnitSf).toLocaleString()} SF average`,
+    }, ...(commercialAnnualRent > 0 ? [{
+      label: 'Commercial income', mix: 0, units: 1, rent: commercialAnnualRent / 12,
+      monthly: commercialAnnualRent / 12, annual: commercialAnnualRent,
+      source: `${a.commercialRentPsfMo || 0}/SF/month commercial assumption`,
+    }] : [])] : [{
+      label: a.group === 'hospitality' ? 'Hotel operating revenue' : 'Commercial operating revenue',
+      mix: 1, units: 1, rent: (u.grossRevenue || 0) / 12,
+      monthly: (u.grossRevenue || 0) / 12, annual: u.grossRevenue || 0,
+      source: 'Selected address-feasibility revenue assumption',
+    }],
+    schedules: { hard: [], soft: [], carry: [] },
+    scenarios: [selected].map(item => ({
+      label: item.label, hardPerSf: item.underwriting?.hardCostPsf || 0,
+      softPct: item.underwriting?.assumptions?.softCostPct || 0,
+      months: item.underwriting?.assumptions?.constructionMonths || 18,
+      totalCost: item.underwriting?.totalCost || 0, exitValue: item.underwriting?.exitValue || 0,
+      netProfit: item.underwriting?.profit || 0, costPerUnit: item.underwriting?.costPerUnit || 0,
+      noi: item.underwriting?.noi || 0, capOnCost: (item.underwriting?.capOnCost || 0) * 100,
+      rentPremiumPct: 0, note: item.description || '',
+    })),
+    salesComps: (data.comps?.sales || []).map(item => ({
+      address: item.address, neighborhood: item.neighborhood, saleDate: item.saleDate,
+      salePrice: item.price, units: item.units, buildingSf: item.buildingSf,
+      pricePerUnit: item.pricePerUnit, pricePerSf: item.pricePerSf, capRate: item.capRate,
+      source: item.source,
+    })),
+    rentComps: forSale ? [] : (data.comps?.rents || []).map(item => ({
+      address: item.address, monthlyRent: item.monthlyRent, unitSf: item.squareFeet,
+      rentPerSf: item.rentPerSf, bedrooms: item.bedrooms, period: item.period, source: item.source,
+    })),
+  };
+}
+
+async function exportFeasibilityExcel() {
+  if (!feasibilityExportAccess()) return;
+  const payload = feasibilityExportPayload();
+  if (!payload) return;
+  try {
+    const response = await fetch(API + '/api/excel/underwriting', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || error.message || 'Excel export failed');
+    }
+    downloadBlobFile(`ParceLLA_${safeFileName(payload.site.displayAddress)}_${safeFileName(selectedFeasibilityScenario().label)}_Underwriting.xlsx`, await response.blob());
+  } catch (error) {
+    alert('Could not generate feasibility workbook: ' + (error.message || error));
+  }
+}
+
+function exportFeasibilityPDF() {
+  if (!feasibilityExportAccess()) return;
+  const data = feasibilityResult;
+  const selected = selectedFeasibilityScenario();
+  if (!data || !selected) return;
+  const p = selected.program || {};
+  const u = selected.underwriting || {};
+  const a = u.assumptions || {};
+  const incomeModel = ['housing', 'commercial', 'hospitality'].includes(a.group);
+  const win = window.open('', '_blank');
+  if (!win) return alert('Allow pop-ups to generate the PDF memo.');
+  const rows = (items, empty) => items.length ? items.join('') : `<tr><td colspan="4">${escapeText(empty)}</td></tr>`;
+  const scenarioRows = (data.scenarios || []).map(item => `<tr><td>${escapeText(item.label)}</td><td>${fmtN(item.program?.units || 0)}</td><td>${fmtN(item.program?.grossSf || 0)} SF</td><td>${fmtD(item.underwriting?.totalCost || 0)}</td><td>${fmtD(item.underwriting?.exitValue || 0)}</td><td>${fmtD(item.underwriting?.profit || 0)}</td></tr>`).join('');
+  const compRows = (data.comps?.sales || []).slice(0, 10).map(item => `<tr><td>${escapeText(item.address)}</td><td>${escapeText(item.saleDate || '')}</td><td>${fmtD(item.price || 0)}</td><td>${item.pricePerUnit ? fmtD(item.pricePerUnit) + '/unit' : item.pricePerSf ? fmtD(item.pricePerSf) + '/SF' : 'n/a'}</td></tr>`);
+  const rentRows = (data.comps?.rents || []).slice(0, 10).map(item => `<tr><td>${escapeText(item.address)}</td><td>${escapeText(item.period || '')}</td><td>${fmtD(item.monthlyRent || 0)}/mo</td><td>${item.rentPerSf ? fmtD(item.rentPerSf) + '/SF' : 'n/a'}</td></tr>`);
+  const requirements = (selected.requirements || []).map(item => `<li>${escapeText(item)}</li>`).join('');
+  const incentives = (selected.incentives || []).map(item => `<li>${escapeText(item)}</li>`).join('');
+  const sources = (data.sources || []).map(item => `<li><b>${escapeText(item.label)}</b>: ${escapeText(item.purpose || '')} ${item.url ? `<a href="${escapeText(item.url)}">${escapeText(item.url)}</a>` : ''}</li>`).join('');
+  const today = new Date().toLocaleDateString();
+  win.document.write(`<!doctype html><html><head><title>ParceLLA ${escapeText(data.address)} Feasibility</title><style>
+    @page{size:letter;margin:.45in}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#17243a;font-size:9px;line-height:1.35;margin:0}h1{font-size:22px;margin:0;color:#0f1f3d}h2{font-size:13px;color:#0f1f3d;border-bottom:2px solid #b98b2f;padding-bottom:4px;margin:18px 0 7px}h3{font-size:10px;margin:10px 0 4px}.head{display:flex;justify-content:space-between;border-bottom:4px solid #0f1f3d;padding-bottom:10px}.tag{color:#b98b2f;font-weight:700;text-transform:uppercase}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:10px 0}.kpi{background:#f2f5f8;border:1px solid #dbe2ea;padding:7px}.kpi span{display:block;color:#6c7888;font-size:7px;text-transform:uppercase}.kpi b{font-size:13px}table{width:100%;border-collapse:collapse}th{background:#0f1f3d;color:#fff;text-align:left}th,td{padding:4px 5px;border:1px solid #dfe5ec}td:last-child{text-align:right}.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.note{background:#fff8e8;border-left:3px solid #b98b2f;padding:7px;margin:7px 0}ul{margin:4px 0;padding-left:17px}.disclaimer{margin-top:18px;border-top:2px solid #0f1f3d;padding-top:7px;color:#657183;font-size:7px}.neg{color:#c93838}.pos{color:#147a59}@media print{a{color:#17243a;text-decoration:none}.page{break-before:page}}
+  </style></head><body>
+  <div class="head"><div><div class="tag">ParceLLA Development Feasibility</div><h1>${escapeText(data.address)}</h1><div>${escapeText(selected.label)} · ${escapeText(data.zoning?.value || 'Zone pending')} · ${fmtN(data.parcel?.lotSf || 0)} lot SF</div></div><div style="text-align:right"><b>${today}</b><br>${escapeText(selected.confidence || 'screening')} confidence</div></div>
+  <div class="kpis"><div class="kpi"><span>Units / rooms</span><b>${fmtN(p.units || 0)}</b></div><div class="kpi"><span>Gross building</span><b>${fmtN(p.grossSf || 0)} SF</b></div><div class="kpi"><span>Total cost</span><b>${fmtD(u.totalCost || 0)}</b></div><div class="kpi"><span>Development profit</span><b class="${(u.profit || 0) >= 0 ? 'pos' : 'neg'}">${fmtD(u.profit || 0)}</b></div></div>
+  <div class="note"><b>Scenario:</b> ${escapeText(selected.description || '')}<br><b>Land basis:</b> ${escapeText(data.landBasis?.formula || data.landBasis?.source || 'Not available')} · <b>Eligibility:</b> ${escapeText((selected.eligibility || '').replaceAll('_',' '))}</div>
+  <h2>I. Parcel, Zoning & Program</h2><div class="two"><table><tr><td>Jurisdiction</td><td>${escapeText(data.jurisdiction?.name || '')}</td></tr><tr><td>APNs</td><td>${(data.parcel?.apns || []).map(escapeText).join(', ') || 'Pending'}</td></tr><tr><td>Lot area</td><td>${fmtN(data.parcel?.lotSf || 0)} SF</td></tr><tr><td>Base zone</td><td>${escapeText(data.zoning?.value || 'Pending')}</td></tr><tr><td>Base MARD</td><td>${fmtN(p.baseUnits || data.baseUnits || 0)} units</td></tr></table><table><tr><td>Gross building area</td><td>${fmtN(p.grossSf || 0)} SF</td></tr><tr><td>Net rentable / saleable</td><td>${fmtN(p.netSf || 0)} SF</td></tr><tr><td>Average net unit</td><td>${fmtN(p.avgUnitSf || 0)} SF</td></tr><tr><td>Modeled FAR</td><td>${Number(p.far || 0).toFixed(2)}:1</td></tr><tr><td>Stories / height</td><td>${fmtN(p.stories || 0)} / ${fmtN(p.heightFt || 0)} ft</td></tr></table></div>
+  <h2>II. Development Budget</h2><table><tr><th>Use</th><th>Amount</th><th>Basis</th></tr><tr><td>Land / acquisition</td><td>${fmtD(u.landCost || 0)}</td><td>${escapeText(data.landBasis?.formula || '')}</td></tr><tr><td>Hard construction</td><td>${fmtD(u.hardCosts || 0)}</td><td>${fmtD(u.hardCostPsf || 0)}/gross SF</td></tr><tr><td>Soft costs</td><td>${fmtD(u.softCosts || 0)}</td><td>${feasibilityPct(a.softCostPct)}</td></tr><tr><td>Contingency</td><td>${fmtD(u.contingency || 0)}</td><td>${feasibilityPct(a.contingencyPct)}</td></tr><tr><td>Financing carry</td><td>${fmtD(u.financing || 0)}</td><td>${fmtN(a.constructionMonths || 0)} months</td></tr><tr><td><b>Total development cost</b></td><td><b>${fmtD(u.totalCost || 0)}</b></td><td>${fmtD(u.costPerSf || 0)}/gross SF</td></tr></table>
+  <h2>III. ${incomeModel ? 'Stabilized Income Statement' : 'For-Sale Revenue'}</h2>${incomeModel ? `<table><tr><td>Gross potential revenue</td><td>${fmtD(u.grossRevenue || 0)}</td></tr><tr><td>Vacancy / credit loss</td><td>(${fmtD(u.vacancyLoss || 0)})</td></tr><tr><td>Effective gross income</td><td>${fmtD(u.effectiveGrossIncome || 0)}</td></tr><tr><td>Operating expenses</td><td>(${fmtD(u.operatingExpenses || 0)})</td></tr><tr><td><b>Net operating income</b></td><td><b>${fmtD(u.noi || 0)}</b></td></tr><tr><td>Annual debt service</td><td>(${fmtD(u.annualDebtService || 0)})</td></tr><tr><td>Cash flow before tax</td><td>${fmtD(u.cashFlowBeforeTax || 0)}</td></tr></table>` : `<table><tr><td>Sale price / net SF</td><td>${fmtD(a.salePsf || 0)}</td></tr><tr><td>Gross sellout</td><td>${fmtD(u.grossRevenue || 0)}</td></tr><tr><td>Disposition costs</td><td>(${fmtD(u.dispositionCosts || 0)})</td></tr><tr><td><b>Net sellout proceeds</b></td><td><b>${fmtD(u.netSaleProceeds || 0)}</b></td></tr></table>`}
+  <h2>IV. Valuation & Returns</h2><table><tr><td>Gross exit value</td><td>${fmtD(u.exitValue || 0)}</td></tr><tr><td>Disposition costs</td><td>(${fmtD(u.dispositionCosts || 0)})</td></tr><tr><td>Net sale proceeds</td><td>${fmtD(u.netSaleProceeds || 0)}</td></tr><tr><td>Total development cost</td><td>(${fmtD(u.totalCost || 0)})</td></tr><tr><td><b>Development profit / gap</b></td><td class="${(u.profit || 0) >= 0 ? 'pos' : 'neg'}"><b>${fmtD(u.profit || 0)}</b></td></tr><tr><td>Profit / cost</td><td>${feasibilityPct(u.marginOnCost)}</td></tr><tr><td>Levered IRR</td><td>${feasibilityPct(u.leveredIrr)}</td></tr><tr><td>Equity multiple</td><td>${feasibilityRatio(u.equityMultiple)}</td></tr>${incomeModel ? `<tr><td>DSCR</td><td>${feasibilityRatio(u.dscr)}</td></tr><tr><td>Debt yield</td><td>${feasibilityPct(u.debtYield)}</td></tr>` : ''}</table>
+  <div class="page"></div><h2>V. Scenario Comparison</h2><table><tr><th>Scenario</th><th>Units</th><th>Project SF</th><th>Total Cost</th><th>Exit Value</th><th>Profit / Gap</th></tr>${scenarioRows}</table>
+  <h2>VI. Comparable Evidence</h2><h3>Sales comparables</h3><table><tr><th>Property</th><th>Date</th><th>Price</th><th>Metric</th></tr>${rows(compRows,'No matching sale comparables were returned.')}</table>${incomeModel ? `<h3>Rent comparables</h3><table><tr><th>Property</th><th>Period</th><th>Rent</th><th>Rent / SF</th></tr>${rows(rentRows,'No matching rent comparables were returned.')}</table>` : ''}
+  <div class="two"><div><h2>VII. Requirements to Verify</h2><ul>${requirements || '<li>Confirm all zoning and development assumptions.</li>'}</ul></div><div><h2>VIII. Potential Allowances</h2><ul>${incentives || '<li>No incentive assumed.</li>'}</ul></div></div>
+  <h2>IX. Official Sources</h2><ul>${sources}</ul>
+  <div class="disclaimer"><b>IMPORTANT:</b> This report is an automated preliminary projection, not an appraisal, zoning determination, entitlement opinion, engineering study, tax or legal advice, financing commitment, or offer to buy or sell. Parcel, zoning, incentive eligibility, plans, costs, rents, sales, ownership, debt, environmental conditions, title, and all other material facts must be independently verified by qualified professionals before any decision.</div>
+  <script>window.print();window.close();<\/script></body></html>`);
+  win.document.close();
 }
 
 async function confirmCheckoutReturn() {
