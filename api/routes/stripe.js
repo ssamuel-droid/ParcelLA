@@ -21,7 +21,8 @@
 import { Router }      from 'express';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
-import { requireAuth, getUnlockedSiteIdsFast } from '../middleware/auth.js';
+import { randomUUID } from 'crypto';
+import { requireAuth, ensureUserProfile, getUnlockedSiteIdsFast } from '../middleware/auth.js';
 
 const router = Router();
 function sb() {
@@ -63,6 +64,39 @@ const PLANS = {
 };
 
 const CHECKOUT_PAYMENT_METHODS = ['card', 'us_bank_account'];
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing']);
+const CURRENT_TERMS_VERSION = '2026-09-07';
+
+export function billingConfiguration(env = process.env) {
+  const secretKey = String(env.STRIPE_SECRET_KEY || '');
+  const webhookSecret = String(env.STRIPE_WEBHOOK_SECRET || '');
+  return {
+    checkoutConfigured: /^sk_(test|live)_/.test(secretKey),
+    webhookConfigured: /^whsec_/.test(webhookSecret),
+    mode: secretKey.startsWith('sk_live_') ? 'live' : secretKey.startsWith('sk_test_') ? 'test' : null,
+    propertyPriceConfigured: /^price_/.test(String(env.STRIPE_PROPERTY_PRICE_ID || '')),
+    subscriptionPriceConfigured: /^price_/.test(String(env.STRIPE_PRO_PRICE_ID || '')),
+  };
+}
+
+export function subscriptionProfilePatch(status, subscriptionId, now = new Date().toISOString()) {
+  const normalizedStatus = status || 'incomplete';
+  const active = ACTIVE_SUBSCRIPTION_STATUSES.has(normalizedStatus);
+  return {
+    plan: active ? 'pro' : 'free',
+    stripe_subscription_id: normalizedStatus === 'canceled' ? null : subscriptionId,
+    subscription_status: normalizedStatus,
+    trial_ends_at: null,
+    updated_at: now,
+  };
+}
+
+function requireCheckoutConfigured(res) {
+  const config = billingConfiguration();
+  if (config.checkoutConfigured && config.webhookConfigured) return true;
+  res.status(503).json({ error: 'Secure checkout is being configured. No payment was attempted.' });
+  return false;
+}
 
 function appUrl() {
   return String(process.env.APP_URL || 'https://parcel-la.vercel.app').replace(/\/$/, '');
@@ -76,14 +110,13 @@ function returnUrlForRequest(req) {
 }
 
 async function customerForUser(user) {
-  const { data: profile } = await sb()
-    .from('profiles').select('stripe_customer_id, email').eq('id', user.id).single();
+  const profile = await ensureUserProfile(user);
 
   if (profile?.stripe_customer_id) return profile.stripe_customer_id;
   const customer = await stripe().customers.create({
     email: user.email,
     metadata: { supabase_uid: user.id },
-  });
+  }, { idempotencyKey: `parcella-customer-${user.id}` });
   const { error } = await sb()
     .from('profiles').update({ stripe_customer_id: customer.id }).eq('id', user.id);
   if (error) throw error;
@@ -110,6 +143,65 @@ async function recordBillingEvent({ id, type, data }, userId = null) {
   if (error) throw error;
 }
 
+async function hasAcceptedCurrentTerms(userId) {
+  if (process.env.TERMS_ENFORCEMENT_ENABLED !== 'true') return true;
+  const { data, error } = await sb()
+    .from('terms_acceptances')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('terms_version', CURRENT_TERMS_VERSION)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
+}
+
+async function persistPropertyEntitlement(session) {
+  const metadata = session?.metadata || {};
+  const entitlement = {
+    user_id: metadata.user_id,
+    site_id: String(metadata.site_id || ''),
+    stripe_checkout_session_id: session.id,
+    stripe_payment_intent_id: typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id || null,
+    amount_paid: Number.isFinite(session.amount_total) ? session.amount_total : null,
+    currency: session.currency || 'usd',
+    purchased_at: new Date().toISOString(),
+  };
+  const { error } = await sb()
+    .from('property_entitlements')
+    .upsert(entitlement, { onConflict: 'user_id,site_id' });
+  if (error) {
+    // Migration 021 creates this durable table. Until it is applied, the
+    // verified subscription_events record remains the compatibility fallback.
+    if (error.code === '42P01' || /property_entitlements/i.test(error.message || '')) {
+      console.warn('[stripe] property_entitlements migration is not applied; using billing-event fallback');
+      return false;
+    }
+    throw error;
+  }
+  return true;
+}
+
+async function syncSubscription(subscription, fallbackUserId = null) {
+  if (!subscription?.id) return { fulfilled: false, status: 'missing_subscription' };
+  let userId = subscription.metadata?.user_id || fallbackUserId;
+  if (!userId && subscription.customer) {
+    const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id;
+    const { data: profile, error } = await sb()
+      .from('profiles').select('id').eq('stripe_customer_id', customerId).maybeSingle();
+    if (error) throw error;
+    userId = profile?.id || null;
+  }
+  if (!userId) return { fulfilled: false, status: 'missing_user' };
+
+  const status = subscription.status || 'incomplete';
+  const active = ACTIVE_SUBSCRIPTION_STATUSES.has(status);
+  const { error } = await sb().from('profiles')
+    .update(subscriptionProfilePatch(status, subscription.id))
+    .eq('id', userId);
+  if (error) throw error;
+  return { fulfilled: active, status };
+}
+
 async function fulfillCheckoutSession(session) {
   const metadata = session?.metadata || {};
   const userId = metadata.user_id;
@@ -118,6 +210,7 @@ async function fulfillCheckoutSession(session) {
 
   if (purchaseKind === 'property') {
     const paid = String(session.payment_status || '').toLowerCase() === 'paid';
+    if (paid && metadata.site_id) await persistPropertyEntitlement(session);
     return {
       fulfilled: paid,
       status: paid ? 'unlocked' : 'payment_pending',
@@ -129,18 +222,7 @@ async function fulfillCheckoutSession(session) {
     const subscription = typeof session.subscription === 'string'
       ? await stripe().subscriptions.retrieve(session.subscription)
       : session.subscription;
-    const subscriptionStatus = subscription?.status || 'incomplete';
-    if (['active', 'trialing'].includes(subscriptionStatus)) {
-      const { error } = await sb().from('profiles').update({
-        plan: 'pro',
-        stripe_subscription_id: subscription.id,
-        subscription_status: subscriptionStatus,
-        trial_ends_at: null,
-      }).eq('id', userId);
-      if (error) throw error;
-      return { fulfilled: true, status: subscriptionStatus };
-    }
-    return { fulfilled: false, status: subscriptionStatus };
+    return syncSubscription(subscription, userId);
   }
 
   return { fulfilled: false, status: 'unknown_purchase' };
@@ -151,9 +233,24 @@ router.get('/plans', (req, res) => {
   res.json(Object.entries(PLANS).map(([key, plan]) => ({ key, ...plan })));
 });
 
+// GET /api/stripe/status — safe production readiness details (never returns keys)
+router.get('/status', (req, res) => {
+  const config = billingConfiguration();
+  res.json({
+    ...config,
+    ready: config.checkoutConfigured && config.webhookConfigured,
+    paymentMethods: CHECKOUT_PAYMENT_METHODS,
+    offers: { property: PLANS.property.price, proMonthly: PLANS.pro.price },
+  });
+});
+
 // POST /api/stripe/checkout — create Stripe checkout session
 router.post('/checkout', requireAuth, async (req, res, next) => {
   try {
+    if (!requireCheckoutConfigured(res)) return;
+    if (!await hasAcceptedCurrentTerms(req.user.id)) {
+      return res.status(428).json({ error: 'Accept the current Terms and underwriting-risk disclosure before checkout.' });
+    }
     const purchaseKind = req.body?.kind === 'property' ? 'property' : 'subscription';
     const siteId = purchaseKind === 'property' ? String(req.body?.siteId || '').trim() : '';
     if (purchaseKind === 'property' && !siteId) {
@@ -183,7 +280,10 @@ router.post('/checkout', requireAuth, async (req, res, next) => {
       ...(siteId ? { site_id: siteId } : {}),
     };
     const offer = purchaseKind === 'property' ? PLANS.property : PLANS.pro;
-    const lineItem = {
+    const configuredPrice = purchaseKind === 'property'
+      ? process.env.STRIPE_PROPERTY_PRICE_ID
+      : process.env.STRIPE_PRO_PRICE_ID;
+    const lineItem = configuredPrice ? { price: configuredPrice, quantity: 1 } : {
       price_data: {
         currency: 'usd',
         unit_amount: Math.round(offer.price * 100),
@@ -204,6 +304,7 @@ router.post('/checkout', requireAuth, async (req, res, next) => {
     });
     const successQuery = successParams.toString().replace('%7BCHECKOUT_SESSION_ID%7D', '{CHECKOUT_SESSION_ID}');
     const returnUrl = returnUrlForRequest(req);
+    const requestKey = String(req.get('x-idempotency-key') || randomUUID()).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
     const session = await stripe().checkout.sessions.create({
       customer: customerId,
       client_reference_id: req.user.id,
@@ -220,7 +321,7 @@ router.post('/checkout', requireAuth, async (req, res, next) => {
           payment_intent_data: { metadata },
         }
         : { subscription_data: { metadata } }),
-    });
+    }, { idempotencyKey: `parcella-checkout-${req.user.id}-${requestKey}` });
 
     res.json({ url: session.url, sessionId: session.id });
   } catch (err) { next(err); }
@@ -229,6 +330,7 @@ router.post('/checkout', requireAuth, async (req, res, next) => {
 // GET /api/stripe/checkout-session/:sessionId — verify a return from hosted Checkout
 router.get('/checkout-session/:sessionId', requireAuth, async (req, res, next) => {
   try {
+    if (!requireCheckoutConfigured(res)) return;
     const session = await stripe().checkout.sessions.retrieve(req.params.sessionId, {
       expand: ['subscription'],
     });
@@ -254,6 +356,7 @@ router.get('/checkout-session/:sessionId', requireAuth, async (req, res, next) =
 // POST /api/stripe/portal — customer billing portal
 router.post('/portal', requireAuth, async (req, res, next) => {
   try {
+    if (!requireCheckoutConfigured(res)) return;
     const { data: profile } = await sb()
       .from('profiles').select('stripe_customer_id').eq('id', req.user.id).single();
 
@@ -275,6 +378,10 @@ router.post('/portal', requireAuth, async (req, res, next) => {
 router.post('/webhook', async (req, res) => {
   const sig    = req.headers['stripe-signature'];
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  if (!secret || !billingConfiguration().checkoutConfigured) {
+    return res.status(503).json({ error: 'Stripe webhook is not configured.' });
+  }
 
   let event;
   try {
@@ -304,27 +411,11 @@ router.post('/webhook', async (req, res) => {
         break;
       case 'customer.subscription.created':
       case 'customer.subscription.updated': {
-        const sub    = event.data.object;
-        const { data: profile } = await sb()
-          .from('profiles').select('id').eq('stripe_customer_id', sub.customer).maybeSingle();
-        if (profile) {
-          await sb().from('profiles').update({
-            subscription_status: sub.status,
-          }).eq('id', profile.id);
-        }
+        await syncSubscription(event.data.object);
         break;
       }
       case 'customer.subscription.deleted': {
-        const sub = event.data.object;
-        const { data: profile } = await sb()
-          .from('profiles').select('id').eq('stripe_customer_id', sub.customer).maybeSingle();
-        if (profile) {
-          await sb().from('profiles').update({
-            plan:                'free',
-            subscription_status: 'cancelled',
-            stripe_subscription_id: null,
-          }).eq('id', profile.id);
-        }
+        await syncSubscription({ ...event.data.object, status: 'canceled' });
         break;
       }
     }
@@ -347,10 +438,11 @@ export function requirePlan(minPlan) {
     const userPlan = profile?.plan ?? 'free';
     const userIdx  = PLAN_ORDER.indexOf(userPlan);
     const reqIdx   = PLAN_ORDER.indexOf(minPlan);
-    if (userIdx < reqIdx) {
+    const subscriptionActive = userPlan === 'enterprise' || ACTIVE_SUBSCRIPTION_STATUSES.has(profile?.subscription_status);
+    if (userIdx < reqIdx || (minPlan === 'pro' && !subscriptionActive)) {
       return res.status(403).json({
         error:    `${minPlan} plan required`,
-        upgrade:  'https://parcella.com/pricing',
+        upgrade:  'https://parcel-la.vercel.app/#pricing',
         yourPlan: userPlan,
       });
     }

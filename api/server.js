@@ -42,7 +42,7 @@ import excelRouter     from './routes/excel.js';
 import modelRouter     from './routes/model.js';
 import compsRouter     from './routes/comps.js';
 import notesRouter     from './routes/notes.js';
-import stripeRouter    from './routes/stripe.js';
+import stripeRouter, { billingConfiguration } from './routes/stripe.js';
 import feasibilityRouter from './routes/feasibility.js';
 import {
   pdfRouter, authRouter, alertsRouter, submarketRouter,
@@ -134,10 +134,11 @@ app.get('/api/setup-status', async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
+  const billing = billingConfiguration();
   res.json({
     status:    'ok',
     version:   '3.0.0',
-    release:   '2026-09-03-terms-clickwrap',
+    release:   '2026-09-23-billing-hardening',
     timestamp: new Date().toISOString(),
     env:       process.env.NODE_ENV ?? 'development',
     services: {
@@ -146,7 +147,8 @@ app.get('/api/health', (req, res) => {
       socrata:   !!process.env.SOCRATA_APP_TOKEN,
       census:    !!process.env.CENSUS_API_KEY,
       rentcast:  !!process.env.RENTCAST_API_KEY,
-      stripe:    !!process.env.STRIPE_SECRET_KEY,
+      stripe:    billing.checkoutConfigured,
+      stripeWebhook: billing.webhookConfigured,
       resend:    !!process.env.RESEND_API_KEY,
       anthropic: !!process.env.ANTHROPIC_API_KEY,
       regrid:    !!(process.env.REGRID_API_KEY || process.env.REGRID_TOKEN),

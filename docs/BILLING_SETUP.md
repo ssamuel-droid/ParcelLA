@@ -1,14 +1,14 @@
 # ParcelLA Billing Setup
 
 ParcelLA uses Stripe-hosted Checkout for card and US bank account payments.
-Prices are created by the API at checkout time:
+The API enforces these prices server-side:
 
 - Single Property Unlock: $10 one time
 - Unlimited: $49 per month
 
 ## Before enabling checkout
 
-1. Run `supabase/migrations/019_terms_acceptance_audit.sql` and `supabase/migrations/020_lock_down_public_data.sql` in the Supabase SQL editor, then set `TERMS_ENFORCEMENT_ENABLED=true` on the Railway API service.
+1. Run `supabase/migrations/019_terms_acceptance_audit.sql`, `020_lock_down_public_data.sql`, and `021_durable_property_entitlements.sql` in the Supabase SQL editor, then set `TERMS_ENFORCEMENT_ENABLED=true` on the Railway API service.
 2. Have qualified California counsel review `public/terms.html`, identify the correct legal entity, and confirm the liability, venue, renewal, and refund language for the business.
 3. Complete Stripe account activation, identity/business verification, tax details, and payout bank setup.
 
@@ -26,6 +26,17 @@ STRIPE_SECRET_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 APP_URL=https://parcel-la.vercel.app
 ```
+
+Recommended after creating the two Products and Prices in Stripe:
+
+```text
+STRIPE_PROPERTY_PRICE_ID=price_...  # $10 one time
+STRIPE_PRO_PRICE_ID=price_...       # $49 monthly recurring
+```
+
+If the Price IDs are omitted, checkout still uses server-controlled inline
+prices. Never put Stripe secret keys in Vercel or browser code; they belong only
+on the Railway API service.
 
 Use test-mode keys together or live-mode keys together. Never mix modes.
 
@@ -63,6 +74,8 @@ The checkout return endpoint also verifies completed sessions directly with Stri
 
 ## Verification
 
-After Railway redeploys, confirm that `/api/health` reports `services.stripe: true`.
+After Railway redeploys, confirm that `/api/stripe/status` reports `ready: true`
+and `/api/health` reports both `services.stripe: true` and
+`services.stripeWebhook: true`.
 Use a Stripe test-mode card and test bank account before replacing the keys with
 live-mode credentials.

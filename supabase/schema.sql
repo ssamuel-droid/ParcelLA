@@ -338,6 +338,22 @@ CREATE TABLE subscription_events (
   processed_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE property_entitlements (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  site_id TEXT NOT NULL,
+  stripe_checkout_session_id TEXT NOT NULL UNIQUE,
+  stripe_payment_intent_id TEXT,
+  amount_paid INTEGER,
+  currency TEXT NOT NULL DEFAULT 'usd',
+  purchased_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, site_id)
+);
+CREATE INDEX property_entitlements_user_idx ON property_entitlements(user_id, purchased_at DESC);
+ALTER TABLE property_entitlements ENABLE ROW LEVEL SECURITY;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SYNC LOG
 -- ─────────────────────────────────────────────────────────────────────────────

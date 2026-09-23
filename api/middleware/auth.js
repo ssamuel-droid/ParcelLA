@@ -89,14 +89,30 @@ function paidPropertyUnlock(row = {}) {
 
 export async function getUnlockedSiteIds(userId) {
   if (!userId) return [];
-  const { data, error } = await supabase
+  const { data: entitlements, error: entitlementError } = await supabase
+    .from('property_entitlements')
+    .select('site_id')
+    .eq('user_id', userId)
+    .limit(1000);
+
+  const entitlementIds = entitlementError
+    ? []
+    : (entitlements || []).map(row => String(row.site_id || '').trim()).filter(Boolean);
+  if (entitlementError && entitlementError.code !== '42P01' && !/property_entitlements/i.test(entitlementError.message || '')) {
+    throw entitlementError;
+  }
+
+  // Keep reading verified legacy events so purchases made before migration 021
+  // remain permanently available.
+  const { data: events, error: eventError } = await supabase
     .from('subscription_events')
     .select('event_type,stripe_data')
     .eq('user_id', userId)
     .in('event_type', PROPERTY_UNLOCK_EVENT_TYPES)
     .limit(1000);
-  if (error) throw error;
-  return [...new Set((data || []).map(paidPropertyUnlock).filter(Boolean))];
+  if (eventError) throw eventError;
+  const legacyIds = (events || []).map(paidPropertyUnlock).filter(Boolean);
+  return [...new Set([...entitlementIds, ...legacyIds])];
 }
 
 export async function getUnlockedSiteIdsFast(userId, timeoutMs = AUTH_LOOKUP_TIMEOUT_MS) {

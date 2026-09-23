@@ -1163,14 +1163,21 @@ async function signOut() {
   closeAuthDialog();
 }
 
+let checkoutStarting = false;
 async function startCheckout(kind = 'subscription', siteId = null) {
   if (!accountState.user) {
     localStorage.setItem('parcella_checkout_intent', JSON.stringify({ kind, siteId }));
     return openAuthDialog('Log in first, then ParcelLA will continue to secure checkout.');
   }
   if (kind === 'property' && !siteId) return;
+  if (checkoutStarting) return;
+  checkoutStarting = true;
   try {
-    const plans = await fetchJSONWithTimeout(API + '/api/stripe/plans', {}, 8000);
+    const [plans, billing] = await Promise.all([
+      fetchJSONWithTimeout(API + '/api/stripe/plans', {}, 8000),
+      fetchJSONWithTimeout(API + '/api/stripe/status', {}, 8000),
+    ]);
+    if (!billing?.ready) throw new Error('Secure payments are not enabled yet. No payment was attempted.');
     const expected = kind === 'property' ? { key: 'property', price: 10 } : { key: 'pro', price: 49 };
     const liveOffer = Array.isArray(plans) ? plans.find(plan => plan.key === expected.key) : null;
     if (!liveOffer || Number(liveOffer.price) !== expected.price) {
@@ -1178,11 +1185,15 @@ async function startCheckout(kind = 'subscription', siteId = null) {
     }
     const data = await fetchJSONWithTimeout(API + '/api/stripe/checkout', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': globalThis.crypto?.randomUUID?.() || String(Date.now()),
+      },
       body: JSON.stringify({ kind, siteId }),
     }, 20000);
     if (data?.url) window.location.href = data.url;
   } catch (e) {
+    checkoutStarting = false;
     alert('Checkout is not ready yet: ' + (e.message || e));
   }
 }
