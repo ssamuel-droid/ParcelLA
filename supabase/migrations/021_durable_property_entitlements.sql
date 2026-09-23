@@ -19,6 +19,9 @@ CREATE INDEX IF NOT EXISTS property_entitlements_user_idx
   ON public.property_entitlements (user_id, purchased_at DESC);
 
 ALTER TABLE public.property_entitlements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.property_entitlements FORCE ROW LEVEL SECURITY;
+REVOKE ALL PRIVILEGES ON TABLE public.property_entitlements FROM PUBLIC, anon, authenticated;
+GRANT ALL PRIVILEGES ON TABLE public.property_entitlements TO service_role;
 
 COMMENT ON TABLE public.property_entitlements IS
   'Permanent property-level access granted only after a verified paid Stripe Checkout session.';

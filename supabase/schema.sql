@@ -353,6 +353,7 @@ CREATE TABLE property_entitlements (
 );
 CREATE INDEX property_entitlements_user_idx ON property_entitlements(user_id, purchased_at DESC);
 ALTER TABLE property_entitlements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE property_entitlements FORCE ROW LEVEL SECURITY;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- SYNC LOG

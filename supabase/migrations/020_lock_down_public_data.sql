@@ -20,6 +20,7 @@ DECLARE
     'narratives',
     'activity_log',
     'subscription_events',
+    'property_entitlements',
     'sync_log',
     'property_enrichment_cache',
     'planning_cases',
