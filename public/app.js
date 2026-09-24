@@ -263,7 +263,7 @@ const ED1_RENT_PROFILE_2026 = Object.freeze({
   monthlyRents: Object.freeze({ studio: 2332, one: 2499, two: 2998, three: 3465 }),
   grossRentLimits: true,
   utilityAllowanceDeducted: false,
-  assumption: 'Underwritten at the 80% AMI gross-rent ceiling for every unit; optional moderate-income units are not assumed.',
+  assumption: 'Underwritten at the lower of the 80% AMI gross-rent ceiling and the local achievable market rent for each unit type.',
   caveat: 'The final LAHD covenant and entitlement control. Lower AMI tiers and the project-specific utility allowance can reduce tenant-paid rent.',
 });
 
@@ -274,7 +274,22 @@ function ed1AffordabilityForSite(s = {}) {
   const monthlyRents = ['studio', 'one', 'two', 'three'].every(key => Number(rents[key]) > 0)
     ? Object.fromEntries(['studio', 'one', 'two', 'three'].map(key => [key, Number(rents[key])]))
     : { ...ED1_RENT_PROFILE_2026.monthlyRents };
-  return { ...ED1_RENT_PROFILE_2026, ...saved, monthlyRents };
+  const savedUnderwritingRents = saved.underwritingMonthlyRents || saved.underwriting_monthly_rents || {};
+  const localMarketRents = saved.marketMonthlyRents || FRONTEND_RENTS[siteNeighborhood(s)] || FRONTEND_RENTS.Koreatown || {};
+  const underwritingMonthlyRents = Object.fromEntries(
+    ['studio', 'one', 'two', 'three'].map(key => {
+      const savedAmount = Number(savedUnderwritingRents[key]);
+      const marketAmount = Number(localMarketRents[key]);
+      const restrictedAmount = Number(monthlyRents[key]);
+      return [key, savedAmount > 0
+        ? savedAmount
+        : (marketAmount > 0 ? Math.min(restrictedAmount, marketAmount) : restrictedAmount)];
+    })
+  );
+  const marketCapApplied = ['studio', 'one', 'two', 'three'].some(
+    key => underwritingMonthlyRents[key] < monthlyRents[key]
+  );
+  return { ...ED1_RENT_PROFILE_2026, ...saved, monthlyRents, underwritingMonthlyRents, marketCapApplied };
 }
 
 function appliedRentPremiumForSite(s, value) {
@@ -288,7 +303,10 @@ function ed1RentDisclosure(s = {}) {
   const utilityText = profile.utilityAllowanceDeducted
     ? 'Project utility allowance is reflected.'
     : 'Gross limits shown before the project-specific utility allowance.';
-  return `${profile.scheduleYear} ${profile.schedule} at ${profile.amiPct}% AMI. ${profile.assumption} ${utilityText} ${profile.caveat}`;
+  const marketText = profile.marketCapApplied
+    ? `Local ${siteNeighborhood(s)} market rents reduce the modeled income below the legal maximum.`
+    : 'The restricted-rent ceiling is below the modeled local market rent.';
+  return `${profile.scheduleYear} ${profile.schedule} at ${profile.amiPct}% AMI. ${profile.assumption} ${marketText} ${utilityText} ${profile.caveat}`;
 }
 
 function siteMetaLine(s) {
@@ -4001,7 +4019,7 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
 
 function rentsForSite(s = {}, submarket = null) {
   const ed1 = ed1AffordabilityForSite(s);
-  if (ed1) return { ...ed1.monthlyRents };
+  if (ed1) return { ...ed1.underwritingMonthlyRents };
   const apiRents = submarket?.rents || {};
   const localRents = FRONTEND_RENTS[siteNeighborhood(s)] || FRONTEND_RENTS.Koreatown || {};
   return {
@@ -4092,7 +4110,7 @@ function unitMixDisplayRows(s = {}, submarket = null) {
       rent,
       monthly: Math.round(unitCount * rent),
       annual: Math.round(unitCount * rent * 12),
-      source: ed1 ? `${ed1.scheduleYear} ${ed1.schedule} - ${ed1.amiPct}% AMI gross limit` : info.source,
+      source: ed1 ? `${ed1.scheduleYear} ${ed1.schedule} - lower of ${ed1.amiPct}% AMI limit and local market` : info.source,
     };
   });
 }
@@ -4101,7 +4119,7 @@ function unitMixSourceText(s = {}) {
   const info = normalizedUnitMixForSite(s);
   const parsed = info.parsedTotal ? `; parsed ${info.parsedTotal} referenced units` : '';
   const ed1 = ed1AffordabilityForSite(s);
-  if (ed1) return `${info.source}${parsed}; rents: ${ed1.scheduleYear} ${ed1.schedule}, ${ed1.amiPct}% AMI gross limits`;
+  if (ed1) return `${info.source}${parsed}; rents: lower of ${ed1.scheduleYear} ${ed1.schedule} ${ed1.amiPct}% AMI gross limits and local market`;
   return `${info.source}${parsed}`;
 }
 
@@ -6302,7 +6320,7 @@ ${house ? `<div class="two-col">
     <table>
       <tr><th>Metric</th><th>Submarket</th><th>LA Overall</th></tr>
       <tr><td>Vacancy Rate</td><td>4.2%</td><td>5.1%</td></tr>
-      <tr><td>${pdfEd1 ? `${pdfEd1.amiPct}% AMI Gross Rent Limit (1BR)` : 'Avg Asking Rent (1BR)'}</td><td>${fmtD(rentsForSite(s).one)}/mo</td><td>${pdfEd1 ? 'Utility allowance not deducted' : '$2,800/mo'}</td></tr>
+      <tr><td>${pdfEd1 ? 'Underwritten Rent (1BR)' : 'Avg Asking Rent (1BR)'}</td><td>${fmtD(rentsForSite(s).one)}/mo</td><td>${pdfEd1 ? `Lower of ${pdfEd1.amiPct}% AMI limit and local market; utility allowance not deducted` : '$2,800/mo'}</td></tr>
       <tr><td>Rent Growth (YoY)</td><td>3.8%</td><td>3.2%</td></tr>
       <tr><td>Absorption (12-mo)</td><td>94%</td><td>88%</td></tr>
       <tr><td>Renter Household %</td><td>67%</td><td>61%</td></tr>

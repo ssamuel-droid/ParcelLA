@@ -1110,7 +1110,16 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
     isEd1: isEd1Project(s, rawPermit),
     workDescription: rawPermit.work_description || rawPermit.project_description,
   });
-  const rents = underwritingRentsForSite({ ...s, isEd1: !!ed1Affordability, ed1Affordability }, RENTS[neighborhood] || RENTS.Koreatown);
+  const marketRents = RENTS[neighborhood] || RENTS.Koreatown;
+  const rents = underwritingRentsForSite({ ...s, isEd1: !!ed1Affordability, ed1Affordability }, marketRents);
+  const ed1Underwriting = ed1Affordability ? {
+    ...ed1Affordability,
+    underwritingMonthlyRents: rents,
+    marketMonthlyRents: marketRents,
+    marketCapApplied: ['studio', 'one', 'two', 'three'].some(
+      key => Number(rents[key]) < Number(ed1Affordability.monthlyRents?.[key])
+    ),
+  } : null;
   const blendedRent = (
     unitMix.mix.studio * (rents.studio || 0) +
     unitMix.mix.one * (rents.one || 0) +
@@ -1172,7 +1181,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   return {
     needsLandComp,
     landBasisReliable: !needsLandComp,
-    ed1Affordability,
+    ed1Affordability: ed1Underwriting,
     noi,
     totalCost: recastTotalCost,
     landCost,

@@ -15,7 +15,7 @@ const ED1_RENT_METADATA = Object.freeze({
   schedule: 'CTCAC Schedule IX',
   source: '2026 CTCAC Maximum Multi-Family Tax Subsidy Rents - Los Angeles County',
   sourceUrl: 'https://www.treasurer.ca.gov/sites/default/files/ctcac/2026%20Rent%20Limits%205-1-26%2B%20-%20ADA_0.pdf',
-  assumption: 'Underwritten at the 80% AMI gross-rent ceiling for every unit; optional moderate-income units are not assumed.',
+  assumption: 'Underwritten at the lower of the 80% AMI gross-rent ceiling and the local achievable market rent for each unit type.',
   caveat: 'The final LAHD covenant and entitlement control. Lower AMI tiers and the project-specific utility allowance can reduce tenant-paid rent.',
 });
 
@@ -70,8 +70,17 @@ function resolveEd1Affordability(site = {}) {
 
 function rentsForSite(site = {}, marketRents = {}) {
   const profile = resolveEd1Affordability(site);
-  if (profile) return { ...profile.monthlyRents };
-  return normalizedMonthlyRents(marketRents) || { studio: 0, one: 0, two: 0, three: 0 };
+  const normalizedMarket = normalizedMonthlyRents(marketRents);
+  if (profile) {
+    if (!normalizedMarket) return { ...profile.monthlyRents };
+    return Object.fromEntries(
+      ['studio', 'one', 'two', 'three'].map(key => [
+        key,
+        Math.min(Number(profile.monthlyRents[key]) || 0, normalizedMarket[key]),
+      ])
+    );
+  }
+  return normalizedMarket || { studio: 0, one: 0, two: 0, three: 0 };
 }
 
 module.exports = {
