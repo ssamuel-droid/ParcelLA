@@ -828,6 +828,7 @@ const DEFAULT_USER_METRICS = {
   marketRentPerSfMonthly:0,
   resalePricePerSf:0,
   imputedLandPerDoorMarket:100000,
+  imputedLandPerDoorEd1:30000,
   imputedHouseLandPerLotSf:100,
 };
 const CONSTRUCTION_PLANS = {
@@ -1514,10 +1515,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <div class="setfield"><label>Disposition / sale costs</label><div class="mfr"><input type="number" id="set-exit-cost" step="0.5"><span>%</span></div></div>
         <div class="setfield income-setting"><label>Market rent override</label><div class="mfr"><span>$</span><input type="number" id="set-rent-psf" step="0.05"><span>/SF/mo</span></div></div>
         <div class="setfield"><label>Home resale override</label><div class="mfr"><span>$</span><input type="number" id="set-resale-psf" step="5"><span>/SF</span></div></div>
-        <div class="setfield income-setting"><label>Apartment land / unit</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-market" step="5000"></div></div>
+        <div class="setfield income-setting"><label>Market-rate apartment land / unit</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-market" step="5000"></div></div>
+        <div class="setfield income-setting"><label>ED1 land / unit</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-ed1" step="5000"></div></div>
         <div class="setfield"><label>New house land / lot SF</label><div class="mfr"><span>$</span><input type="number" id="set-land-house-psf" step="5"><span>/SF</span></div></div>
       </div>
-      <div class="setnote" id="settings-note">Apartment land is calculated per unit. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. Enter 0 for rent or resale overrides to use market evidence.</div>
+      <div class="setnote" id="settings-note">Market-rate and ED1 apartment land are calculated per unit using separate assumptions. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. Enter 0 for rent or resale overrides to use market evidence.</div>
       <div class="setnote" id="settings-save-status">Signed-in users save these assumptions to their ParcelLA account.</div>
     </div>
     <div class="setactions">
@@ -2207,6 +2209,7 @@ function populateSettingsForm() {
   setSettingsField('set-rent-psf', m.marketRentPerSfMonthly);
   setSettingsField('set-resale-psf', m.resalePricePerSf);
   setSettingsField('set-land-door-market', m.imputedLandPerDoorMarket);
+  setSettingsField('set-land-door-ed1', m.imputedLandPerDoorEd1);
   setSettingsField('set-land-house-psf', m.imputedHouseLandPerLotSf);
 }
 
@@ -2284,6 +2287,7 @@ async function saveSettings() {
     marketRentPerSfMonthly: metricNumber(g('set-rent-psf')?.value, current.marketRentPerSfMonthly, 0, 30),
     resalePricePerSf: metricNumber(g('set-resale-psf')?.value, current.resalePricePerSf, 0, 5000),
     imputedLandPerDoorMarket: metricNumber(g('set-land-door-market')?.value, current.imputedLandPerDoorMarket, 0, 2000000),
+    imputedLandPerDoorEd1: metricNumber(g('set-land-door-ed1')?.value, current.imputedLandPerDoorEd1, 0, 2000000),
     imputedHouseLandPerLotSf: metricNumber(g('set-land-house-psf')?.value, current.imputedHouseLandPerLotSf, 0, 2000),
   };
   saveUserMetrics();
@@ -2365,8 +2369,11 @@ function zoneMatches(siteZone, selectedZone) {
   return actual === selected || actual.startsWith(selected) || zoneBase(actual) === zoneBase(selected);
 }
 
-function landPerDoorForSite() {
-  return Number(currentUserMetrics().imputedLandPerDoorMarket || DEFAULT_USER_METRICS.imputedLandPerDoorMarket);
+function landPerDoorForSite(s = {}) {
+  const metrics = currentUserMetrics();
+  return isEd1Site(s)
+    ? Number(metrics.imputedLandPerDoorEd1 || DEFAULT_USER_METRICS.imputedLandPerDoorEd1)
+    : Number(metrics.imputedLandPerDoorMarket || DEFAULT_USER_METRICS.imputedLandPerDoorMarket);
 }
 
 function houseLandPerLotSf() {
@@ -2407,7 +2414,8 @@ function landValueSourceNote(s) {
   }
   if (!isOffMarketSite(s)) return 'Listing ask price used as land basis.';
   if (canUseDoorLandBasis(s)) {
-    return `User apartment land setting: ${fmtD(landPerDoorForSite(s))}/unit x ${(s.units || 0).toLocaleString()} units.`;
+    const program = isEd1Site(s) ? 'ED1' : 'market-rate apartment';
+    return `User ${program} land setting: ${fmtD(landPerDoorForSite(s))}/unit x ${(s.units || 0).toLocaleString()} units.`;
   }
   if (s?.landValueSource === 'recent_sales_comps') {
     const metric = s.landValueMetric || 'sales comp metric';
@@ -2433,7 +2441,7 @@ function landValueSourceNote(s) {
 function landBasisLabel(s) {
   if (canUseHouseLotLandBasis(s)) return 'User house land basis';
   if (!isOffMarketSite(s)) return 'Asking price';
-  if (canUseDoorLandBasis(s)) return 'User apartment land basis';
+  if (canUseDoorLandBasis(s)) return isEd1Site(s) ? 'User ED1 land basis' : 'User apartment land basis';
   if (s?.landValueSource === 'recent_sales_comps') return 'Comp land basis';
   if (hasPermitValuationEstimate(s)) return 'Permit valuation estimate';
   if (s?.landValueSource === 'permit_valuation_fallback') return 'Land basis';

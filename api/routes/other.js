@@ -70,7 +70,7 @@ const UNDERWRITING_METRIC_RULES = {
   baseSoftCostPct: [5, 45], contingencyPct: [0, 25], loanToCostPct: [0, 90], interestRatePct: [0, 20],
   constructionMonths: [1, 120], amortizationYears: [1, 50], vacancyPct: [0, 30], expenseRatioPct: [5, 70],
   rentGrowthPct: [-10, 12], exitCapSpreadBps: [-100, 200], exitCostPct: [0, 20], marketRentPerSfMonthly: [0, 30],
-  resalePricePerSf: [0, 5000], imputedLandPerDoorMarket: [0, 2000000], imputedHouseLandPerLotSf: [0, 2000],
+  resalePricePerSf: [0, 5000], imputedLandPerDoorMarket: [0, 2000000], imputedLandPerDoorEd1: [0, 2000000], imputedHouseLandPerLotSf: [0, 2000],
 };
 
 function sanitizeUnderwritingSettings(input = {}) {

@@ -13,6 +13,7 @@ import { SITES, normalizeSite } from '../../src/data/sites.js';
 import { runModel, runScenarios } from '../../src/model/financialModel.js';
 import { RENTS } from '../../src/data/submarkets.js';
 import affordableRents from '../../src/data/affordableRents.cjs';
+import landBasisRules from '../../src/data/landBasis.cjs';
 import { enrichSite }    from '../../src/data/laOpenData.js';
 import { scoreSiteDemand, SUBMARKET_CENSUS_ESTIMATES } from '../../src/scoring/DemandScore.js';
 import { requireAuth, optionalAuth, getUserAccessFast, getUnlockedSiteIdsFast } from '../middleware/auth.js';
@@ -26,6 +27,7 @@ import {
 import { extractPlanningPartiesFromDocuments } from '../lib/planning-parties.js';
 
 const { resolveEd1Affordability, rentsForSite: underwritingRentsForSite } = affordableRents;
+const { perDoorLandBasis } = landBasisRules;
 
 const router = Router();
 const planningDb = supabase;
@@ -45,7 +47,6 @@ const SITE_PAGE_RETRY_DELAY_MS = 150;
 const SITE_PAGE_RETRY_ATTEMPTS = 3;
 const SITE_LOAD_PAGE_SIZE = 1000;
 const MODEL_CACHE_LIMIT = 12;
-const DEFAULT_MARKET_LAND_PER_DOOR = 100000;
 const DEFAULT_HOUSE_LAND_PER_LOT_SF = 100;
 const HOUSE_RESALE_PSF = {
   'Pacific Palisades': 1150, 'Brentwood': 1050, 'Venice': 1000, 'West LA': 900,
@@ -538,22 +539,6 @@ function guessHood(address, zone) {
   if (addr.includes('MID-WILSHIRE') || addr.includes('WILSHIRE')) return 'Mid-Wilshire';
   // Guess by zip or street
   return 'Koreatown';  // default fallback
-}
-
-function perDoorLandBasis(type, units) {
-  if (!['Multifamily', 'Mixed-Use'].includes(type) || !Number(units || 0)) return null;
-  const perDoor = DEFAULT_MARKET_LAND_PER_DOOR;
-  return {
-    value: Math.round(perDoor * Number(units || 0)),
-    source: 'default_market_per_door',
-    metricLabel: 'price per door',
-    metricValue: perDoor,
-    basisQuantity: Number(units || 0),
-    compCount: 0,
-    matchLabel: 'market-rate default',
-    recencyDays: LAND_COMP_RECENCY_DAYS,
-    comps: [],
-  };
 }
 
 function houseLotLandBasis(type, lotSf) {
@@ -1140,7 +1125,7 @@ function modelFromSupabaseSite(s, landCompBenchmarks = null) {
   const carryCost = s.carry_cost ?? s.carryCost ?? carryFallback;
   const fallbackLandCost = Math.max(0, Math.round(preCarryCost - hardCosts - softCosts));
   const offMarket = /off|not for sale/i.test(String(s.status || '')) || isNewHousePermitPlaceholder(s, rawPermit);
-  const doorLand = offMarket ? perDoorLandBasis(type, units) : null;
+  const doorLand = offMarket ? perDoorLandBasis({ type, units, isEd1: !!ed1Affordability }) : null;
   const houseLotLand = offMarket ? houseLotLandBasis(type, lotDetails.lotSf) : null;
   const compLand = offMarket ? estimateLandBasisFromComps({
     neighborhood,
