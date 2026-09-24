@@ -47,7 +47,8 @@ export const RENTS = {
   'Granada Hills': { studio: 1800, one: 2300, two: 2950, three: 3900 },
   'Northridge':    { studio: 1750, one: 2200, two: 2850, three: 3750 },
   'Panorama City': { studio: 1600, one: 2050, two: 2650, three: 3500 },
-  'Pacoima':       { studio: 1550, one: 1950, two: 2550, three: 3350 },
+  // Median active apartment listings within 3 miles of 11070 Borden, RentCast 2026-09-24.
+  'Pacoima':       { studio: 1650, one: 1973, two: 2385, three: 3007 },
   'West Adams (Jefferson Park)': { studio: 2100, one: 2700, two: 3500, three: 4600 },
   'Leimert Park':  { studio: 2000, one: 2550, two: 3300, three: 4350 },
   'Hyde Park':     { studio: 1900, one: 2400, two: 3100, three: 4100 },

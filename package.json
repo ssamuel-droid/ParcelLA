@@ -17,6 +17,7 @@
     "test:billing": "node scripts/test-billing.mjs",
     "test:ed1-rents": "node scripts/test-ed1-rents.cjs",
     "test:land-basis": "node scripts/test-land-basis.cjs",
+    "test:rent-comps": "node scripts/test-rent-comp-fallback.mjs",
     "test-apis": "python scripts/test_apis.py",
     "audit:filters": "node scripts/audit-site-filters.mjs",
     "audit:narrative": "node scripts/audit-narrative.mjs",

@@ -42,6 +42,7 @@ const HOOD_ZIPS = {
   'Woodland Hills': '91364',
   'Reseda':        '91335',
   'Northridge':    '91325',
+  'Pacoima':       '91331',
 };
 
 function asNumber(value) {
@@ -324,9 +325,10 @@ const BED_LABELS = {
   three: { bedroomType: '3 BR', bedrooms: 3 },
 };
 
-function benchmarkRentRows(hood, storedComps, siteLat, siteLng) {
+export function benchmarkRentRows(hood, storedComps, siteLat, siteLng) {
+  const normalizedHood = String(hood || '').trim().toLowerCase();
   const storedBenchmarks = (storedComps || [])
-    .filter(row => !row.address && row.monthlyRent)
+    .filter(row => !row.address && row.monthlyRent && String(row.neighborhood || '').trim().toLowerCase() === normalizedHood)
     .map(row => ({
       ...row,
       source: row.source || 'saved market benchmark',
