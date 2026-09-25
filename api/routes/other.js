@@ -71,6 +71,7 @@ const UNDERWRITING_METRIC_RULES = {
   constructionMonths: [1, 120], amortizationYears: [1, 50], vacancyPct: [0, 30], expenseRatioPct: [5, 70],
   rentGrowthPct: [-10, 12], exitCapSpreadBps: [-100, 200], exitCostPct: [0, 20], marketRentPerSfMonthly: [0, 30],
   resalePricePerSf: [0, 5000], imputedLandPerDoorMarket: [0, 2000000], imputedLandPerDoorEd1: [0, 2000000], imputedHouseLandPerLotSf: [0, 2000],
+  unitSfStudio: [200, 3000], unitSfOneBedroom: [200, 3000], unitSfTwoBedroom: [200, 3000], unitSfThreeBedroom: [200, 3000],
 };
 
 function sanitizeUnderwritingSettings(input = {}) {

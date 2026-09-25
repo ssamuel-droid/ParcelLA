@@ -215,13 +215,15 @@ function siteUnitsText(s) {
 }
 
 function siteProjectSfText(s) {
-  const direct = Number(s?.buildingSf || s?.totalBuildingSf || 0);
+  const direct = isHouseSite(s)
+    ? Number(s?.buildingSf || s?.totalBuildingSf || 0)
+    : verifiedProjectBuildingSf(s);
   if (Number.isFinite(direct) && direct > 0) {
     const label = s?.type === 'New House' ? 'Home' : 'Project';
     return `${label} ${Math.round(direct).toLocaleString()} SF`;
   }
   if (s?.type === 'New House') return 'Home SF TBD';
-  const derived = Number(s?.units || 0) * Number(s?.usf || s?.avgUnitSf || 0);
+  const derived = Number(s?.units || 0) * weightedAverageUnitSfForSite(s);
   return Number.isFinite(derived) && derived > 0 ? `Project ${Math.round(derived).toLocaleString()} SF est.` : '';
 }
 
@@ -325,6 +327,7 @@ function landPricePerSfText(s, land) {
 }
 
 function siteAvgUnitSfText(s) {
+  if (!isHouseSite(s)) return `${weightedAverageUnitSfForSite(s).toLocaleString()} SF avg (unit-size settings)`;
   const avg = Number(s?.usf || s?.avgUnitSf || 0);
   const source = String(s?.buildingSfSource || s?.avgUnitSfSource || '');
   if (/permit valuation-derived/i.test(source) && avg > 0) return `${Math.round(avg).toLocaleString()} SF avg est.`;
@@ -334,6 +337,9 @@ function siteAvgUnitSfText(s) {
 
 function siteUnitSourceNote(s) {
   const units = Number(s?.units || 0);
+  if (!isHouseSite(s) && !verifiedProjectBuildingSf(s)) {
+    return `${units > 0 ? 'Unit count from permit/source data.' : 'Unit count was not provided.'} Average unit SF is weighted from the saved Studio, 1BR, 2BR, and 3BR size settings.`;
+  }
   const avg = Number(s?.usf || s?.avgUnitSf || 0);
   const source = String(s?.buildingSfSource || s?.avgUnitSfSource || '');
   const avgAssumed = !avg || /model assumption/i.test(source) || (avg === 800 && (s?.permitNumber || s?.permitSourceId || /default/i.test(String(s?.unitMixSource || ''))));
@@ -830,6 +836,10 @@ const DEFAULT_USER_METRICS = {
   imputedLandPerDoorMarket:100000,
   imputedLandPerDoorEd1:30000,
   imputedHouseLandPerLotSf:100,
+  unitSfStudio:600,
+  unitSfOneBedroom:775,
+  unitSfTwoBedroom:1000,
+  unitSfThreeBedroom:1250,
 };
 const CONSTRUCTION_PLANS = {
   auto:     { label:'Auto by type', hardCost:null, softPct:0.18, months:18, rentPremium:0,    note:'Uses the project-type base cost.' },
@@ -1518,8 +1528,12 @@ body{font-family:'Inter',system-ui,sans-serif;background:#eef2f6;color:var(--ink
         <div class="setfield income-setting"><label>Market-rate apartment land / unit</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-market" step="5000"></div></div>
         <div class="setfield income-setting"><label>ED1 land / unit</label><div class="mfr"><span>$</span><input type="number" id="set-land-door-ed1" step="5000"></div></div>
         <div class="setfield"><label>New house land / lot SF</label><div class="mfr"><span>$</span><input type="number" id="set-land-house-psf" step="5"><span>/SF</span></div></div>
+        <div class="setfield income-setting"><label>Studio unit size</label><div class="mfr"><input type="number" id="set-unit-sf-studio" min="200" max="3000" step="25"><span>SF</span></div></div>
+        <div class="setfield income-setting"><label>1-bedroom unit size</label><div class="mfr"><input type="number" id="set-unit-sf-one" min="200" max="3000" step="25"><span>SF</span></div></div>
+        <div class="setfield income-setting"><label>2-bedroom unit size</label><div class="mfr"><input type="number" id="set-unit-sf-two" min="200" max="3000" step="25"><span>SF</span></div></div>
+        <div class="setfield income-setting"><label>3-bedroom unit size</label><div class="mfr"><input type="number" id="set-unit-sf-three" min="200" max="3000" step="25"><span>SF</span></div></div>
       </div>
-      <div class="setnote" id="settings-note">Market-rate and ED1 apartment land are calculated per unit using separate assumptions. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. Enter 0 for rent or resale overrides to use market evidence.</div>
+      <div class="setnote" id="settings-note">Market-rate and ED1 apartment land are calculated per unit using separate assumptions. Unit sizes are weighted by each project's unit mix and used when verified plan area is unavailable. New-house land is calculated from the actual permit lot size. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo. Enter 0 for rent or resale overrides to use market evidence.</div>
       <div class="setnote" id="settings-save-status">Signed-in users save these assumptions to their ParcelLA account.</div>
     </div>
     <div class="setactions">
@@ -2211,6 +2225,10 @@ function populateSettingsForm() {
   setSettingsField('set-land-door-market', m.imputedLandPerDoorMarket);
   setSettingsField('set-land-door-ed1', m.imputedLandPerDoorEd1);
   setSettingsField('set-land-house-psf', m.imputedHouseLandPerLotSf);
+  setSettingsField('set-unit-sf-studio', m.unitSfStudio);
+  setSettingsField('set-unit-sf-one', m.unitSfOneBedroom);
+  setSettingsField('set-unit-sf-two', m.unitSfTwoBedroom);
+  setSettingsField('set-unit-sf-three', m.unitSfThreeBedroom);
 }
 
 function isHouseOnlyFilterMode() {
@@ -2240,7 +2258,7 @@ function syncUnderwritingModeControls() {
   const settingsNote = g('settings-note');
   if (settingsNote) settingsNote.textContent = houseOnly
     ? 'New-house land is calculated from actual permit lot size. Enter 0 for the resale override to use recent local sales. These assumptions update the deal list, detail screen, map hover cards, Excel workbook, and PDF memo.'
-    : 'Apartment land is calculated per unit. Enter 0 for rent or resale overrides to use market evidence. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo.';
+    : 'Apartment land is calculated per unit. Unit sizes are weighted by the project unit mix when verified plan area is unavailable. Enter 0 for rent or resale overrides to use market evidence. Changing these assumptions immediately re-underwrites the deal list, detail screen, map hover cards, Excel workbook, and PDF memo.';
   const status = g('settings-save-status');
   if (status) status.textContent = accountState.user
     ? 'These assumptions are saved to your ParcelLA account and follow you across devices.'
@@ -2289,6 +2307,10 @@ async function saveSettings() {
     imputedLandPerDoorMarket: metricNumber(g('set-land-door-market')?.value, current.imputedLandPerDoorMarket, 0, 2000000),
     imputedLandPerDoorEd1: metricNumber(g('set-land-door-ed1')?.value, current.imputedLandPerDoorEd1, 0, 2000000),
     imputedHouseLandPerLotSf: metricNumber(g('set-land-house-psf')?.value, current.imputedHouseLandPerLotSf, 0, 2000),
+    unitSfStudio: metricNumber(g('set-unit-sf-studio')?.value, current.unitSfStudio, 200, 3000),
+    unitSfOneBedroom: metricNumber(g('set-unit-sf-one')?.value, current.unitSfOneBedroom, 200, 3000),
+    unitSfTwoBedroom: metricNumber(g('set-unit-sf-two')?.value, current.unitSfTwoBedroom, 200, 3000),
+    unitSfThreeBedroom: metricNumber(g('set-unit-sf-three')?.value, current.unitSfThreeBedroom, 200, 3000),
   };
   saveUserMetrics();
   refreshUnderwritingViews();
@@ -3438,7 +3460,7 @@ function applyFilters() {
     if (ed1Only && !isEd1Site(s)) return false;
     if (hood && !s.locked && siteNeighborhood(s) !== hood) return false;
     if (s.units < umin || s.units > umax) return false;
-    const buildingSf = siteBuildingSf(s);
+    const buildingSf = underwritingBuildingSf(s);
     if (sfmin && buildingSf < sfmin) return false;
     if (sfmax !== Infinity && buildingSf > sfmax) return false;
     const landBasis = siteLandBasisForFilter(s, costs);
@@ -3980,7 +4002,7 @@ function incomeStatementForSite(s, costs = null, plan = currentConstructionPlan(
   const vacancyRate = metricRate('vacancyPct') || 0.05;
   const unitMixGrossRent = grossPotentialRentFromUnitMix(s);
   const customRentPsf = isEd1Site(s) ? 0 : Number(metrics.marketRentPerSfMonthly || 0);
-  const rentableSf = Math.max(0, Number(s.units || 0) * Number(s.usf || 0)) || siteBuildingSf(s);
+  const rentableSf = Math.round(Number(s.units || 0) * weightedAverageUnitSfForSite(s)) || underwritingBuildingSf(s);
   const customGrossRent = customRentPsf > 0 && rentableSf > 0 ? customRentPsf * rentableSf * 12 : 0;
   const baseGrossPotentialRent = Math.round(customGrossRent || unitMixGrossRent || s.grossPotentialRent || (storedNoi ? storedNoi / Math.max(0.01, (1 - opexRatio) * (1 - vacancyRate)) : 0));
   const rentPremium = appliedRentPremiumForSite(s, plan.rentPremium);
@@ -4065,6 +4087,40 @@ function normalizedUnitMixForSite(s = {}) {
   };
 }
 
+function unitSizeSettings() {
+  const metrics = currentUserMetrics();
+  return {
+    studio: Number(metrics.unitSfStudio) || DEFAULT_USER_METRICS.unitSfStudio,
+    one: Number(metrics.unitSfOneBedroom) || DEFAULT_USER_METRICS.unitSfOneBedroom,
+    two: Number(metrics.unitSfTwoBedroom) || DEFAULT_USER_METRICS.unitSfTwoBedroom,
+    three: Number(metrics.unitSfThreeBedroom) || DEFAULT_USER_METRICS.unitSfThreeBedroom,
+  };
+}
+
+function weightedAverageUnitSfForSite(s = {}) {
+  if (isHouseSite(s)) return Math.round(Number(s.usf || s.avgUnitSf || 0));
+  const { mix } = normalizedUnitMixForSite(s);
+  const sizes = unitSizeSettings();
+  return Math.round(['studio', 'one', 'two', 'three'].reduce(
+    (total, key) => total + (Number(mix[key]) || 0) * sizes[key],
+    0,
+  ));
+}
+
+function verifiedProjectBuildingSf(s = {}) {
+  const direct = Number(s.buildingSf || s.totalBuildingSf || 0);
+  const source = String(s.buildingSfSource || '').toLowerCase();
+  const verifiedSource = s.buildingSfParsed === true || /permit work description|permit source field|plan|verified|city record/.test(source);
+  return Number.isFinite(direct) && direct > 0 && verifiedSource ? direct : 0;
+}
+
+function underwritingBuildingSf(s = {}) {
+  if (isHouseSite(s)) return siteBuildingSf(s);
+  const verified = verifiedProjectBuildingSf(s);
+  if (verified > 0) return verified;
+  return Math.round(Number(s.units || 0) * weightedAverageUnitSfForSite(s));
+}
+
 function unitMixCountsForSite(s = {}) {
   const units = Math.max(0, Math.round(Number(s.units || 0)));
   const { mix } = normalizedUnitMixForSite(s);
@@ -4101,6 +4157,7 @@ function unitMixDisplayRows(s = {}, submarket = null) {
   const info = normalizedUnitMixForSite(s);
   const counts = unitMixCountsForSite(s);
   const rents = rentsForSite(s, submarket);
+  const sizes = unitSizeSettings();
   const ed1 = ed1AffordabilityForSite(s);
   return [
     ['studio', 'Studio'],
@@ -4115,6 +4172,7 @@ function unitMixDisplayRows(s = {}, submarket = null) {
       label,
       mix: Number(info.mix[key]) || 0,
       units: unitCount,
+      unitSf: sizes[key],
       rent,
       monthly: Math.round(unitCount * rent),
       annual: Math.round(unitCount * rent * 12),
@@ -4136,7 +4194,7 @@ function unitMixRowsHTML(s = {}) {
   return `
     <table class="ct">
       <tr><td>Source</td><td>${escapeText(unitMixSourceText(s))}</td></tr>
-      ${rows.map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}% | ${fmtN(row.units)} units | ${fmtD(row.rent)}/mo | ${fmtD(row.annual)}/yr</td></tr>`).join('')}
+      ${rows.map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}% | ${fmtN(row.units)} units | ${fmtN(row.unitSf)} SF/unit | ${fmtD(row.rent)}/mo | ${fmtD(row.annual)}/yr</td></tr>`).join('')}
       <tr class="tot"><td>Gross potential rent</td><td>${fmtD(grossPotentialRentFromUnitMix(s))}</td></tr>
       ${isEd1Site(s) ? `<tr><td>ED1 rent limitation</td><td>${escapeText(ed1RentDisclosure(s))}</td></tr>` : ''}
     </table>`;
@@ -4144,12 +4202,12 @@ function unitMixRowsHTML(s = {}) {
 
 function unitMixPDFRows(s = {}) {
   return `
-      <tr><td>Source</td><td colspan="3" style="text-align:left;font-weight:400;color:#666">${escapeText(unitMixSourceText(s))}</td></tr>
-      ${unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}%</td><td>${fmtN(row.units)}</td><td>${fmtD(row.rent)}/mo</td></tr>`).join('')}`;
+      <tr><td>Source</td><td colspan="4" style="text-align:left;font-weight:400;color:#666">${escapeText(unitMixSourceText(s))}</td></tr>
+      ${unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${Math.round(row.mix * 1000) / 10}%</td><td>${fmtN(row.units)}</td><td>${fmtN(row.unitSf)} SF</td><td>${fmtD(row.rent)}/mo</td></tr>`).join('')}`;
 }
 
 function unitMixRentRollPDFRows(s = {}) {
-  return unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${fmtN(row.units)}</td><td>${fmtD(row.rent)}</td><td>${fmtD(row.annual)}</td></tr>`).join('');
+  return unitMixDisplayRows(s).map(row => `<tr><td>${row.label}</td><td>${fmtN(row.units)}</td><td>${fmtN(row.unitSf)} SF</td><td>${fmtD(row.rent)}</td><td>${fmtD(row.annual)}</td></tr>`).join('');
 }
 
 function expenseRowsHTML(expenseDetail = {}) {
@@ -4181,8 +4239,8 @@ function baseHardCostPerSf(type) {
 function costModelForSite(s, plan = currentConstructionPlan()) {
   const metrics = currentUserMetrics();
   const units = s.units || 0;
-  const avgUnitSf = s.usf || 800;
-  const totalSF = siteBuildingSf(s) || (units * avgUnitSf);
+  const avgUnitSf = isHouseSite(s) ? Number(s.usf || s.avgUnitSf || 0) : weightedAverageUnitSfForSite(s);
+  const totalSF = underwritingBuildingSf(s) || (units * avgUnitSf);
   const userLand = imputedLandFromUserSetting(s);
   const land = userLand || s.landCost || siteAskPrice(s) || 0;
   const override = currentHardCostOverride();
@@ -4328,7 +4386,7 @@ function renderDetail(s) {
   const landDisplay = hasReliableLandBasis(s) ? fmtD(land) : (needsLotSf ? 'Lot SF needed' : 'Not provided');
   const metrics = currentUserMetrics();
   const vacancyLabel = Math.round(metrics.vacancyPct * 10) / 10;
-  const totalSF=siteBuildingSf(s)||((s.units||0)*(s.usf||800));
+  const totalSF=costs.totalSF || underwritingBuildingSf(s);
   const hardCostOverride=currentHardCostOverride();
   const hardCosts=costs.hardCosts;
   const softCosts=costs.softCosts;
@@ -5508,13 +5566,14 @@ function rentRowsFromSubmarket(s, submarket) {
   const unitMix = unitMixDisplayRows(s, submarket);
   const rows = [
     xlsRow(['Unit Mix Source', unitMixSourceText(s)]),
-    xlsHeaderRow(['Unit Type', 'Mix %', 'Units', 'Rent / Month', 'Monthly Rent', 'Annual Rent']),
+    xlsHeaderRow(['Unit Type', 'Mix %', 'Units', 'Unit SF', 'Rent / Month', 'Monthly Rent', 'Annual Rent']),
   ];
   unitMix.forEach(row => {
     rows.push(xlsRow([
       row.label,
       cellPct(Math.round(row.mix * 1000) / 10),
       cellNumber(row.units),
+      cellNumber(row.unitSf),
       cellMoney(row.rent),
       cellMoney(row.monthly),
       cellMoney(row.annual),
@@ -5524,7 +5583,7 @@ function rentRowsFromSubmarket(s, submarket) {
   const units = s.units || 0;
   const blended = units ? Math.round(annual / 12 / units) : 0;
   rows.push(xlsRow(['']));
-  rows.push(xlsRow(['Blended Rent', '', '', cellMoney(blended), cellMoney(Math.round(blended * units)), cellMoney(annual)], 'section'));
+  rows.push(xlsRow(['Blended Rent', '', '', cellNumber(weightedAverageUnitSfForSite(s)), cellMoney(blended), cellMoney(Math.round(blended * units)), cellMoney(annual)], 'section'));
   return rows;
 }
 
@@ -5749,7 +5808,7 @@ function constructionCostRows(s, tc, land) {
   const costs = costModelForSite(s);
   const metrics = currentUserMetrics();
   const units = s.units || 0;
-  const avgUnitSf = s.usf || 800;
+  const avgUnitSf = isHouseSite(s) ? Number(s.usf || s.avgUnitSf || 0) : weightedAverageUnitSfForSite(s);
   const totalSF = costs.totalSF || units * avgUnitSf;
   const landBasis = costs.land || land || 0;
   const totalCost = costs.totalCost || tc || 0;
@@ -5776,7 +5835,7 @@ function constructionCostRows(s, tc, land) {
     xlsRow(['Project Type', s.type || '']),
     xlsRow(['Program', isEd1Site(s) ? 'ED1' : 'Not identified as ED1']),
     xlsRow(['Lot SF', underwritingLotSf(s) ? cellNumber(Math.round(underwritingLotSf(s))) : '', '', '', '', lotSfSourceText(s)]),
-    xlsRow([s.type === 'New House' ? 'Home SF' : 'Project SF', totalSF ? cellNumber(Math.round(totalSF)) : '', '', '', '', s.buildingSfSource || 'Source/model data']),
+    xlsRow([s.type === 'New House' ? 'Home SF' : 'Project SF', totalSF ? cellNumber(Math.round(totalSF)) : '', '', '', '', verifiedProjectBuildingSf(s) ? (s.buildingSfSource || 'Verified source data') : 'Weighted unit-size settings']),
     xlsRow(['Construction Plan', costs.planLabel]),
     xlsRow(['Plan Notes', [costs.planNote || '', 'String', 'note']]),
     xlsRow(['Hard Cost Basis', cellMoney(costs.hardPerSf), '$ / SF', '', '', costs.source || 'current assumption']),
@@ -5787,7 +5846,7 @@ function constructionCostRows(s, tc, land) {
     xlsRow(['Avg Unit SF', cellNumber(avgUnitSf)]),
     xlsRow(['Total Net Rentable SF', cellNumber(totalSF)]),
     xlsRow(['Permit Valuation', s.permitValuation ? cellMoney(s.permitValuation) : '', '', '', '', s.permitValuation ? 'Used as a rough sizing signal when permit plans/SF are not available.' : 'Not provided by source record']),
-    xlsRow(['Building SF Source', s.buildingSfSource || '', '', '', '', siteUnitSourceNote(s)]),
+    xlsRow(['Building SF Source', verifiedProjectBuildingSf(s) ? (s.buildingSfSource || 'Verified source data') : 'Weighted unit-size settings', '', '', '', siteUnitSourceNote(s)]),
     xlsRow(['Cost Note', ['Line items are an underwriting allocation of the current plan budget, not a contractor bid. Replace with GC pricing when available.' + (currentHardCostOverride() ? ' User hard-cost override applied across all deals: $' + currentHardCostOverride().toLocaleString() + '/SF.' : ''), 'String', 'note']]),
     xlsRow(['']),
     xlsHeaderRow(['Budget Category', 'Cost', '$ / SF', '$ / Unit', '% of Total Cost', 'Validation / Source']),
@@ -5922,7 +5981,7 @@ async function exportExcel(id) {
       units: s.units || 0,
       avgUnitSf: isHouse
         ? (siteBuildingSf(s) ? siteBuildingSf(s) / Math.max(1, Number(s.units || 1)) : Number(s.usf || 0))
-        : (s.usf || 800),
+        : weightedAverageUnitSfForSite(s),
       lotSf: underwritingLotSf(s),
       listingStatus: siteListingStatus(s),
       developmentStatus: developmentStatusLabel(s),
@@ -5931,8 +5990,8 @@ async function exportExcel(id) {
       permitValuation: s.permitValuation || 0,
       workDescription: s.workDescription || '',
       stories: s.stories || '',
-      buildingSf: siteBuildingSf(s),
-      buildingSfSource: s.buildingSfSource || '',
+      buildingSf: costs.totalSF || underwritingBuildingSf(s),
+      buildingSfSource: verifiedProjectBuildingSf(s) ? (s.buildingSfSource || 'Verified source data') : 'Weighted unit-size settings',
       apn: siteParcelApns(s)[0] || '',
       apns: siteParcelApns(s),
       contractorName: s.contractorName || '',
@@ -6256,8 +6315,8 @@ async function exportPDF(id) {
       ${house ? '' : `<tr><td>Program</td><td>${pdfEd1 ? `ED1 - restricted rents (${pdfEd1.amiPct}% AMI)` : 'Not identified as ED1'}</td></tr>`}
       <tr><td>${house ? 'Homes' : 'Proposed Units'}</td><td>${escapeText(siteUnitsText(s))}</td></tr>
       <tr><td>${house ? 'Completed Home Size' : 'Avg Unit Size'}</td><td>${house ? escapeText(siteProjectSfText(s)) : siteAvgUnitSfText(s)}</td></tr>
-      <tr><td>Total Building SF</td><td>${(siteBuildingSf(s) || ((s.units||12)*(s.usf||800))).toLocaleString()} SF</td></tr>
-      <tr><td>Building SF Source</td><td>${escapeText(s.buildingSfSource || 'Not provided')}</td></tr>
+      <tr><td>Total Building SF</td><td>${Math.round(costs.totalSF || underwritingBuildingSf(s)).toLocaleString()} SF</td></tr>
+      <tr><td>Building SF Source</td><td>${escapeText(verifiedProjectBuildingSf(s) ? (s.buildingSfSource || 'Verified source data') : 'Weighted unit-size settings')}</td></tr>
       ${s.stories ? `<tr><td>Stories</td><td>${escapeText(String(s.stories))}</td></tr>` : ''}
     </table>
     <h3>Owner / Contact</h3>
@@ -6284,9 +6343,9 @@ async function exportPDF(id) {
 
     ${house ? '' : `<h3>Unit Mix</h3>
     <table>
-      <tr><th>Type</th><th>Mix</th><th>Units</th><th>Rent/mo</th></tr>
+      <tr><th>Type</th><th>Mix</th><th>Units</th><th>Unit SF</th><th>Rent/mo</th></tr>
       ${unitMixPDFRows(s)}
-      ${pdfEd1 ? `<tr><td colspan="4" style="text-align:left"><strong>ED1 limit:</strong> ${escapeText(ed1RentDisclosure(s))}</td></tr>` : ''}
+      ${pdfEd1 ? `<tr><td colspan="5" style="text-align:left"><strong>ED1 limit:</strong> ${escapeText(ed1RentDisclosure(s))}</td></tr>` : ''}
     </table>`}
 
     <h3>Location Research</h3>
@@ -6433,9 +6492,9 @@ ${house ? `<div class="two-col">
       <tr><td>Weighted comp sale price / SF</td><td>${pdfAppraisal.weightedPsf ? fmtD(pdfAppraisal.weightedPsf) + '/SF' : 'n/a'}</td></tr>
       <tr><td>Usable house comps</td><td>${pdfAppraisal.sales.length}</td></tr>
       <tr><td>Comp period</td><td>Most recent 3 years</td></tr>
-      <tr class="tot"><td>Estimated completed-home value</td><td>${fmtD(exitV)}</td></tr>` : `<tr><th>Unit Type</th><th>Units</th><th>Rent/mo</th><th>Annual</th></tr>
+      <tr class="tot"><td>Estimated completed-home value</td><td>${fmtD(exitV)}</td></tr>` : `<tr><th>Unit Type</th><th>Units</th><th>Unit SF</th><th>Rent/mo</th><th>Annual</th></tr>
       ${unitMixRentRollPDFRows(s)}
-      <tr class="tot"><td colspan="3">Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>`}
+      <tr class="tot"><td colspan="4">Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>`}
     </table>
     ${pdfEd1 ? `<div class="note"><strong>Restricted-rent basis:</strong> ${escapeText(ed1RentDisclosure(s))} <a href="${pdfEd1.sourceUrl}" target="_blank">Official rent schedule</a>.</div>` : ''}
 

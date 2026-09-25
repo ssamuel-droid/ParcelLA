@@ -492,10 +492,10 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       writeRow(houseInputWs, ['Method', 'Sales comparison approach', 'Completed building SF x comp-derived resale $/SF.']);
     } else {
       const rentWs = wb.addWorksheet('Rent Roll');
-      setupSheet(rentWs, [22, 12, 16, 16, 16, 58]);
+      setupSheet(rentWs, [22, 12, 14, 16, 16, 16, 58]);
       writeRow(rentWs, [isEd1 ? 'ED1 Restricted Rent Roll' : 'Rent Roll', siteName], 'title');
       if (isEd1) writeRow(rentWs, ['Restriction basis', `${num(ed1Profile?.amiPct, 80)}% AMI gross-rent ceiling`, text(assumptions.rentRestrictionNote || ed1Profile?.caveat)], 'section');
-      writeRow(rentWs, ['Unit type', 'Units', 'Rent / month', 'Monthly rent', 'Annual rent', 'Source'], 'header');
+      writeRow(rentWs, ['Unit type', 'Units', 'Unit SF', 'Rent / month', 'Monthly rent', 'Annual rent', 'Source'], 'header');
       const rentStart = rentWs.rowCount + 1;
       let rentAnnualSubtotal = 0;
       unitMix.forEach(row => {
@@ -504,9 +504,10 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
         writeRow(rentWs, [
           text(row.label || row.type),
           cell(num(row.units, 0), FMT.whole),
+          cell(num(row.unitSf, 0), FMT.whole),
           cell(money(row.rent || row.monthlyRent), FMT.money),
-          formula(`B${r}*C${r}`, money(row.monthly), FMT.money),
-          formula(`D${r}*12`, money(row.annual), FMT.money),
+          formula(`B${r}*D${r}`, money(row.monthly), FMT.money),
+          formula(`E${r}*12`, money(row.annual), FMT.money),
           text(row.source || assumptions.unitMixSource || ''),
         ]);
       });
@@ -516,9 +517,9 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       if (unitMix.length && Math.abs(targetBaseRent - rentAnnualSubtotal) >= 1) {
         const r = rentWs.rowCount + 1;
         writeRow(rentWs, [
-          'Model adjustment', '', '',
-          formula(`(${targetBaseRent}/12)-SUM(D${rentStart}:D${r - 1})`, money((targetBaseRent - rentAnnualSubtotal) / 12), FMT.money),
-          formula(`${targetBaseRent}-SUM(E${rentStart}:E${r - 1})`, money(targetBaseRent - rentAnnualSubtotal), FMT.money),
+          'Model adjustment', '', '', '',
+          formula(`(${targetBaseRent}/12)-SUM(E${rentStart}:E${r - 1})`, money((targetBaseRent - rentAnnualSubtotal) / 12), FMT.money),
+          formula(`${targetBaseRent}-SUM(F${rentStart}:F${r - 1})`, money(targetBaseRent - rentAnnualSubtotal), FMT.money),
           'Reconciles rounded unit counts/rents to the site underwriting model.',
         ]);
       }
@@ -526,12 +527,13 @@ router.post('/underwriting', requireAuth, requireActiveAccess, async (req, res, 
       const rentTotalRow = writeRow(rentWs, [
         'Total / blended',
         formula(`SUM(B${rentStart}:B${rentEnd})`, num(site.units, 0), FMT.whole),
-        formula(`IFERROR(D${rentWs.rowCount + 1}/B${rentWs.rowCount + 1},0)`, 0, FMT.money),
-        formula(`SUM(D${rentStart}:D${rentEnd})`, money(targetBaseRent / 12), FMT.money),
-        formula(`SUM(E${rentStart}:E${rentEnd})`, targetBaseRent, FMT.money),
+        cell(num(site.avgUnitSf, 0), FMT.whole),
+        formula(`IFERROR(E${rentWs.rowCount + 1}/B${rentWs.rowCount + 1},0)`, 0, FMT.money),
+        formula(`SUM(E${rentStart}:E${rentEnd})`, money(targetBaseRent / 12), FMT.money),
+        formula(`SUM(F${rentStart}:F${rentEnd})`, targetBaseRent, FMT.money),
         text(assumptions.unitMixSource || ''),
       ], 'total');
-      rentAnnualRef = ref('Rent Roll', rentTotalRow.number, 5);
+      rentAnnualRef = ref('Rent Roll', rentTotalRow.number, 6);
     }
 
     const constructionWs = wb.addWorksheet('Construction Budget');
