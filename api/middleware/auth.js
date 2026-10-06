@@ -22,6 +22,10 @@ const DEFAULT_ALWAYS_ACCESS_EMAILS = [
   'ssamuel@goodhealthcorp.com',
   'kambizkamdar@gmail.com',
   'manny@dukedevelopmentinc.com',
+  'ajamal@pacificreach.com',
+  'ccolville@pacificreach.com',
+  'lhervato@pacificreach.com',
+  'hlu@pacificreach.com',
 ];
 const ALWAYS_ACCESS_EMAILS = new Set([
   ...DEFAULT_ALWAYS_ACCESS_EMAILS,
