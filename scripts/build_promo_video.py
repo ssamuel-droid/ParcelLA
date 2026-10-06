@@ -44,7 +44,7 @@ def main() -> None:
     settings = ASSETS / "parcella-settings.png"
     records = ASSETS / "parcella-records.png"
     exports = ASSETS / "parcella-exports.png"
-    voice = ASSETS / "parcella-tour-voice.wav"
+    voice = ASSETS / "parcella-tour-voice.mp3"
     for source in (dashboard, feasibility, settings, records, exports, voice):
         if not source.exists():
             raise SystemExit(f"Missing source image: {source}")
@@ -106,24 +106,24 @@ def main() -> None:
             f"{text_filter('parcel-la.vercel.app', 29, 114, 535, 'white@0.82')},"
             "format=yuv420p[v6]"
         ),
-        "[v0][v1]xfade=transition=fade:duration=0.3:offset=2.0[x1]",
-        "[x1][v2]xfade=transition=fade:duration=0.3:offset=5.8[x2]",
-        "[x2][v3]xfade=transition=fade:duration=0.3:offset=8.9[x3]",
-        "[x3][v4]xfade=transition=fade:duration=0.3:offset=12.3[x4]",
-        "[x4][v5]xfade=transition=fade:duration=0.3:offset=15.5[x5]",
-        "[x5][v6]xfade=transition=fade:duration=0.3:offset=18.4[outv]",
-        "[7:a]aresample=48000,atempo=1.33,volume=1.08,afade=t=in:st=0:d=0.15,afade=t=out:st=20.9:d=0.7[aout]",
+        "[v0][v1]xfade=transition=fade:duration=0.2:offset=1.8[x1]",
+        "[x1][v2]xfade=transition=fade:duration=0.2:offset=5.3[x2]",
+        "[x2][v3]xfade=transition=fade:duration=0.2:offset=8.3[x3]",
+        "[x3][v4]xfade=transition=fade:duration=0.2:offset=11.5[x4]",
+        "[x4][v5]xfade=transition=fade:duration=0.2:offset=14.5[x5]",
+        "[x5][v6]xfade=transition=fade:duration=0.2:offset=17.3[outv]",
+        "[7:a]aresample=48000,volume=1.05,afade=t=in:st=0:d=0.1,afade=t=out:st=19.3:d=0.6[aout]",
     ]
     command = [
         ffmpeg_executable(),
         "-y",
-        "-loop", "1", "-t", "2.3", "-i", str(dashboard),
-        "-loop", "1", "-t", "4.1", "-i", str(feasibility),
-        "-loop", "1", "-t", "3.4", "-i", str(dashboard),
-        "-loop", "1", "-t", "3.7", "-i", str(settings),
-        "-loop", "1", "-t", "3.5", "-i", str(records),
-        "-loop", "1", "-t", "3.2", "-i", str(exports),
+        "-loop", "1", "-t", "2.0", "-i", str(dashboard),
+        "-loop", "1", "-t", "3.7", "-i", str(feasibility),
         "-loop", "1", "-t", "3.2", "-i", str(dashboard),
+        "-loop", "1", "-t", "3.4", "-i", str(settings),
+        "-loop", "1", "-t", "3.2", "-i", str(records),
+        "-loop", "1", "-t", "3.0", "-i", str(exports),
+        "-loop", "1", "-t", "2.7", "-i", str(dashboard),
         "-i", str(voice),
         "-filter_complex", ";".join(filters),
         "-map", "[outv]",
