@@ -53,10 +53,12 @@ def main() -> None:
     filters = [
         (
             "[0:v]scale=-1:1080,crop=1920:1080:x='(in_w-out_w)*0.52':y=0,"
-            "drawbox=x=0:y=0:w=iw:h=ih:color=0x07162D@0.76:t=fill,"
-            f"{text_filter('PARCELLA', 84, 110, 320)},"
-            f"{text_filter('Turn any address into an underwritten opportunity.', 44, 112, 430, gold)},"
-            f"{text_filter('Zoning. Incentives. Records. Returns.', 26, 116, 505, 'white@0.82')},"
+            "drawbox=x=0:y=0:w=iw:h=ih:color=0x07162D@0.96:t=fill,"
+            f"{text_filter('PARCELLA', 26, 110, 230, gold)},"
+            "drawbox=x=110:y=280:w=92:h=5:color=0xE1B756:t=fill,"
+            f"{text_filter('WHAT CAN YOU BUILD?', 64, 110, 340)},"
+            f"{text_filter('WHAT IS IT WORTH?', 64, 110, 430, gold)},"
+            f"{text_filter('Zoning + appraisal-level rent and sales comp review', 27, 114, 545, 'white@0.82')},"
             "format=yuv420p[v0]"
         ),
         (
@@ -84,11 +86,11 @@ def main() -> None:
         (
             "[4:v]scale=1920:1080,"
             "drawbox=x=0:y=0:w=610:h=1080:color=0x07162D@0.88:t=fill,"
-            f"{text_filter('4  VERIFY THE DEAL', 30, 76, 280, gold)},"
-            f"{text_filter('Ownership + APNs', 44, 76, 350)},"
-            f"{text_filter('Sales + debt', 44, 76, 410)},"
-            f"{text_filter('Plans + determinations', 44, 76, 470)},"
-            f"{text_filter('Source-backed evidence beside the numbers.', 22, 80, 560, 'white@0.82')},"
+            f"{text_filter('4  APPRAISAL-LEVEL COMP REVIEW', 25, 76, 280, gold)},"
+            f"{text_filter('Rent comps + sales comps', 41, 76, 350)},"
+            f"{text_filter('Distance + recency + similarity', 36, 76, 410)},"
+            f"{text_filter('Ownership + debt + plans', 39, 76, 470)},"
+            f"{text_filter('Source-backed evidence beside the underwriting.', 21, 80, 560, 'white@0.82')},"
             "format=yuv420p[v4]"
         ),
         (

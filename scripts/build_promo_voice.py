@@ -14,12 +14,12 @@ OUTPUT = ROOT / "public" / "assets" / "parcella-tour-voice.mp3"
 VOICE = os.environ.get("PARCELLA_TTS_VOICE", "en-US-AvaMultilingualNeural")
 
 SCRIPT = (
-    "Parcel L A turns any address into an underwritten opportunity. "
-    "Compare zoning and incentives. Screen listings and city filings. "
-    "Apply rents, costs, financing, and unit sizes. "
-    "Verify ownership, sales, debt, and plans. "
-    "Export to Excel and P D F. "
-    "Stop browsing. Start underwriting."
+    "Parcel L A shows what you can build, and what it is worth. "
+    "Compare zoning and incentives with an appraisal-level review of local rent and sales comps. "
+    "Apply your rents, costs, financing, and unit sizes. "
+    "Verify ownership and plans. "
+    "Export complete underwriting to Excel and P D F. "
+    "Underwrite the opportunity."
 )
 
 

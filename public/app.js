@@ -1341,7 +1341,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
     <div class="landing-hero-inner">
       <div class="landing-eyebrow">Los Angeles development intelligence</div>
       <h1>ParcelLA</h1>
-      <p class="landing-hero-copy">Don&rsquo;t just view development listings. Underwrite every listing&mdash;plus the projects filed across Los Angeles&mdash;with zoning capacity, ownership, sales, debt, plans, permits, and source records in one place.</p>
+      <p class="landing-hero-copy">See what can be built. Know what it is worth. ParcelLA underwrites every listing&mdash;plus the projects filed across Los Angeles&mdash;with zoning capacity, appraisal-level rent and sales comp review, ownership, debt, plans, permits, and source records in one place.</p>
       <div class="landing-actions">
         <button class="landing-cta" onclick="openAuthDialog()">Underwrite LA for free</button>
         <a class="landing-link" href="#tour"><span aria-hidden="true">&#9654;</span> Watch the 20-second tour</a>
@@ -1356,7 +1356,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 
   <section class="capability-strip" aria-label="ParcelLA capabilities">
     <div><strong>Address feasibility</strong><span>By-right and incentive scenarios</span></div>
-    <div><strong>Live underwriting</strong><span>Market rents, sales, and costs</span></div>
+    <div><strong>Appraisal-level comps</strong><span>Rent and sales comparable review</span></div>
     <div><strong>Planning records</strong><span>Plans and determinations</span></div>
     <div><strong>Property history</strong><span>Ownership, sales, and debt</span></div>
     <div><strong>Deal-ready output</strong><span>Excel, PDF, and sharing</span></div>
@@ -1367,12 +1367,12 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
       <div class="tour-copy">
         <div class="landing-kicker">20-second narrated tour</div>
         <h2 class="landing-title">From address to investment decision.</h2>
-        <p class="landing-lead">See how ParcelLA moves from pipeline discovery to source-backed underwriting and a share-ready deal package.</p>
+        <p class="landing-lead">See how ParcelLA moves from zoning capacity to appraisal-level rent and sales comp review, complete underwriting, and a share-ready deal package.</p>
         <ol class="tour-steps"><li><b>Discover</b><span>Search listings and city-filed projects.</span></li><li><b>Underwrite</b><span>Adjust rents, costs, unit sizes, and financing.</span></li><li><b>Verify</b><span>Review records, plans, sales, and ownership.</span></li><li><b>Deliver</b><span>Export the same analysis to Excel and PDF.</span></li></ol>
       </div>
       <div class="tour-player">
         <video controls playsinline preload="metadata" poster="/assets/parcella-feasibility.png?v=2026100603" aria-label="ParcelLA product tour">
-          <source src="/assets/parcella-tour.mp4?v=2026100603" type="video/mp4">
+          <source src="/assets/parcella-tour.mp4?v=2026100604" type="video/mp4">
         </video>
         <div class="tour-caption"><span>PARCELLA PRODUCT TOUR</span><b>Everything needed to screen the deal in one workflow.</b></div>
       </div>
@@ -1389,7 +1389,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
         <button class="demo-screen demo-crop crop-pipeline" type="button" aria-label="Open the development pipeline screen full size" onclick="openLandingDemo('/assets/parcella-dashboard.png?v=2026090203', this.querySelector('img').alt, 'Development pipeline and live underwriting')"><img src="/assets/parcella-dashboard.png?v=2026090203" alt="ParcelLA development pipeline with filters and live project underwriting"><span>View full screen</span></button>
       </article>
       <article class="demo-block reverse">
-        <div class="demo-copy"><span class="demo-index">02 / UNDERWRITE</span><h3>Change the assumptions. See the deal move.</h3><p>Every project uses one connected underwriting model across the deal list, detail view, scenarios, Excel workbook, and PDF memo.</p><ul class="feature-list"><li>Rent, cost, financing, and unit-size controls</li><li>Market-rate, ED1, multifamily, mixed-use, and house logic</li><li>Comparable sales and rent evidence</li></ul><div class="story-tags"><b>Live assumptions</b><b>Scenario comparison</b><b>Local comps</b></div></div>
+        <div class="demo-copy"><span class="demo-index">02 / UNDERWRITE</span><h3>Change the assumptions. See the deal move.</h3><p>Every project uses one connected underwriting model across the deal list, detail view, scenarios, Excel workbook, and PDF memo.</p><ul class="feature-list"><li>Rent, cost, financing, and unit-size controls</li><li>Market-rate, ED1, multifamily, mixed-use, and house logic</li><li>Appraisal-level rent and sales comparable review</li></ul><div class="story-tags"><b>Live assumptions</b><b>Scenario comparison</b><b>Local comps</b></div></div>
         <button class="demo-screen demo-crop crop-underwriting" type="button" aria-label="Open the live underwriting screen full size" onclick="openLandingDemo('/assets/parcella-dashboard.png?v=2026090203', this.querySelector('img').alt, 'Live underwriting and project detail')"><img src="/assets/parcella-dashboard.png?v=2026090203" alt="ParcelLA live underwriting showing project returns and detailed records"><span>View full screen</span></button>
       </article>
       <article class="demo-block">
