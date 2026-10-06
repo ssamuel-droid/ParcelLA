@@ -1344,7 +1344,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
       <p class="landing-hero-copy">Don&rsquo;t just view development listings. Underwrite every listing&mdash;plus the projects filed across Los Angeles&mdash;with zoning capacity, ownership, sales, debt, plans, permits, and source records in one place.</p>
       <div class="landing-actions">
         <button class="landing-cta" onclick="openAuthDialog()">Underwrite LA for free</button>
-        <a class="landing-link" href="#tour"><span aria-hidden="true">&#9654;</span> Watch the 24-second tour</a>
+        <a class="landing-link" href="#tour"><span aria-hidden="true">&#9654;</span> Watch the 22-second tour</a>
       </div>
       <div class="landing-hero-proof">
         <div><b>Find</b><span>Listings + city filings</span></div>
@@ -1365,14 +1365,14 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
   <section class="tour-band" id="tour">
     <div class="landing-inner tour-grid">
       <div class="tour-copy">
-        <div class="landing-kicker">24-second product tour</div>
+        <div class="landing-kicker">22-second narrated tour</div>
         <h2 class="landing-title">From address to investment decision.</h2>
         <p class="landing-lead">See how ParcelLA moves from pipeline discovery to source-backed underwriting and a share-ready deal package.</p>
         <ol class="tour-steps"><li><b>Discover</b><span>Search listings and city-filed projects.</span></li><li><b>Underwrite</b><span>Adjust rents, costs, unit sizes, and financing.</span></li><li><b>Verify</b><span>Review records, plans, sales, and ownership.</span></li><li><b>Deliver</b><span>Export the same analysis to Excel and PDF.</span></li></ol>
       </div>
       <div class="tour-player">
-        <video controls playsinline preload="metadata" poster="/assets/parcella-records.png?v=2026090203" aria-label="ParcelLA product tour">
-          <source src="/assets/parcella-tour.mp4?v=2026100601" type="video/mp4">
+        <video controls playsinline preload="metadata" poster="/assets/parcella-feasibility.png?v=2026100602" aria-label="ParcelLA product tour">
+          <source src="/assets/parcella-tour.mp4?v=2026100602" type="video/mp4">
         </video>
         <div class="tour-caption"><span>PARCELLA PRODUCT TOUR</span><b>Everything needed to screen the deal in one workflow.</b></div>
       </div>

@@ -1,4 +1,4 @@
-"""Build the short ParcelLA product tour from the checked-in product screens."""
+"""Build the narrated ParcelLA product tour from checked-in product screens."""
 
 from __future__ import annotations
 
@@ -40,9 +40,12 @@ def text_filter(text: str, size: int, x: int, y: int, color: str = "white") -> s
 
 def main() -> None:
     dashboard = ASSETS / "parcella-dashboard.png"
+    feasibility = ASSETS / "parcella-feasibility.png"
+    settings = ASSETS / "parcella-settings.png"
     records = ASSETS / "parcella-records.png"
     exports = ASSETS / "parcella-exports.png"
-    for source in (dashboard, records, exports):
+    voice = ASSETS / "parcella-tour-voice.wav"
+    for source in (dashboard, feasibility, settings, records, exports, voice):
         if not source.exists():
             raise SystemExit(f"Missing source image: {source}")
 
@@ -50,68 +53,90 @@ def main() -> None:
     filters = [
         (
             "[0:v]scale=-1:1080,crop=1920:1080:x='(in_w-out_w)*0.52':y=0,"
-            "drawbox=x=0:y=0:w=iw:h=ih:color=0x07162D@0.74:t=fill,"
-            f"{text_filter('PARCELLA', 88, 120, 305)},"
-            f"{text_filter('Every listing. Every filing. Underwritten.', 48, 120, 425, gold)},"
-            f"{text_filter('Los Angeles development intelligence', 27, 124, 505, 'white@0.78')},"
+            "drawbox=x=0:y=0:w=iw:h=ih:color=0x07162D@0.76:t=fill,"
+            f"{text_filter('PARCELLA', 84, 110, 320)},"
+            f"{text_filter('Turn any address into an underwritten opportunity.', 44, 112, 430, gold)},"
+            f"{text_filter('Zoning. Incentives. Records. Returns.', 26, 116, 505, 'white@0.82')},"
             "format=yuv420p[v0]"
         ),
         (
-            "[1:v]scale=-1:1080,crop=1920:1080:"
-            "x='(in_w-out_w)*min(n/180,1)':y=0,"
-            "drawbox=x=0:y=785:w=iw:h=295:color=0x07162D@0.88:t=fill,"
-            f"{text_filter('DISCOVER + UNDERWRITE', 28, 100, 832, gold)},"
-            f"{text_filter('Screen the entire development pipeline.', 48, 100, 882)},"
-            f"{text_filter('Filter opportunities. Compare returns. Change assumptions live.', 26, 102, 956, 'white@0.82')},"
+            "[1:v]scale=1920:1080,"
+            "drawbox=x=1050:y=86:w=790:h=86:color=0x07162D@0.92:t=fill,"
+            f"{text_filter('1  ANALYZE ANY ADDRESS', 31, 1080, 110)},"
+            f"{text_filter('Compare by-right + incentive pathways', 21, 1082, 150, gold)},"
             "format=yuv420p[v1]"
         ),
         (
-            "[2:v]scale=1920:1080,"
-            "drawbox=x=0:y=0:w=700:h=1080:color=0x07162D@0.88:t=fill,"
-            f"{text_filter('VERIFY', 30, 92, 255, gold)},"
-            f"{text_filter('Know the property', 50, 92, 325)},"
-            f"{text_filter('behind the deal.', 50, 92, 390)},"
-            f"{text_filter('Ownership  |  APNs  |  Sales', 25, 96, 505, 'white@0.82')},"
-            f"{text_filter('Debt  |  Plans  |  Determinations', 25, 96, 550, 'white@0.82')},"
+            "[2:v]scale=-1:1080,crop=1920:1080:x='(in_w-out_w)*0.10':y=0,"
+            "drawbox=x=0:y=800:w=iw:h=280:color=0x07162D@0.91:t=fill,"
+            f"{text_filter('2  SCREEN THE ENTIRE PIPELINE', 30, 92, 840, gold)},"
+            f"{text_filter('Listings + city filings, ranked by live returns', 43, 92, 895)},"
+            f"{text_filter('Search. Filter. Compare. Save.', 25, 94, 964, 'white@0.82')},"
             "format=yuv420p[v2]"
         ),
         (
             "[3:v]scale=1920:1080,"
-            "drawbox=x=0:y=0:w=iw:h=155:color=0x07162D@0.93:t=fill,"
-            f"{text_filter('DELIVER THE DECISION', 29, 95, 42, gold)},"
-            f"{text_filter('One live model. Excel + PDF.', 44, 650, 35)},"
+            "drawbox=x=1190:y=84:w=650:h=94:color=0x07162D@0.92:t=fill,"
+            f"{text_filter('3  SET YOUR UNDERWRITING', 30, 1222, 108)},"
+            f"{text_filter('Saved once. Applied everywhere.', 22, 1224, 148, gold)},"
             "format=yuv420p[v3]"
         ),
         (
-            "[4:v]scale=-1:1080,crop=1920:1080:x='(in_w-out_w)*0.5':y=0,"
-            "drawbox=x=0:y=0:w=iw:h=ih:color=0x07162D@0.80:t=fill,"
-            f"{text_filter('PARCELLA', 82, 120, 330)},"
-            f"{text_filter('Stop browsing. Start underwriting.', 48, 120, 445, gold)},"
-            f"{text_filter('parcel-la.vercel.app', 29, 124, 535, 'white@0.82')},"
+            "[4:v]scale=1920:1080,"
+            "drawbox=x=0:y=0:w=610:h=1080:color=0x07162D@0.88:t=fill,"
+            f"{text_filter('4  VERIFY THE DEAL', 30, 76, 280, gold)},"
+            f"{text_filter('Ownership + APNs', 44, 76, 350)},"
+            f"{text_filter('Sales + debt', 44, 76, 410)},"
+            f"{text_filter('Plans + determinations', 44, 76, 470)},"
+            f"{text_filter('Source-backed evidence beside the numbers.', 22, 80, 560, 'white@0.82')},"
             "format=yuv420p[v4]"
         ),
-        "[v0][v1]xfade=transition=fade:duration=0.6:offset=3.4[x1]",
-        "[x1][v2]xfade=transition=fade:duration=0.6:offset=9.8[x2]",
-        "[x2][v3]xfade=transition=fade:duration=0.6:offset=15.2[x3]",
-        "[x3][v4]xfade=transition=fade:duration=0.6:offset=20.0[outv]",
+        (
+            "[5:v]scale=1920:1080,"
+            "drawbox=x=0:y=0:w=iw:h=148:color=0x07162D@0.93:t=fill,"
+            f"{text_filter('5  EXPORT THE SAME LIVE MODEL', 29, 82, 38, gold)},"
+            f"{text_filter('Formula-driven Excel + source-backed PDF', 40, 650, 32)},"
+            "format=yuv420p[v5]"
+        ),
+        (
+            "[6:v]scale=-1:1080,crop=1920:1080:x='(in_w-out_w)*0.5':y=0,"
+            "drawbox=x=0:y=0:w=iw:h=ih:color=0x07162D@0.82:t=fill,"
+            f"{text_filter('PARCELLA', 82, 110, 330)},"
+            f"{text_filter('Stop browsing. Start underwriting.', 48, 110, 445, gold)},"
+            f"{text_filter('parcel-la.vercel.app', 29, 114, 535, 'white@0.82')},"
+            "format=yuv420p[v6]"
+        ),
+        "[v0][v1]xfade=transition=fade:duration=0.3:offset=2.0[x1]",
+        "[x1][v2]xfade=transition=fade:duration=0.3:offset=5.8[x2]",
+        "[x2][v3]xfade=transition=fade:duration=0.3:offset=8.9[x3]",
+        "[x3][v4]xfade=transition=fade:duration=0.3:offset=12.3[x4]",
+        "[x4][v5]xfade=transition=fade:duration=0.3:offset=15.5[x5]",
+        "[x5][v6]xfade=transition=fade:duration=0.3:offset=18.4[outv]",
+        "[7:a]aresample=48000,atempo=1.33,volume=1.08,afade=t=in:st=0:d=0.15,afade=t=out:st=20.9:d=0.7[aout]",
     ]
     command = [
         ffmpeg_executable(),
         "-y",
-        "-loop", "1", "-t", "4", "-i", str(dashboard),
-        "-loop", "1", "-t", "7", "-i", str(dashboard),
-        "-loop", "1", "-t", "6", "-i", str(records),
-        "-loop", "1", "-t", "6", "-i", str(exports),
-        "-loop", "1", "-t", "4", "-i", str(dashboard),
+        "-loop", "1", "-t", "2.3", "-i", str(dashboard),
+        "-loop", "1", "-t", "4.1", "-i", str(feasibility),
+        "-loop", "1", "-t", "3.4", "-i", str(dashboard),
+        "-loop", "1", "-t", "3.7", "-i", str(settings),
+        "-loop", "1", "-t", "3.5", "-i", str(records),
+        "-loop", "1", "-t", "3.2", "-i", str(exports),
+        "-loop", "1", "-t", "3.2", "-i", str(dashboard),
+        "-i", str(voice),
         "-filter_complex", ";".join(filters),
         "-map", "[outv]",
+        "-map", "[aout]",
         "-r", "30",
         "-c:v", "libx264",
         "-preset", "medium",
         "-crf", "20",
         "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "160k",
+        "-shortest",
         "-movflags", "+faststart",
-        "-an",
         str(OUTPUT),
     ]
     subprocess.run(command, check=True)
