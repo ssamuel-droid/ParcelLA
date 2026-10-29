@@ -26,6 +26,8 @@ const DEFAULT_ALWAYS_ACCESS_EMAILS = [
   'ccolville@pacificreach.com',
   'lhervato@pacificreach.com',
   'hlu@pacificreach.com',
+  'brad.conroy@conroycommercial.com',
+  'toni@conroycommercial.com',
 ];
 const ALWAYS_ACCESS_EMAILS = new Set([
   ...DEFAULT_ALWAYS_ACCESS_EMAILS,
