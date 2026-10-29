@@ -1,6 +1,10 @@
 name: ParcelLA API Health Check
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/keep-api-warm.yml'
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
