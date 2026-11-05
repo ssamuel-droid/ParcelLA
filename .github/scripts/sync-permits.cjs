@@ -13,6 +13,29 @@ if (require.main === module && (!SB_URL || !SB_KEY)) {
 const EXCLUDE_SUBTYPE = /adu|accessory|addition/i;
 const EXCLUDE_WORK = /(adu|jadu|junior adu|accessory dwelling|\baddition\b|\bremodel\b|\balteration\b|\bconversion\b|\bgazebo\b|\bpool\b|\bspa\b|\bshed\b|\bcarport\b|\bretaining wall\b|\bfence\b|\breroof\b|\bre-roof\b|\bsolar\b)/i;
 
+// Older active projects can fall outside the rolling LADBS datasets even
+// though they remain part of the City's development pipeline. Keep verified
+// omissions here so each sync restores them idempotently by permit number.
+const VERIFIED_HISTORIC_PIPELINE_PROJECTS = [
+  {
+    permit_nbr: '19010-10000-05417',
+    permit_type: 'Bldg-New',
+    permit_sub_type: 'Apartment',
+    status_desc: 'PC Approved',
+    primary_address: '4643 W MAUBERT AVE',
+    zone: 'R4-1',
+    of_residential_dwelling_units: 153,
+    of_stories: 8,
+    lot_area: 2701,
+    apn: '5542004013',
+    submitted_date: '2019-12-20',
+    issue_date: '2022-06-29',
+    work_desc: 'New 8-story (Type IIIA over Type IA) 153-unit apartment building with 2 lower levels of parking per TOC Tier IV.',
+    source: 'LA City Housing Element 2021-2029, Appendix 4.3 Pipeline Development',
+    source_url: 'https://planning.lacity.gov/odocument/460acbc2-2dc5-4a86-be46-d6bbce82a33f/Appendix_4.3_-_Pipeline_Development_-_Private_Development_%28Adopted%29.pdf',
+  },
+];
+
 function get(url) {
   return new Promise((resolve, reject) => {
     const headers = {
@@ -391,6 +414,12 @@ async function syncDataset(name, records, buildRow) {
 async function main() {
   let total = 0;
   const failures = [];
+
+  total += await syncDataset(
+    'Verified Historic Pipeline Projects',
+    VERIFIED_HISTORIC_PIPELINE_PROJECTS,
+    (record, index) => buildModernPermitRow(record, index, 'historic-pipeline')
+  );
 
   try {
     const where = [

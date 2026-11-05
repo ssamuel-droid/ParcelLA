@@ -1110,7 +1110,7 @@ function uw(p, inspectionCheck = null) {
   const cf = t === 'New House' ? -ds : noi-ds;
   const irrV = eq>500 ? Math.min(Math.max(irr([-eq,cf,cf,cf,cf,cf+exit-loan]),-50),100) : 0;
   return {
-    neighborhood:h, project_type:t, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:buildingSize.avgUnitSf, lot_sf:lotSize.lotSf,
+    neighborhood:h, project_type:t, zoning:p.zone||null, units:u, estimated_units:(p.units===0||!p.units), avg_unit_sf:buildingSize.avgUnitSf, lot_sf:lotSize.lotSf,
     price:Math.round(land), apn:ownerInfo?.apn || null,
     status:'off-market', data_source:'ladbs_permit', rti:p.is_rti||false,
     lat:p.lat, lng:p.lng,
@@ -1121,11 +1121,11 @@ function uw(p, inspectionCheck = null) {
       work_description:workDescription||null,
       project_detail_status:'available',
       project_detail_fields:{
-        has_floor_area:true,
-        has_work_description:true,
-        has_valuation:true,
-        has_units:true,
-        has_stories:true,
+        has_floor_area:buildingSize.parsed,
+        has_work_description:Boolean(workDescription),
+        has_valuation:Number(p.valuation || 0) > 0,
+        has_units:Boolean(rawUnits || actualUnits),
+        has_stories:Boolean(housePermitDetail.stories),
       },
       permit_units:rawUnits || actualUnits || (housePermitDetail.hasUnitCount ? 1 : null),
       stories:housePermitDetail.stories || null,
@@ -1183,18 +1183,25 @@ async function main() {
   LAND_BENCHMARKS = landValue.buildLandCompBenchmarks(recentSoldComps, { recencyDays: LAND_COMP_RECENCY_DAYS });
   console.log(`Loaded ${recentSoldComps.length} recent sold comp(s) for land value benchmarks.`);
 
-  // Load permits in pages
+  // Load permits in keyset pages. Large offset queries eventually time out on
+  // Supabase and used to silently truncate newer high-ID permit records.
   console.log('Loading permits...');
-  let all=[], off=0;
+  const targetPermitNumber = String(process.env.UNDERWRITE_PERMIT_NUMBER || '').trim();
+  let all=[], lastId=0;
   while(true) {
-    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,lot_sf,lot_sf_source,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>project_description,raw_data->>description,raw_data->>work_desc,raw_data->>workdescription,raw_data->>case_number,raw_data->>case_no,raw_data->>planning_case,raw_data->>entitlement_case,raw_data->>floor_area_l_a_building_code_definition,raw_data->>floor_area_l_a_zoning_code_definition,raw_data->>floor_area,raw_data->>floorarea,raw_data->>building_area,raw_data->>building_sf,raw_data->>total_floor_area,raw_data->>new_floor_area,raw_data->>proposed_floor_area,raw_data->>project_floor_area,raw_data->>square_footage,raw_data->>sqft,raw_data->>gross_floor_area,raw_data->>gross_building_area,raw_data->>residential_floor_area,raw_data->>of_stories,raw_data->>stories,raw_data->>number_of_stories,raw_data->>story_count,raw_data->>lot_size,raw_data->>lot_area,raw_data->>lot_square_footage,raw_data->>lot_sqft,raw_data->>parcel_area,raw_data->>site_area,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>applicant_first_name,raw_data->>applicant_last_name,raw_data->>applicant_business_name,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>contractors_business_name,raw_data->>contractor_business_name,raw_data->>contractor_address,raw_data->>contractor_city,raw_data->>contractor_state,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number,raw_data->>assessor_book,raw_data->>assessor_page,raw_data->>assessor_parcel&limit=1000&offset=${off}&order=id.asc`;
+    const filter = targetPermitNumber
+      ? `permit_number=eq.${encodeURIComponent(targetPermitNumber)}`
+      : `id=gt.${lastId}`;
+    const path = `/rest/v1/permits?select=id,permit_number,address,zone,units,valuation,is_rti,status,permit_type,permit_subtype,work_description,lat,lng,lot_sf,lot_sf_source,raw_data->>of_residential_dwelling_units,raw_data->>number_of_units,raw_data->>du_changed,raw_data->>adu_changed,raw_data->>junior_adu,raw_data->>use_desc,raw_data->>project_description,raw_data->>description,raw_data->>work_desc,raw_data->>workdescription,raw_data->>case_number,raw_data->>case_no,raw_data->>planning_case,raw_data->>entitlement_case,raw_data->>floor_area_l_a_building_code_definition,raw_data->>floor_area_l_a_zoning_code_definition,raw_data->>floor_area,raw_data->>floorarea,raw_data->>building_area,raw_data->>building_sf,raw_data->>total_floor_area,raw_data->>new_floor_area,raw_data->>proposed_floor_area,raw_data->>project_floor_area,raw_data->>square_footage,raw_data->>sqft,raw_data->>gross_floor_area,raw_data->>gross_building_area,raw_data->>residential_floor_area,raw_data->>of_stories,raw_data->>stories,raw_data->>number_of_stories,raw_data->>story_count,raw_data->>lot_size,raw_data->>lot_area,raw_data->>lot_square_footage,raw_data->>lot_sqft,raw_data->>parcel_area,raw_data->>site_area,raw_data->>owner_name,raw_data->>ownerName,raw_data->>owner,raw_data->>ownername,raw_data->>property_owner,raw_data->>first_owner_name,raw_data->>applicant_name,raw_data->>applicantName,raw_data->>applicant,raw_data->>applicant_first_name,raw_data->>applicant_last_name,raw_data->>applicant_business_name,raw_data->>contact_name,raw_data->>contractor_name,raw_data->>contractors_business_name,raw_data->>contractor_business_name,raw_data->>contractor_address,raw_data->>contractor_city,raw_data->>contractor_state,raw_data->>owner_mailing_address,raw_data->>mailing_address,raw_data->>mail_address,raw_data->>owner_address,raw_data->>apn,raw_data->>ain,raw_data->>parcel_number,raw_data->>assessor_book,raw_data->>assessor_page,raw_data->>assessor_parcel&${filter}&limit=1000&order=id.asc`;
     const r = await req('GET', path);
-    console.log('GET permits offset', off, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
+    console.log('GET permits after id', lastId, '-> status:', r.status, 'count:', Array.isArray(r.data) ? r.data.length : 'NOT ARRAY', typeof r.data === 'string' ? r.data.slice(0,100) : '');
+    if(r.status>=400) throw new Error(`Permit page failed after id ${lastId}: HTTP ${r.status}`);
     if(!Array.isArray(r.data)||!r.data.length) break;
     all=all.concat(r.data);
     console.log('Loaded',all.length,'permits so far');
-    if(r.data.length<1000) break;
-    off+=1000;
+    if(targetPermitNumber || r.data.length<1000) break;
+    lastId = Number(r.data[r.data.length - 1]?.id || 0);
+    if(!lastId) throw new Error('Permit page did not return a valid terminal id');
     await sleep(200);
   }
   console.log('Total to underwrite:',all.length);
