@@ -330,13 +330,14 @@ function normalizeRentComp(row) {
 }
 
 async function compRows(table, neighborhood, dateColumn, limit, allowAreaFallback = true) {
+  const cutoff = new Date(Date.now() - 730 * 86400000).toISOString().slice(0, 10);
   const local = await supabaseAdmin.from(table).select('*')
-    .ilike('neighborhood', neighborhood).order(dateColumn, { ascending: false }).limit(limit);
+    .ilike('neighborhood', neighborhood).gte(dateColumn, cutoff).order(dateColumn, { ascending: false }).limit(limit);
   if (!local.error && local.data?.length) return { rows: local.data, scope: neighborhood };
   if (!allowAreaFallback) return { rows: [], scope: null };
 
   const fallback = await supabaseAdmin.from(table).select('*')
-    .order(dateColumn, { ascending: false }).limit(limit);
+    .gte(dateColumn, cutoff).order(dateColumn, { ascending: false }).limit(limit);
   return {
     rows: fallback.error ? [] : (fallback.data || []),
     scope: fallback.error || !fallback.data?.length ? null : 'Los Angeles area',

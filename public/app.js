@@ -445,7 +445,7 @@ async function warmHouseCompBenchmarks(sites, loadRunId = siteLoadRunId) {
       const hood = hoods[nextIndex++];
       houseCompBenchmarkPending.add(hood);
       try {
-        const query = new URLSearchParams({ subjectType: 'New House', recencyDays: '1095', limit: '25' });
+        const query = new URLSearchParams({ subjectType: 'New House', recencyDays: '730', limit: '25' });
         const data = await fetchJSONWithTimeout(
           API + '/api/comps/submarket/' + encodeURIComponent(hood) + '?' + query,
           {},
@@ -4767,7 +4767,7 @@ async function fetchJSON(path) {
 
 function compQueryForSite(s, limit = 12) {
   const p = new URLSearchParams({ limit: String(limit) });
-  p.set('recencyDays', '1095');
+  p.set('recencyDays', '730');
   if (isHouseSite(s)) p.set('subjectType', 'New House');
   if (s?.lat && s?.lng) {
     p.set('siteLat', s.lat);
@@ -6416,7 +6416,7 @@ ${house ? `<div class="two-col">
       <tr><td>Subject building area</td><td>${Math.round(pdfAppraisal.subjectBuildingSf || pdfTotalSF).toLocaleString()} SF</td></tr>
       <tr><td>Weighted comparable sale price / SF</td><td>${pdfAppraisal.weightedPsf ? fmtD(pdfAppraisal.weightedPsf) + '/SF' : 'n/a'}</td></tr>
       <tr><td>Usable recent house sales</td><td>${pdfAppraisal.sales.length}</td></tr>
-      <tr><td>Comp recency</td><td>Last 3 years</td></tr>
+      <tr><td>Comp recency</td><td>Last 2 years</td></tr>
       <tr><td>Completed-home value</td><td>${fmtD(exitV)}</td></tr>
     </table>
   </div>
@@ -6537,7 +6537,7 @@ ${house ? `<div class="two-col">
       ${house ? `<tr><td>Subject completed home SF</td><td>${Math.round(pdfAppraisal.subjectBuildingSf || pdfTotalSF).toLocaleString()} SF</td></tr>
       <tr><td>Weighted comp sale price / SF</td><td>${pdfAppraisal.weightedPsf ? fmtD(pdfAppraisal.weightedPsf) + '/SF' : 'n/a'}</td></tr>
       <tr><td>Usable house comps</td><td>${pdfAppraisal.sales.length}</td></tr>
-      <tr><td>Comp period</td><td>Most recent 3 years</td></tr>
+      <tr><td>Comp period</td><td>Most recent 2 years</td></tr>
       <tr class="tot"><td>Estimated completed-home value</td><td>${fmtD(exitV)}</td></tr>` : `<tr><th>Unit Type</th><th>Units</th><th>Unit SF</th><th>Rent/mo</th><th>Annual</th></tr>
       ${unitMixRentRollPDFRows(s)}
       <tr class="tot"><td colspan="4">Gross Potential Rent</td><td>${fmtD(pdfIncome.grossPotentialRent)}</td></tr>`}

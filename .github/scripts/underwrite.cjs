@@ -283,7 +283,7 @@ const HOUSE_RESALE_PSF = {
 };
 let LAND_BENCHMARKS = null;
 let estimateLandBasisFromComps = () => null;
-let LAND_COMP_RECENCY_DAYS = 1095;
+let LAND_COMP_RECENCY_DAYS = 730;
 
 const BOXES = [
   {h:'Silver Lake',lat0:34.070,lat1:34.105,lng0:-118.290,lng1:-118.250},

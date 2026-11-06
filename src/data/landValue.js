@@ -1,4 +1,4 @@
-export const LAND_COMP_RECENCY_DAYS = 1095;
+export const LAND_COMP_RECENCY_DAYS = 730;
 
 const APARTMENT_LAND_TYPES = new Set(['Multifamily', 'Mixed-Use']);
 

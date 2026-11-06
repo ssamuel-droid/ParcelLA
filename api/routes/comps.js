@@ -375,11 +375,13 @@ function periodTime(value) {
   return Number.isFinite(t) ? t : 0;
 }
 
-function isRecentPeriod(value, days) {
+export function isRecentPeriod(value, days) {
   const t = periodTime(value);
   if (!t) return false;
   return t >= Date.now() - days * 86400000;
 }
+
+const MAX_COMP_RECENCY_DAYS = 730;
 
 function rankRentComps(rows) {
   return [...(rows ?? [])].sort((a, b) => {
@@ -465,10 +467,11 @@ function soldCompStats(rows) {
 router.get('/', async (req, res, next) => {
   try {
     const { hood, type, minDate, maxDate, limit = 50, offset = 0 } = req.query;
+    const cutoff = new Date(Date.now() - MAX_COMP_RECENCY_DAYS * 86400000).toISOString().split('T')[0];
     let q = sb().from('sold_comps').select('*');
     if (hood)    q = q.eq('neighborhood', hood);
     if (type)    q = q.eq('project_type', type);
-    if (minDate) q = q.gte('sale_date', minDate);
+    q = q.gte('sale_date', minDate && minDate > cutoff ? minDate : cutoff);
     if (maxDate) q = q.lte('sale_date', maxDate);
     q = q.order('sale_date', { ascending: false }).range(+offset, +offset + +limit - 1);
     const { data, error, count } = await q;
@@ -477,14 +480,14 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/comps/submarket/:hood - cap rate stats + detailed sales comps, limited to the last 3 years
+// GET /api/comps/submarket/:hood - cap rate stats + detailed sales comps, limited to the last 2 years
 router.get('/submarket/:hood', async (req, res, next) => {
   try {
     const hood = decodeURIComponent(req.params.hood);
     const siteLat = asNumber(req.query.siteLat);
     const siteLng = asNumber(req.query.siteLng);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 25);
-    const recencyDays = Math.min(Math.max(parseInt(req.query.recencyDays, 10) || 1095, 365), 1095);
+    const recencyDays = Math.min(Math.max(parseInt(req.query.recencyDays, 10) || MAX_COMP_RECENCY_DAYS, 365), MAX_COMP_RECENCY_DAYS);
     const recencyMonths = Math.round((recencyDays / 365) * 12);
     const houseSubject = String(req.query.subjectType || '').toLowerCase() === 'new house';
     const cutoff = new Date(Date.now() - recencyDays * 86400000).toISOString().split('T')[0];
@@ -590,7 +593,7 @@ router.get('/rent/submarket/:hood', async (req, res, next) => {
     const cachedRentcastRows = await fetchMonthlyRentcastCache(client, 'rental_listings', hood);
     const cachedComps = cachedRentcastRows
       .map(row => mapRentcastListing(row, siteLat, siteLng))
-      .filter(row => row.address && row.monthlyRent);
+      .filter(row => row.address && row.monthlyRent && isRecentPeriod(row.period, recencyDays));
     const liveComps = cachedComps.length
       ? []
       : await fetchRentcastListings({ hood, siteLat, siteLng, bedrooms, limit });
