@@ -1163,6 +1163,13 @@ function uw(p, inspectionCheck = null) {
       unit_mix_parsed_total:unitMix.parsedTotal,
       is_ed1:isEd1,
       planning_case:knownProject?.planningCase || p.planning_case || p.case_number || null,
+      planning_cases:knownProject ? [{
+        caseNumber: knownProject.planningCase,
+        status: 'approved',
+        matchMethod: 'verified_address_and_permit',
+        matchConfidence: 1,
+        isPrimary: true,
+      }] : [],
       planning_units:knownProject?.planningUnits || null,
       preliminary_units:knownProject?.preliminaryUnits || null,
       unit_count_note:knownProject

@@ -3435,6 +3435,8 @@ router.get('/', validateSiteFilters, optionalAuth, async (req, res, next) => {
         buildingSfParsed: s.buildingSfParsed ?? s._m.buildingSfParsed,
         permitValuation: s.permitValuation ?? s._m.permitValuation ?? null,
         lotSfSource:  s.lotSfSource ?? s._m.lotSfSource,
+        isEd1:        s.isEd1 ?? isEd1Project(s),
+        ed1Affordability: s.ed1Affordability ?? s._m.ed1Affordability ?? null,
         exitValueSource: s.exitValueSource ?? s._m.exitValueSource,
         exitValueMetric: s.exitValueMetric ?? s._m.exitValueMetric,
         exitValueMetricValue: s.exitValueMetricValue ?? s._m.exitValueMetricValue,
