@@ -129,6 +129,23 @@ function orderedSearchTokenMatch(haystack, value) {
   return true;
 }
 
+const STREET_SEARCH_ALIASES = new Map([
+  ['HALSTEAD', 'HALSTED'],
+  ['HALSTED', 'HALSTEAD'],
+]);
+
+function addressSearchVariants(value) {
+  const term = canonicalAddress(String(value || '').replace(/[,%()'"]/g, ' '));
+  if (!term) return [];
+  const variants = [term];
+  for (const [streetName, alias] of STREET_SEARCH_ALIASES) {
+    if (new RegExp(`\\b${streetName}\\b`, 'i').test(term)) {
+      variants.push(term.replace(new RegExp(`\\b${streetName}\\b`, 'ig'), alias));
+    }
+  }
+  return [...new Set(variants)];
+}
+
 const KNOWN_ADDRESS_GROUPS = [
   {
     key: '6091 W PICO BLVD',
@@ -503,7 +520,9 @@ function siteMatchesSearchText(s, value) {
   if (!term) return true;
   if (s?.locked) return true;
   const haystack = siteSearchText(s);
-  return haystack.includes(term) || orderedSearchTokenMatch(haystack, value);
+  return addressSearchVariants(value).some(variant =>
+    haystack.includes(variant) || orderedSearchTokenMatch(haystack, variant)
+  );
 }
 
 function addressQuery(addr) {
