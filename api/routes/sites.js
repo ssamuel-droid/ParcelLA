@@ -2140,6 +2140,11 @@ const PICO_6075_6099_ALIASES = [
   '6099 W PICO BLVD',
 ];
 
+const STREET_NAME_ALIASES = new Map([
+  ['HALSTEAD', 'HALSTED'],
+  ['HALSTED', 'HALSTEAD'],
+]);
+
 function cleanSearchTerm(value) {
   return String(value || '').replace(/[,%()'"]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
 }
@@ -2187,6 +2192,11 @@ function searchVariants(value) {
   if (!term) return [];
   const variants = [term];
   const upper = term.toUpperCase();
+  for (const [streetName, alias] of STREET_NAME_ALIASES) {
+    if (new RegExp(`\\b${streetName}\\b`, 'i').test(term)) {
+      variants.push(term.replace(new RegExp(`\\b${streetName}\\b`, 'ig'), alias));
+    }
+  }
   const looksLikePicoAlias = PICO_6075_6099_ALIASES.some(addr => {
     const number = addr.split(' ')[0];
     return upper.includes(addr) || upper === number || (upper.includes(number) && upper.includes('PICO'));
@@ -2211,6 +2221,7 @@ function searchDbVariants(value) {
     if (isNumber || isSpecificText || (!hasNumericPart && parts.length === 1)) variants.push(part);
     const wildcard = addressWildcardVariant(part);
     if (wildcard) variants.push(wildcard);
+    variants.push(...searchVariants(part).slice(1));
   }
 
   if (hasNumericPart && parts.some(part => /pico/i.test(part))) variants.push('6091 W PICO');
@@ -2299,7 +2310,9 @@ function searchHaystackMatches(haystack, value) {
     const term = cleanSearchTerm(part).toUpperCase();
     return haystack.includes(term) ||
       orderedTokenMatch(haystack, part) ||
-      searchVariants(part).some(variant => haystack.includes(variant.toUpperCase()));
+      searchVariants(part).some(variant =>
+        haystack.includes(variant.toUpperCase()) || orderedTokenMatch(haystack, variant)
+      );
   });
 }
 
@@ -3782,5 +3795,5 @@ router.delete('/:id/save', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-export { parsePdisProfile, pdisDocumentRow };
+export { parsePdisProfile, pdisDocumentRow, searchDbVariants, searchVariants, siteMatchesSearch };
 export default router;
