@@ -146,6 +146,22 @@ function addressSearchVariants(value) {
   return [...new Set(variants)];
 }
 
+function parseUnitStreetSearch(value) {
+  const term = canonicalAddress(String(value || '').replace(/[,%()'"]/g, ' '));
+  const match = term.match(/^(\d{1,3})\s*(?:U|UNITS?)?\s+(?:(?:ON|AT)\s+)?(.+)$/i);
+  if (!match || !/[A-Z]/i.test(match[2])) return null;
+  const units = Number(match[1]);
+  if (!Number.isFinite(units) || units < 2) return null;
+  return { units, street: match[2].trim() };
+}
+
+function approximatelyMatchesUnits(actualUnits, requestedUnits) {
+  const actual = Number(actualUnits);
+  const requested = Number(requestedUnits);
+  if (!Number.isFinite(actual) || !Number.isFinite(requested)) return false;
+  return Math.abs(actual - requested) <= Math.max(3, Math.ceil(requested * 0.02));
+}
+
 const KNOWN_ADDRESS_GROUPS = [
   {
     key: '6091 W PICO BLVD',
@@ -520,6 +536,11 @@ function siteMatchesSearchText(s, value) {
   if (!term) return true;
   if (s?.locked) return true;
   const haystack = siteSearchText(s);
+  const unitStreet = parseUnitStreetSearch(value);
+  if (unitStreet && approximatelyMatchesUnits(s?.units, unitStreet.units)) {
+    const streetVariants = addressSearchVariants(unitStreet.street);
+    if (streetVariants.some(variant => haystack.includes(variant) || orderedSearchTokenMatch(haystack, variant))) return true;
+  }
   return addressSearchVariants(value).some(variant =>
     haystack.includes(variant) || orderedSearchTokenMatch(haystack, variant)
   );

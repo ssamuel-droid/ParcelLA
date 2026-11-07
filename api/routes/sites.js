@@ -2164,6 +2164,22 @@ function searchParts(value) {
   return parts.length ? parts : [cleanSearchTerm(value)].filter(Boolean);
 }
 
+function parseUnitStreetSearch(value) {
+  const term = cleanSearchTerm(value);
+  const match = term.match(/^(\d{1,3})\s*(?:u|units?)?\s+(?:(?:on|at)\s+)?(.+)$/i);
+  if (!match || !/[a-z]/i.test(match[2])) return null;
+  const units = Number(match[1]);
+  if (!Number.isFinite(units) || units < 2) return null;
+  return { units, street: cleanSearchTerm(match[2]) };
+}
+
+function approximatelyMatchesUnits(actualUnits, requestedUnits) {
+  const actual = Number(actualUnits);
+  const requested = Number(requestedUnits);
+  if (!Number.isFinite(actual) || !Number.isFinite(requested)) return false;
+  return Math.abs(actual - requested) <= Math.max(3, Math.ceil(requested * 0.02));
+}
+
 function orderedTokenMatch(haystack, value) {
   const tokens = searchTokens(value);
   if (tokens.length < 2) return false;
@@ -2214,6 +2230,7 @@ function searchDbVariants(value) {
     .filter(Boolean);
   const hasNumericPart = parts.some(part => /^\d{3,}\b/.test(part));
   const variants = [];
+  const unitStreet = parseUnitStreetSearch(value);
 
   for (const part of parts) {
     const isNumber = /^\d{3,}\b/.test(part);
@@ -2225,6 +2242,7 @@ function searchDbVariants(value) {
   }
 
   if (hasNumericPart && parts.some(part => /pico/i.test(part))) variants.push('6091 W PICO');
+  if (unitStreet?.street) variants.push(unitStreet.street);
   if (!variants.length) variants.push(...searchVariants(term));
 
   return [...new Set(variants.filter(v => v.length >= 3 || /^\d{3,}$/.test(v)))];
@@ -2318,7 +2336,12 @@ function searchHaystackMatches(haystack, value) {
 
 function siteMatchesSearch(s, value) {
   if (!cleanSearchTerm(value)) return true;
-  return searchHaystackMatches(siteSearchHaystack(s), value);
+  const haystack = siteSearchHaystack(s);
+  const unitStreet = parseUnitStreetSearch(value);
+  if (unitStreet && approximatelyMatchesUnits(s?.units, unitStreet.units) && searchHaystackMatches(haystack, unitStreet.street)) {
+    return true;
+  }
+  return searchHaystackMatches(haystack, value);
 }
 
 function permitSearchHaystack(p = {}) {
@@ -2347,7 +2370,12 @@ function permitSearchHaystack(p = {}) {
 
 function permitMatchesSearch(p = {}, value = '') {
   if (!cleanSearchTerm(value)) return false;
-  return searchHaystackMatches(permitSearchHaystack(p), value);
+  const haystack = permitSearchHaystack(p);
+  const unitStreet = parseUnitStreetSearch(value);
+  if (unitStreet && approximatelyMatchesUnits(p?.units ?? p?.raw_data?.units, unitStreet.units) && searchHaystackMatches(haystack, unitStreet.street)) {
+    return true;
+  }
+  return searchHaystackMatches(haystack, value);
 }
 
 function statusIsRti(value) {
@@ -3795,5 +3823,12 @@ router.delete('/:id/save', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-export { parsePdisProfile, pdisDocumentRow, searchDbVariants, searchVariants, siteMatchesSearch };
+export {
+  parsePdisProfile,
+  pdisDocumentRow,
+  parseUnitStreetSearch,
+  searchDbVariants,
+  searchVariants,
+  siteMatchesSearch,
+};
 export default router;

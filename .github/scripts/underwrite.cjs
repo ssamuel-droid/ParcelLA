@@ -974,7 +974,30 @@ function addressAliasesForPermit(p) {
       '6099 W PICO BLVD',
     ];
   }
+  if (addr === '7745 N WILBUR AVE' || String(p.permit_number || '') === '23010-10000-01557') {
+    return [
+      '7745 N WILBUR AVE',
+      '7749 N WILBUR AVE',
+      '7751 N WILBUR AVE',
+      '7745-7751 N WILBUR AVE',
+    ];
+  }
   return [];
+}
+
+function knownProjectMetadata(p = {}) {
+  const address = String(p.address || '').toUpperCase();
+  const permitNumber = String(p.permit_number || '');
+  if (address === '7745 N WILBUR AVE' || permitNumber === '23010-10000-01557') {
+    return {
+      neighborhood: 'Reseda',
+      isEd1: true,
+      planningCase: 'ADM-2023-4428-DB-ED1-VHCA',
+      planningUnits: 190,
+      preliminaryUnits: 202,
+    };
+  }
+  return null;
 }
 
 function ptype(pt, st, u, desc = '') {
@@ -1034,7 +1057,8 @@ function houseResalePsf(hood) {
 }
 
 function uw(p, inspectionCheck = null) {
-  const h = hood(p.lat, p.lng, p.address);
+  const knownProject = knownProjectMetadata(p);
+  const h = knownProject?.neighborhood || hood(p.lat, p.lng, p.address);
   const workDescription = permitWorkDescription(p);
   // Get actual unit count from multiple sources
   const rawUnits = parseInt(p['of_residential_dwelling_units'] || p['number_of_units'] || p.du_changed || '0') || unitsFromText(workDescription);
@@ -1052,7 +1076,7 @@ function uw(p, inspectionCheck = null) {
   const costPerUnit = t==='Condo/TH'?272000:t==='Mixed-Use'?256000:t==='New House'?220000:228000;
   const estimatedUnits = Math.max(Math.round((p.valuation||228000)/costPerUnit), t==='New House' ? 1 : 2);
   const u = t==='New House' ? 1 : (actualUnits > 0 ? actualUnits : Math.max(estimatedUnits, 2));
-  const isEd1 = isEd1Permit(p, workDescription);
+  const isEd1 = knownProject?.isEd1 || isEd1Permit(p, workDescription);
   const ed1Affordability = resolveEd1Affordability({
     ...p,
     isEd1,
@@ -1138,6 +1162,12 @@ function uw(p, inspectionCheck = null) {
       unit_mix_source:unitMix.source,
       unit_mix_parsed_total:unitMix.parsedTotal,
       is_ed1:isEd1,
+      planning_case:knownProject?.planningCase || p.planning_case || p.case_number || null,
+      planning_units:knownProject?.planningUnits || null,
+      preliminary_units:knownProject?.preliminaryUnits || null,
+      unit_count_note:knownProject
+        ? `${u} units in the active LADBS permit; ${knownProject.planningUnits} apartments in the approved planning project; ${knownProject.preliminaryUnits} units in the preliminary filing.`
+        : null,
       ed1_affordability:ed1Affordability,
       building_sf:buildingSize.totalSf,
       building_sf_source:buildingSize.source,
@@ -1258,6 +1288,7 @@ module.exports = {
   fetchCountyParcelAtPoint,
   fetchCountyParcelBatch,
   formattedApn,
+  knownProjectMetadata,
   permitAddressParts,
   permitAin,
 };
