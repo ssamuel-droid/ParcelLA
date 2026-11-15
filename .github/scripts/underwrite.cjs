@@ -1015,13 +1015,13 @@ function developmentStatus(status, isRti, inspectionCheck = null) {
   const s = String(status || '').toLowerCase();
   if (inspectionCheck?.count > 0) return 'possibly_started_unknown';
   if (s.includes('not ready')) return 'plan_check';
-  if (isRti || s.includes('ready') || s.includes('approved')) {
+  if (isRti || s.includes('ready to issue') || /\brti\b/.test(s)) {
     return inspectionCheck?.checked === true && inspectionCheck.count === 0
       ? 'city_approved_not_started'
       : 'possibly_started_unknown';
   }
-  if (s.includes('submit') || s.includes('pc assigned') || s.includes('pc in progress') || s.includes('pc info complete') || s.includes('correction') || s.includes('verification') || s.includes('quality review') || s.includes('reviewed by supervisor')) return 'submitted';
-  if (s.includes('plan') || s.includes('pc ') || s.includes('pc_') || s.includes('correction') || s.includes('verification') || s.includes('review') || s.includes('hold')) return 'plan_check';
+  if (s.includes('pc assigned') || s.includes('pc in progress') || s.includes('pc info complete') || s.includes('pc approved') || s.includes('correction') || s.includes('verification') || s.includes('quality review') || s.includes('reviewed by supervisor') || s.includes('plan') || s.includes('pc ') || s.includes('pc_') || s.includes('review') || s.includes('hold')) return 'plan_check';
+  if (s.includes('submit') || s.includes('filed') || s.includes('application') || s.includes('intake')) return 'submitted';
   if (s.includes('issued')) return 'permit_issued';
   if (s.includes('final') || s.includes('certificate') || s.includes('inspection')) return 'possibly_started_unknown';
   return 'possibly_started_unknown';

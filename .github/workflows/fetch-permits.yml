@@ -9,6 +9,7 @@ on:
       - main
     paths:
       - '.github/workflows/fetch-permits.yml'
+      - '.github/scripts/sync-permits.cjs'
 
 jobs:
   fetch-permits:

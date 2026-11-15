@@ -2594,6 +2594,7 @@ function siteListingStatus(s) {
 }
 
 function developmentStatusKey(s) {
+  if (s?.rti) return 'city_approved_not_started';
   const explicit = String(s?.developmentStatus || '').trim();
   const explicitKey = explicit.toLowerCase().replace(/[\s/-]+/g, '_');
   const explicitAliases = {
@@ -2616,13 +2617,33 @@ function developmentStatusKey(s) {
   ].map(v => String(v || '').toLowerCase()).join(' ');
   if (raw.includes('not ready')) return 'plan_check';
   if (raw.includes('issued')) return 'permit_issued';
-  if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
+  const permitStatus = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
+  if (!permitStatus.includes('not ready') && (permitStatus.includes('ready to issue') || /\brti\b/.test(permitStatus))) return 'city_approved_not_started';
+  if (raw.includes('pc approved') || raw.includes('approved')) return 'plan_check';
   if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('pcis') || raw.includes('under review') || raw.includes('check') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor') || raw.includes('review') || raw.includes('hold') || raw.includes('resubmittal')) return 'plan_check';
   if (raw.includes('submit') || raw.includes('submittal') || raw.includes('filed') || raw.includes('application') || raw.includes('intake') || raw.includes('pre-screen') || raw.includes('created')) return 'submitted';
   return 'possibly_started_unknown';
 }
 
 function developmentStatusLabel(s) {
+  if (s?.rti) return 'RTI / Ready to Issue';
+  const rawStatus = String(s?.permitStatus || s?.permit_status || '').trim();
+  const preciseStatuses = [
+    ['quality review completed', 'Quality review completed'],
+    ['submitted for quality review', 'Submitted for quality review'],
+    ['reviewed by supervisor', 'Reviewed by supervisor'],
+    ['submitted for sprvsr rvw', 'Supervisor review'],
+    ['verifications in progress', 'Verifications in progress'],
+    ['corrections issued', 'Corrections issued'],
+    ['pc info complete', 'Plan check information complete'],
+    ['pc in progress', 'Plan check in progress'],
+    ['pc assigned', 'Plan check assigned'],
+    ['pc approved', 'Plan check approved'],
+    ['not ready to issue', 'Not ready to issue'],
+  ];
+  const normalized = rawStatus.toLowerCase();
+  const precise = preciseStatuses.find(([status]) => normalized.includes(status));
+  if (precise) return precise[1];
   return {
     submitted: 'Submitted',
     plan_check: 'Plan check',
@@ -3719,8 +3740,8 @@ function renderCards() {
         <div><div class="cp">${priceMain}</div><div style="font-size:10px;color:#768295;text-align:right">${priceSub}</div><button class="watchbtn ${watched?'on':''}" onclick="toggleWatch(${s.id}, event)">${watched?'Saved':'Save'}</button></div>
       </div>
       <div class="bdgs">
-        ${offMarket?'<span class="bdg b4">Off-market</span>':s.rti?'<span class="bdg b1">RTI</span>':'<span class="bdg b2">For sale</span>'}
-        <span class="bdg b3">${s.type}</span>${isEd1Site(s)?'<span class="bdg b1">ED1</span>':''}<span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>${!reliableLand?'<span class="bdg b4">' + (needsLot ? 'Lot SF needed' : 'Land comp needed') + '</span>':''}${inspectionStatusBadgeHTML(s)}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
+        ${offMarket?'<span class="bdg b4">Off-market</span>':'<span class="bdg b2">For sale</span>'}${s.rti?'<span class="bdg b1">RTI</span>':''}
+        <span class="bdg b3">${s.type}</span>${isEd1Site(s)?'<span class="bdg b1">ED1</span>':''}${s.rti?'':`<span class="bdg ${developmentStatusKey(s)==='city_approved_not_started'?'b1':'b4'}">${devStatus}</span>`}${!reliableLand?'<span class="bdg b4">' + (needsLot ? 'Lot SF needed' : 'Land comp needed') + '</span>':''}${inspectionStatusBadgeHTML(s)}${plan.key!=='auto'?'<span class="bdg b4">' + plan.label + '</span>':''}${hcpsf?'<span class="bdg b4">$' + hcpsf.toLocaleString() + '/SF hard cost</span>':''}
       </div>
       <div class="kpis">
         <div class="kp"><div class="kpl">Net profit</div><div class="kpv" style="color:${barColor}">${needsLand?missingBasisLabel:fmtM(prof)}</div></div>

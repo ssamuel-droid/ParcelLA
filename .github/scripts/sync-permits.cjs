@@ -330,7 +330,7 @@ function addPermitSearchFields(row) {
 function statusIsRti(value) {
   const status = String(value || '');
   if (/not ready/i.test(status)) return false;
-  return /ready to issue|pc approved|approved/i.test(status);
+  return /ready to issue|\brti\b/i.test(status);
 }
 
 function buildModernPermitRow(r, i, fallbackPrefix) {
@@ -451,7 +451,7 @@ async function main() {
         units: integer(r.of_residential_dwelling_units || r.number_of_units),
         valuation: number(r.valuation),
         issued_date: cleanDate(r.issue_date),
-        is_rti: /ready|approved/i.test(String(r.latest_status || '')),
+        is_rti: statusIsRti(r.latest_status),
         lat, lng,
         work_description: work || null,
         raw_data: r,
@@ -577,7 +577,7 @@ async function main() {
         units: integer(first(r.numberofunits, r.number_of_units, r.of_residential_dwelling_units)),
         valuation: number(r.valuation),
         issued_date: cleanDate(r.permitissuancedate),
-        is_rti: /ready|approved/i.test(String(r.permitstatus || '')),
+        is_rti: statusIsRti(r.permitstatus),
         lat: null,
         lng: null,
         work_description: work || null,
@@ -600,7 +600,7 @@ async function main() {
   console.log('\n=== TOTAL SYNCED: ' + total + ' ===');
 }
 
-module.exports = { addPermitSearchFields };
+module.exports = { addPermitSearchFields, statusIsRti };
 
 if (require.main === module) {
   main().catch(e => { console.error('FATAL:', e.message); process.exit(1); });

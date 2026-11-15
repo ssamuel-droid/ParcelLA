@@ -1913,7 +1913,7 @@ function mapSupabaseSite(s, i = 0, landCompBenchmarks = null) {
     exitValueMetric: rawPermit.exit_value_metric || model.exitValueMetric || null,
     exitValueMetricValue: rawPermit.exit_value_metric_value || model.exitValueMetricValue || null,
     exitValueBasisQuantity: rawPermit.exit_value_basis_quantity || model.exitValueBasisQuantity || null,
-    rti:          s.rti ?? false,
+    rti:          Boolean(s.rti || statusIsRti(rawPermit.permit_status || rawPermit.status)),
     status,
     listingStatus: offMarket ? 'Off-market / not for sale' : 'For sale',
     forSale:      !offMarket,
@@ -2381,7 +2381,7 @@ function permitMatchesSearch(p = {}, value = '') {
 function statusIsRti(value) {
   const status = String(value || '');
   if (/not ready/i.test(status)) return false;
-  return /ready to issue|pc approved|approved/i.test(status);
+  return /ready to issue|\brti\b/i.test(status);
 }
 
 function permitRowAsHouseSite(p = {}) {
@@ -2886,6 +2886,7 @@ function siteMatchesListingFilters(s, listings) {
 }
 
 function developmentStatusKey(s) {
+  if (s?.rti) return 'city_approved_not_started';
   const explicit = String(s?.developmentStatus || '').trim();
   const explicitKey = explicit.toLowerCase().replace(/[\s/-]+/g, '_');
   const explicitAliases = {
@@ -2908,7 +2909,8 @@ function developmentStatusKey(s) {
   ].map(v => String(v || '').toLowerCase()).join(' ');
   if (raw.includes('not ready')) return 'plan_check';
   if (raw.includes('issued')) return 'permit_issued';
-  if (s?.rti || raw.includes('ready') || raw.includes('approved')) return 'city_approved_not_started';
+  if (statusIsRti(s?.permitStatus || s?.permit_status)) return 'city_approved_not_started';
+  if (raw.includes('pc approved') || raw.includes('approved')) return 'plan_check';
   if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('pcis') || raw.includes('under review') || raw.includes('check') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor') || raw.includes('review') || raw.includes('hold') || raw.includes('resubmittal')) return 'plan_check';
   if (raw.includes('submit') || raw.includes('submittal') || raw.includes('filed') || raw.includes('application') || raw.includes('intake') || raw.includes('pre-screen') || raw.includes('created')) return 'submitted';
   return 'possibly_started_unknown';
