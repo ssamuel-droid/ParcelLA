@@ -2235,7 +2235,10 @@ function searchDbVariants(value) {
   for (const part of parts) {
     const isNumber = /^\d{3,}\b/.test(part);
     const isSpecificText = part.length >= 6;
-    if (isNumber || isSpecificText || (!hasNumericPart && parts.length === 1)) variants.push(part);
+    // When a pasted search contains address numbers plus labels, the numbers
+    // identify the requested properties. Treating a trailing city or street
+    // word as a separate OR clause turns a focused lookup into a citywide scan.
+    if (isNumber || (!hasNumericPart && (isSpecificText || parts.length === 1))) variants.push(part);
     const wildcard = addressWildcardVariant(part);
     if (wildcard) variants.push(wildcard);
     variants.push(...searchVariants(part).slice(1));

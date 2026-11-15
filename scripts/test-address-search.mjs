@@ -23,6 +23,12 @@ assert.equal(siteMatchesSearch({ addr: '17829 W HALSTED ST', units: 232 }, 'Hals
 assert.equal(siteMatchesSearch({ addr: '17829 W HALSTED ST', units: 232 }, '17829 Halstead'), true);
 assert.equal(siteMatchesSearch({ addr: '17830 W HALSTED ST', units: 12 }, '17829 Halstead'), false);
 
+const pastedAddressVariants = searchDbVariants('5903, 6095, Pico, Riverside');
+assert.ok(pastedAddressVariants.includes('5903'));
+assert.ok(pastedAddressVariants.includes('6095'));
+assert.ok(pastedAddressVariants.includes('6091 W PICO'));
+assert.equal(pastedAddressVariants.includes('Riverside'), false);
+
 assert.deepEqual(parseUnitStreetSearch('192 on Wilbur'), { units: 192, street: 'Wilbur' });
 assert.deepEqual(parseUnitStreetSearch('192 units Wilbur Ave'), { units: 192, street: 'Wilbur Ave' });
 assert.deepEqual(parseUnitStreetSearch('192 Wilbur'), { units: 192, street: 'Wilbur' });

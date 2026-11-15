@@ -3308,7 +3308,12 @@ function buildSiteQueryParams(offset = 0) {
   const search = (g('f-q')?.value || '').trim();
   const pageLimit = sitePageLimit;
   const qs = new URLSearchParams({ sort: g('srt')?.value || 'profit', limit: String(pageLimit), offset: String(offset), fast: '1' });
-  if (search) qs.set('q', search);
+  if (search) {
+    qs.set('q', search);
+    // A direct property lookup should not silently disappear because screening
+    // filters from the prior browse session are still selected.
+    return qs;
+  }
   const types = [];
   if (g('f-mf')?.checked) types.push('Multifamily');
   if (g('f-mx')?.checked) types.push('Mixed-Use');
@@ -3548,6 +3553,7 @@ function applyFilters() {
   if (g('f-nh')?.checked) types.push('New House');
   const typeFiltersActive = types.length > 0;
   const ed1Only = g('f-ed1')?.checked === true;
+  const directSearch = Boolean(search);
 
   filtered = allSites.filter(s => {
     const costs = costModelForSite(s);
@@ -3558,25 +3564,25 @@ function applyFilters() {
     if (search && !s.locked && !siteMatchesSearchText(s, searchValue)) return false;
     const category = listingCategory(s);
     const listingMatch = (ffs && category === 'for_sale') || (frti && category === 'rti') || (fcomp && category === 'off_market');
-    if (listingFiltersActive && !listingMatch) return false;
+    if (!directSearch && listingFiltersActive && !listingMatch) return false;
     const devKey = developmentStatusKey(s);
     const devMatch = devStatuses.includes(devKey) || (devStatuses.includes('city_approved_not_started') && s.rti);
-    if (devStatusFiltersActive && !devMatch) return false;
-    if (watchOnly && !isWatched(s.id)) return false;
-    if (typeFiltersActive && !typeMatchesSelected(s, types)) return false;
-    if (ed1Only && !isEd1Site(s)) return false;
-    if (hood && !s.locked && siteNeighborhood(s) !== hood) return false;
-    if (s.units < umin || s.units > umax) return false;
+    if (!directSearch && devStatusFiltersActive && !devMatch) return false;
+    if (!directSearch && watchOnly && !isWatched(s.id)) return false;
+    if (!directSearch && typeFiltersActive && !typeMatchesSelected(s, types)) return false;
+    if (!directSearch && ed1Only && !isEd1Site(s)) return false;
+    if (!directSearch && hood && !s.locked && siteNeighborhood(s) !== hood) return false;
+    if (!directSearch && (s.units < umin || s.units > umax)) return false;
     const buildingSf = underwritingBuildingSf(s);
-    if (sfmin && buildingSf < sfmin) return false;
-    if (sfmax !== Infinity && buildingSf > sfmax) return false;
+    if (!directSearch && sfmin && buildingSf < sfmin) return false;
+    if (!directSearch && sfmax !== Infinity && buildingSf > sfmax) return false;
     const landBasis = siteLandBasisForFilter(s, costs);
-    if (landBasis && (landBasis < pmin || landBasis > pmax)) return false;
-    if ((costs.totalCost || 0) < cmin || (costs.totalCost || 0) > cmax) return false;
-    if (mfp && (valuation.netProfit||0) < mfp) return false;
-    if (mfi && (valuation.leveragedIRR||0) < mfi) return false;
-    if (mfs && ((valuation.devSpreadPct||0)*100) < mfs) return false;
-    if (mfc && !isHouseSite(s) && (valuation.capOnCost||0) < mfc) return false;
+    if (!directSearch && landBasis && (landBasis < pmin || landBasis > pmax)) return false;
+    if (!directSearch && ((costs.totalCost || 0) < cmin || (costs.totalCost || 0) > cmax)) return false;
+    if (!directSearch && mfp && (valuation.netProfit||0) < mfp) return false;
+    if (!directSearch && mfi && (valuation.leveragedIRR||0) < mfi) return false;
+    if (!directSearch && mfs && ((valuation.devSpreadPct||0)*100) < mfs) return false;
+    if (!directSearch && mfc && !isHouseSite(s) && (valuation.capOnCost||0) < mfc) return false;
     return true;
   });
 
@@ -3601,7 +3607,9 @@ function applyFilters() {
   updateHardCostOverrideUI();
   const totalText = sitePageTotal && sitePageTotal > allSites.length ? ' shown of ' + sitePageTotal.toLocaleString() + ' matches' : '';
   const searchText = search ? ' for "' + (g('f-q')?.value || '').trim() + '"' : '';
-  const modeText = activeAssumptions.length ? ' - re-underwritten: ' + activeAssumptions.join(', ') : ' - pre-underwritten' + settingsText;
+  const modeText = directSearch
+    ? ' - direct address search'
+    : (activeAssumptions.length ? ' - re-underwritten: ' + activeAssumptions.join(', ') : ' - pre-underwritten' + settingsText);
   g('rct').textContent = filtered.length + ' site' + (filtered.length!==1?'s':'') + searchText + totalText + modeText;
   renderCards();
 }
