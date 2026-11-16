@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { statusIsRti } = require('../.github/scripts/sync-permits.cjs');
 
-for (const status of ['Ready to Issue', 'RTI', 'Permit RTI']) {
+for (const status of ['Ready to Issue', 'PC Info Complete', 'RTI', 'Permit RTI']) {
   assert.equal(statusIsRti(status), true, `${status} should be RTI`);
 }
 

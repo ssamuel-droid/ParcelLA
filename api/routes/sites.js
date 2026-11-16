@@ -2384,7 +2384,7 @@ function permitMatchesSearch(p = {}, value = '') {
 function statusIsRti(value) {
   const status = String(value || '');
   if (/not ready/i.test(status)) return false;
-  return /ready to issue|\brti\b/i.test(status);
+  return /ready to issue|pc info complete|\brti\b/i.test(status);
 }
 
 function permitRowAsHouseSite(p = {}) {

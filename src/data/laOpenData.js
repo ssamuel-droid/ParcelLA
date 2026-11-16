@@ -103,7 +103,8 @@ export async function fetchRTIStatus(address) {
     approved:   d.date_approved,
     isRTI:
       d.status?.toLowerCase().includes('rti') ||
-      d.status?.toLowerCase().includes('ready to issue'),
+      d.status?.toLowerCase().includes('ready to issue') ||
+      d.status?.toLowerCase().includes('pc info complete'),
   }));
 }
 

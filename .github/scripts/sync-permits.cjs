@@ -330,7 +330,9 @@ function addPermitSearchFields(row) {
 function statusIsRti(value) {
   const status = String(value || '');
   if (/not ready/i.test(status)) return false;
-  return /ready to issue|\brti\b/i.test(status);
+  // LADBS directs applicants with either status to the RTI issuance counter.
+  // "PC Approved" alone is not enough because agency clearances can remain.
+  return /ready to issue|pc info complete|\brti\b/i.test(status);
 }
 
 function buildModernPermitRow(r, i, fallbackPrefix) {

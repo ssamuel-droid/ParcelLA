@@ -2618,7 +2618,7 @@ function developmentStatusKey(s) {
   if (raw.includes('not ready')) return 'plan_check';
   if (raw.includes('issued')) return 'permit_issued';
   const permitStatus = String(s?.permitStatus || s?.permit_status || '').toLowerCase();
-  if (!permitStatus.includes('not ready') && (permitStatus.includes('ready to issue') || /\brti\b/.test(permitStatus))) return 'city_approved_not_started';
+  if (!permitStatus.includes('not ready') && (permitStatus.includes('ready to issue') || permitStatus.includes('pc info complete') || /\brti\b/.test(permitStatus))) return 'city_approved_not_started';
   if (raw.includes('pc approved') || raw.includes('approved')) return 'plan_check';
   if (raw.includes('plan') || raw.includes('pc ') || raw.includes('pc_') || raw.includes('pcis') || raw.includes('under review') || raw.includes('check') || raw.includes('correction') || raw.includes('verification') || raw.includes('quality review') || raw.includes('reviewed by supervisor') || raw.includes('review') || raw.includes('hold') || raw.includes('resubmittal')) return 'plan_check';
   if (raw.includes('submit') || raw.includes('submittal') || raw.includes('filed') || raw.includes('application') || raw.includes('intake') || raw.includes('pre-screen') || raw.includes('created')) return 'submitted';

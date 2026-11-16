@@ -72,7 +72,7 @@ async function syncLADBSPermits() {
     for (const permit of permits) {
       try {
         const status = String(permit.status || '');
-        const isRTI = !/not ready/i.test(status) && /ready to issue|\brti\b/i.test(status);
+        const isRTI = !/not ready/i.test(status) && /ready to issue|pc info complete|\brti\b/i.test(status);
 
         // Try to match to a site
         const matchedSite = SITES.find(s =>
