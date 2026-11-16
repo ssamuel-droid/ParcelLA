@@ -1474,10 +1474,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
   <div class="sb">
     <div class="sb-body">
       <h4>Search address / project</h4>
-      <input class="sbs" id="f-q" placeholder="5903, 6095, Pico, Riverside" oninput="scheduleSiteSearch()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitSiteSearch()}">
+      <input class="sbs" id="f-q" placeholder="Enter address, project, or permit" autocomplete="off" oninput="scheduleSiteSearch()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitSiteSearch()}">
       <h4>Listing type</h4>
       <label class="cb"><input type="checkbox" id="f-fs" checked> For sale</label>
-      <label class="cb"><input type="checkbox" id="f-rti" checked> RTI / Entitled</label>
+      <label class="cb"><input type="checkbox" id="f-rti" checked> RTI / PC info complete</label>
       <label class="cb"><input type="checkbox" id="f-comp" checked> Off-market / not for sale</label>
       <label class="cb"><input type="checkbox" id="f-watch"> Watchlist only</label>
       <h4>Development status</h4>
