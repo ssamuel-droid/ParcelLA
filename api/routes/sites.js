@@ -3101,6 +3101,7 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
     mayReturnNewHouse ||
     String(queryParams.ed1 || '').toLowerCase() === 'true' ||
     queryParams.listing ||
+    queryParams.rti !== undefined ||
     (queryParams.devStatus && !canPushDevStatus) ||
     hasActiveNumericParam(queryParams.minSf) ||
     hasActiveNumericParam(queryParams.maxSf)
@@ -3145,7 +3146,6 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   if (!hasExplicitTypeFilter && !search) query = query.neq('project_type', 'New House');
   if (queryParams.zone) query = query.eq('zoning', queryParams.zone);
   if (queryParams.hood) query = query.eq('neighborhood', queryParams.hood);
-  if (queryParams.rti !== undefined) query = query.eq('rti', queryParams.rti === 'true');
   if (queryParams.isComp !== undefined) query = query.eq('is_comp', queryParams.isComp === 'true');
   const minUnits = activeNumericParam(queryParams.minUnits);
   const maxUnits = activeNumericParam(queryParams.maxUnits);
@@ -3178,14 +3178,14 @@ async function fetchSupabaseSitePage(queryParams, requestedLimit, requestedOffse
   }
 
   const listings = listParam(queryParams.listing);
-  if (listings.length) {
+  // RTI can be derived from the current permit status even before the stored
+  // sites.rti flag is refreshed. Do not discard those rows in SQL.
+  if (listings.length && !listings.includes('rti')) {
     if (listings.length === 1 && listings[0] === 'for_sale') query = query.eq('status', 'active');
-    else if (listings.length === 1 && listings[0] === 'rti') query = query.eq('rti', true);
     else if (listings.length === 1 && listings[0] === 'off_market') query = query.eq('status', 'off-market');
     else {
       const clauses = [];
       if (listings.includes('for_sale')) clauses.push('status.eq.active');
-      if (listings.includes('rti')) clauses.push('rti.eq.true');
       if (listings.includes('off_market')) clauses.push('status.eq.off-market');
       if (clauses.length) query = query.or(clauses.join(','));
     }
