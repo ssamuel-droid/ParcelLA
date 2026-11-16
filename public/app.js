@@ -2446,8 +2446,8 @@ function isOffMarketSite(s) {
 }
 
 function listingCategory(s) {
-  if (isOffMarketSite(s)) return 'off_market';
   if (s?.rti) return 'rti';
+  if (isOffMarketSite(s)) return 'off_market';
   return 'for_sale';
 }
 
